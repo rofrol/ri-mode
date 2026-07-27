@@ -198,6 +198,58 @@ Active only in NORM mode and when no transient menu is open."
     :on-release #'keymap-legend-hide
     :map ri--paste-layer-map))
 ;; Keybindings and hooks are registered by `ri-enable'.
+;; ── Mode line ────────────────────────────────────────────────────────────
+
+(defun ri--submode-name ()
+  "Return the human-readable name for the current `sr-submode'."
+  (if (boundp 'sr-submode)
+      (pcase sr-submode
+        ('line "LINE")
+        ('line-star "LINE*")
+        ('char "CHAR")
+        ('word "WORD")
+        ('word-plus "WORD+")
+        ('word-star "WORD*")
+        ('subword "SUBWORD")
+        (_ "?"))
+    "?"))
+
+(defun ri--mode-line-text ()
+  "Return the mode-line text with mode, submode, and help hint."
+  (if (bound-and-true-p mini-modal-mode)
+      (format " NORM[%s] [Press ? for help]" (ri--submode-name))
+    " INST"))
+
+;; Replaced by `ri-enable' — see `ri-enable' for the lighter setup.
+
+;; ── Help keymap legend for NORM mode (?) ─────────────────────────────────
+
+(defvar ri--normal-help-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "h" '(menu-item "Insert" mini-modal-insert))
+    (define-key map "j" '(menu-item "← Left" sr-nav-left))
+    (define-key map "l" '(menu-item "→ Right" sr-nav-right))
+    (define-key map "i" '(menu-item "↑ Up" sr-nav-up))
+    (define-key map "k" '(menu-item "↓ Down" sr-nav-down))
+    (define-key map "u" '(menu-item "Prev" sr-nav-prev))
+    (define-key map "o" '(menu-item "Next" sr-nav-next))
+    (define-key map "y" '(menu-item "First" sr-nav-first))
+    (define-key map "p" '(menu-item "Last" sr-nav-last))
+    (define-key map "a" '(menu-item "LINE" sr-set-line-mode))
+    (define-key map "A" '(menu-item "LINE*" sr-set-line-star-mode))
+    (define-key map "W" '(menu-item "CHAR" sr-set-character-mode))
+    (define-key map "v" '(menu-item "Paste" ri-space-paste))
+    (define-key map (kbd "SPC") '(menu-item "Menu" ri-space-menu))
+    (define-key map "?" '(menu-item "Help" ignore))
+    (define-key map (kbd "<escape>") '(menu-item "Close" ignore))
+    map)
+  "Keymap documenting NORM mode bindings for the help legend.")
+
+(defun ri--show-help ()
+  "Show the NORM mode keymap legend, dismissed on next key press."
+  (interactive)
+  (keymap-legend-show "NORM" ri--normal-help-map '(:title "Normal Mode"))
+  (set-transient-map (make-sparse-keymap) nil #'keymap-legend-hide))
 
 ;;;###autoload
 (defun ri-enable ()
@@ -208,7 +260,14 @@ Active only in NORM mode and when no transient menu is open."
   (ri-chord-setup)
   (define-key mini-modal-map (kbd "RET") 'undefined)
   (define-key mini-modal-map "v" #'ri-space-paste)
-  (define-key mini-modal-map (kbd "SPC") #'ri-space-menu))
+  (define-key mini-modal-map (kbd "SPC") #'ri-space-menu)
+  (let (to-remove)
+    (dolist (entry minor-mode-alist)
+      (when (equal entry '(t (:eval (if mini-modal-mode " NORM" " INST"))))
+        (push entry to-remove)))
+    (dolist (entry to-remove)
+      (setq minor-mode-alist (delq entry minor-mode-alist))))
+  (push '(t (:eval (ri--mode-line-text))) minor-mode-alist)
+  (define-key mini-modal-map "?" #'ri--show-help))
 
 (provide 'ri)
-
