@@ -35,10 +35,17 @@ Self-insert is suppressed; only explicitly bound keys work.")
 
 When enabled (NORM): self-insert is suppressed, `h' enters insert mode.
 When disabled (INST): normal editing, `ESC' returns to normal mode."
-  :lighter (:eval (if mini-modal-mode " NORM" " INST"))
+  :lighter ""                       ; handled manually below
   :keymap mini-modal-map
   :group 'mini-modal
   (force-mode-line-update))
+
+;; Always show NORM/INST in the mode line.
+;; Using `t` as the mode-variable key ensures the lighter is evaluated
+;; regardless of whether mini-modal-mode is on or off.
+(setq minor-mode-alist
+      (cons '(t (:eval (if mini-modal-mode " NORM" " INST")))
+            minor-mode-alist))
 
 (defun mini-modal--turn-on ()
   "Enable `mini-modal-mode' in buffers meant for text editing.
