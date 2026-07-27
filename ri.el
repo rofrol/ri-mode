@@ -25,11 +25,12 @@
 (eval-and-compile
   (let ((dir (file-name-directory (or load-file-name buffer-file-name))))
     (when dir
-      (dolist (sub '("mini-modal" "kkp-chord" "status-frame"))
+      (dolist (sub '("mini-modal" "kkp-chord" "keymap-legend" "status-frame"))
         (add-to-list 'load-path (expand-file-name sub dir))))))
 
 (require 'mini-modal)
 (require 'kkp-chord)
+(require 'keymap-legend)
 (require 'status-frame)
 
 ;; Customized by `ri-enable'.
