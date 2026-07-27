@@ -208,24 +208,99 @@ Unsaved files are reported in the echo area and the menu is dismissed."
 
 ;;;; Paste momentary layer (v: tap-hold via KKP chord)
 
-(defun ri-paste ()
-  "Paste (yank) and leave Extend."
-  (interactive)
-  (yank)
+(defun ri--paste-at (position &optional prefix suffix)
+  "Paste the latest kill-ring entry at POSITION.
+Insert PREFIX before and SUFFIX after the pasted text when supplied."
+  (ri--with-buffer-edit
+    (goto-char position)
+    (when prefix
+      (insert prefix))
+    (let ((paste-start (point)))
+      (yank)
+      (when suffix
+        (insert suffix))
+      (goto-char paste-start)))
   (ri--finish-edit-command))
+
+(defun ri-paste-selection ()
+  "Replace the current selection/unit with the latest kill-ring entry."
+  (interactive)
+  (let* ((bounds (ri--selection-bounds))
+         (start (if bounds (car bounds) (point))))
+    (ri--with-buffer-edit
+      (when bounds
+        (delete-region (car bounds) (cdr bounds)))
+      (goto-char start)
+      (yank)
+      (goto-char start))
+    (ri--finish-edit-command)))
+
+(defun ri--paste-inline (pos-side)
+  "Paste the latest kill-ring entry at POS-SIDE of the selection."
+  (when-let* ((bounds (ri--selection-bounds)))
+    (ri--paste-at (funcall pos-side bounds))))
 
 (defun ri-paste-before ()
-  "Paste (yank) before the cursor and leave Extend."
+  "Paste the latest kill-ring entry before the current selection."
   (interactive)
-  (yank)
-  (ri--finish-edit-command))
+  (ri--paste-inline 'car))
 
 (defun ri-paste-after ()
-  "Paste (yank) after the cursor and leave Extend."
+  "Paste the latest kill-ring entry after the current selection."
   (interactive)
-  (unless (eobp) (forward-char))
-  (yank)
-  (ri--finish-edit-command))
+  (ri--paste-inline 'cdr))
+
+(defun ri--paste-with-gap (direction pos-side)
+  "Paste with the gap from DIRECTION at POS-SIDE of the selection."
+  (when-let* ((bounds (ri--selection-bounds))
+              (gap (ri--compute-gap direction bounds)))
+    (ri--paste-at (funcall pos-side bounds)
+                  (when (eq pos-side 'car) gap)
+                  (when (eq pos-side 'cdr) gap))))
+
+(defun ri-paste-before-gap ()
+  "Paste before the current selection with the gap on its left."
+  (interactive)
+  (ri--paste-with-gap :left 'car))
+
+(defun ri-paste-after-gap ()
+  "Paste after the current selection with the gap on its right."
+  (interactive)
+  (ri--paste-with-gap :right 'cdr))
+
+(defun ri-paste-before-prev-gap ()
+  "Paste before the current selection with the prev-unit gap."
+  (interactive)
+  (ri--paste-with-gap :prev 'car))
+
+(defun ri-paste-after-next-gap ()
+  "Paste after the current selection with the next-unit gap."
+  (interactive)
+  (ri--paste-with-gap :next 'cdr))
+
+(defun ri--paste-vertically (below)
+  "Paste on a new line BELOW when BELOW is non-nil, otherwise above."
+  (let* ((line-start (line-beginning-position))
+         (line-end (line-end-position))
+         (indent (buffer-substring-no-properties
+                  line-start
+                  (save-excursion
+                    (goto-char line-start)
+                    (back-to-indentation)
+                    (point)))))
+    (if below
+        (ri--paste-at line-end (concat "\n" indent))
+      (ri--paste-at line-start indent "\n"))))
+
+(defun ri-paste-above ()
+  "Paste the latest kill-ring entry on an indented line above."
+  (interactive)
+  (ri--paste-vertically nil))
+
+(defun ri-paste-below ()
+  "Paste the latest kill-ring entry on an indented line below."
+  (interactive)
+  (ri--paste-vertically t))
 
 (defun ri-enter-insert-left ()
   "Move to the start of the current unit and enter insert mode."
@@ -291,8 +366,14 @@ Unsaved files are reported in the echo area and the menu is dismissed."
 
 (defvar ri--paste-layer-map
   (let ((map (make-sparse-keymap)))
+    (define-key map "j" '(menu-item "<< Gap Paste" ri-paste-before-gap))
+    (define-key map "l" '(menu-item "Gap Paste >>" ri-paste-after-gap))
+    (define-key map "u" '(menu-item "< Gap Paste" ri-paste-before-prev-gap))
+    (define-key map "o" '(menu-item "Gap Paste >" ri-paste-after-next-gap))
     (define-key map "h" '(menu-item "< Paste" ri-paste-before))
     (define-key map ";" '(menu-item "Paste >" ri-paste-after))
+    (define-key map "i" '(menu-item "Paste ^" ri-paste-above))
+    (define-key map "k" '(menu-item "Paste v" ri-paste-below))
     map)
   "Keymap for the paste momentary layer (v held).")
 
@@ -311,7 +392,7 @@ Unsaved files are reported in the echo area and the menu is dismissed."
    (list :key ?F :label "… Transform" :tap nil :map ri--transform-layer-map :release nil)
    (list :key ?v
          :label "≡ Paste"
-         :tap #'ri-paste
+         :tap #'ri-paste-selection
          :map ri--paste-layer-map
          :release "Paste"))
   "Momentary layer specifications.
@@ -401,7 +482,7 @@ Active only in NORM mode and when no transient menu is open."
     (define-key map "g" '(menu-item "≡ Open" ri-change-selection))
     (define-key map "t" '(menu-item "≡ Swap" ignore))
     (define-key map "F" '(menu-item "… Transform" ignore))
-    (define-key map "v" '(menu-item "≡ Paste" ri-space-paste))
+    (define-key map "v" '(menu-item "≡ Paste" ri-paste-selection))
     (define-key map "f" '(menu-item "Extend" ri-toggle-extend))
     (define-key map "z" '(menu-item "≡ Undo/Redo" ri-smart-undo))
     (define-key map "Z" '(menu-item "Coarse Redo" undo-redo))
@@ -448,7 +529,7 @@ Active only in NORM mode and when no transient menu is open."
   (define-key mini-modal-map "g" #'ri-change-selection)
   (define-key mini-modal-map "t" #'ignore)
   (define-key mini-modal-map "F" #'ignore)
-  (define-key mini-modal-map "v" #'ri-space-paste)
+  (define-key mini-modal-map "v" #'ri-paste-selection)
   (define-key mini-modal-map (kbd "SPC") #'ri-space-menu)
   (let (to-remove)
     (dolist (entry minor-mode-alist)
