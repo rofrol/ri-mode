@@ -188,6 +188,20 @@ Unsaved files are reported in the echo area and the menu is dismissed."
   (unless (eobp) (forward-char))
   (yank))
 
+(defun ri-enter-insert-left ()
+  "Move to the start of the current unit and enter insert mode."
+  (interactive)
+  (when-let* ((bounds (sr--get-current-unit-bounds)))
+    (goto-char (car bounds)))
+  (mini-modal-insert))
+
+(defun ri-enter-insert-right ()
+  "Move to the end of the current unit and enter insert mode."
+  (interactive)
+  (when-let* ((bounds (sr--get-current-unit-bounds)))
+    (goto-char (cdr bounds)))
+  (mini-modal-insert))
+
 (defvar ri--paste-layer-map
   (let ((map (make-sparse-keymap)))
     (define-key map "h" '(menu-item "< Paste" ri-paste-before))
@@ -267,7 +281,8 @@ Active only in NORM mode and when no transient menu is open."
 
 (defvar ri--normal-help-map
   (let ((map (make-sparse-keymap)))
-    (define-key map "h" '(menu-item "← Insert" mini-modal-insert))
+    (define-key map "h" '(menu-item "← Insert" ri-enter-insert-left))
+    (define-key map ";" '(menu-item "Insert →" ri-enter-insert-right))
     (define-key map "j" '(menu-item "<<" sr-nav-left))
     (define-key map "l" '(menu-item ">>" sr-nav-right))
     (define-key map "i" '(menu-item "^" sr-nav-up))
@@ -316,7 +331,8 @@ Active only in NORM mode and when no transient menu is open."
   (global-kkp-mode 1)
   (add-hook 'kkp-chord-after-release-hook #'ri--restore-message-after-release)
   (ri-chord-setup)
-  (define-key mini-modal-map (kbd "RET") 'undefined)
+  (define-key mini-modal-map "h" #'ri-enter-insert-left)
+  (define-key mini-modal-map ";" #'ri-enter-insert-right)
   (define-key mini-modal-map "v" #'ri-space-paste)
   (define-key mini-modal-map (kbd "SPC") #'ri-space-menu)
   (let (to-remove)
