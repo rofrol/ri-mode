@@ -64,12 +64,10 @@
       (message "%s" text))))
 
 (defun ri--close-menu ()
-  "Close the current RI menu and hide its status frame."
+  "Hide any active menu and restore the status frame."
   (setq ri--menu-state nil)
+  (keymap-legend-hide)
   (ri--hide-frame))
-
-;; ── ESC handler shared by both menus ────────────────────────────────────
-
 (defun ri--exit-menu ()
   "Exit the current menu, hide the frame, and return to NORM mode."
   (interactive)
@@ -78,29 +76,25 @@
   (mini-modal-normal))
 
 ;; ── Keymaps ─────────────────────────────────────────────────────────────
-
 (defvar ri--space-layer-map
   (let ((map (make-sparse-keymap)))
-    (define-key map "j" #'ri-editor-menu)
-    (define-key map "v" #'ri-space-paste)
+    (define-key map "j" '(menu-item "Editor" ri-editor-menu))
+    (define-key map "v" '(menu-item "Paste" ri-space-paste))
     (define-key map (kbd "<escape>") #'ri--exit-menu)
     map)
   "Keymap for the Space menu.")
 
 (defvar ri--editor-layer-map
   (let ((map (make-sparse-keymap)))
-    (define-key map "v" #'ri--quit-with-check)
+    (define-key map "v" '(menu-item "Quit" ri--quit-with-check))
     (define-key map (kbd "<escape>") #'ri--exit-menu)
     map)
   "Keymap for the Editor submenu.")
-
-;; ── Commands ────────────────────────────────────────────────────────────
-
 (defun ri-space-menu ()
   "Show the Space menu via a transient keymap."
   (interactive)
   (setq ri--menu-state 'space)
-  (ri--show-frame "j - Editor, v - Paste")
+  (keymap-legend-show "Space" ri--space-layer-map '(:title "Space"))
   (set-transient-map
    ri--space-layer-map t
    (lambda ()
@@ -112,13 +106,12 @@
   "Enter the Editor submenu."
   (interactive)
   (setq ri--menu-state 'editor)
-  (ri--update-frame "v - Quit")
+  (keymap-legend-show "Editor" ri--editor-layer-map '(:title "Editor"))
   (set-transient-map
    ri--editor-layer-map t
    (lambda ()
      (when (eq ri--menu-state 'editor)
        (ri--close-menu)))))
-
 (defun ri-space-paste ()
   "Paste and exit the Space menu."
   (interactive)
@@ -182,8 +175,8 @@ Unsaved files are reported in the echo area and the menu is dismissed."
 
 (defvar ri--paste-layer-map
   (let ((map (make-sparse-keymap)))
-    (define-key map "h" #'ri-paste-before)
-    (define-key map ";" #'ri-paste-after)
+    (define-key map "h" '(menu-item "< Paste" ri-paste-before))
+    (define-key map ";" '(menu-item "Paste >" ri-paste-after))
     map)
   "Keymap for the paste momentary layer (v held).")
 
@@ -198,10 +191,12 @@ Active only in NORM mode and when no transient menu is open."
   (kkp-chord-define ?v
     :tap #'yank
     :when #'ri--chord-when-p
-    :on-press (lambda () (ri--show-frame "h - Paste <, ; - Paste >"))
-    :on-release #'ri--hide-frame
+    :on-press (lambda ()
+                (keymap-legend-show
+                 "Paste" ri--paste-layer-map
+                 '(:title "Paste" :release "Paste")))
+    :on-release #'keymap-legend-hide
     :map ri--paste-layer-map))
-
 ;; Keybindings and hooks are registered by `ri-enable'.
 
 ;;;###autoload
