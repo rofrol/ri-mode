@@ -88,6 +88,7 @@
 (defvar ri--editor-layer-map
   (let ((map (make-sparse-keymap)))
     (define-key map "v" '(menu-item "Quit" ri--quit-with-check))
+    (define-key map "q" '(menu-item "Quit No Save" ri--force-quit))
     (define-key map (kbd "<escape>") #'ri--exit-menu)
     map)
   "Keymap for the Editor submenu.")
@@ -164,6 +165,15 @@ Unsaved files are reported in the echo area and the menu is dismissed."
       (set-transient-map nil)
       (ri--close-menu)
       (save-buffers-kill-terminal))))
+
+;;;; Force quit (no save)
+
+(defun ri--force-quit ()
+  "Force quit Emacs immediately without saving changes."
+  (interactive)
+  (set-transient-map nil)
+  (ri--close-menu)
+  (kill-emacs))
 
 ;;;; Paste momentary layer (v: tap-hold via KKP chord)
 
