@@ -159,9 +159,51 @@ normalization and rendering functions to consume."
   "Return the one-event key sequence for EVENT."
   (vector event))
 
+(defun keymap-legend--ki-style-key-description (event)
+  "Return a ki-style key description for EVENT.
+
+Converts Emacs event representation to match ki editor's
+convention: lowercase names without angle brackets,
+\"space\"/\"enter\"/\"esc\", and \"alt+\"/\"ctrl+\"/\"shift+\" modifiers."
+  (let* ((modifiers (event-modifiers event))
+         (basic (event-basic-type event))
+         (name
+          (pcase basic
+            ((pred characterp)
+             (pcase basic
+               (?\s "space")
+               (?\t "tab")
+               (?\r "enter")
+               (_ (char-to-string basic))))
+            ('return "enter")
+            ('escape "esc")
+            ('prior "pageup")
+            ('next "pagedown")
+            ((pred (lambda (s) (and (symbolp s) (string-prefix-p "f" (symbol-name s)))))
+             (upcase (symbol-name basic)))
+            (_ (downcase (symbol-name basic)))))
+         (sorted-mods
+          (sort (copy-sequence modifiers)
+                (lambda (a b)
+                  (< (or (cl-position a '(control meta alt shift super hyper)) 99)
+                     (or (cl-position b '(control meta alt shift super hyper)) 99)))))
+         (prefix
+          (mapconcat
+           (lambda (mod)
+             (pcase mod
+               ((or 'meta 'alt) "alt")
+               ('control "ctrl")
+               ('shift "shift")
+               ('super "super")
+               ('hyper "hyper")
+               (_ (symbol-name mod))))
+           sorted-mods "+"))
+         (prefix (if (string-empty-p prefix) "" (concat prefix "+"))))
+    (concat prefix name)))
+
 (defun keymap-legend--entry-key-description (event)
-  "Return the key description for one EVENT."
-  (key-description (keymap-legend--event-key event)))
+  "Return the key description for one EVENT, in ki-editor style."
+  (keymap-legend--ki-style-key-description event))
 
 (defun keymap-legend--canonical-event (event)
   "Normalize EVENT to its function-key form for display and cell matching.
