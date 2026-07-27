@@ -58,6 +58,12 @@
 (require 'kkp)
 (require 'subr-x)
 
+(defvar kkp-chord-after-release-hook nil
+  "Hook run after a Kitty key-release event has been swallowed.
+Functions are called with no arguments.  This is useful for UI that must
+be refreshed after a release event, since the release itself can clear
+the echo area even though it does not become an Emacs command.")
+
 ;; ---------------------------------------------------------------------------
 ;; Fix: add event-type reporting (bit 1, value 2) to KKP flags.
 ;;
@@ -300,9 +306,12 @@ ordinary command loop does not update `this-command' or `last-command'."
         (kkp-chord--mark-held-intervening))
       [])
 
-     ;; Release event → swallow
+     ;; Release event → swallow.  Run the hook after chord release actions
+     ;; so clients can restore transient UI (for example an echo-area
+     ;; message) that the raw key-up event would otherwise erase.
      ((= event-type kkp-chord--event-release)
       (kkp-chord--on-release keycode)
+      (run-hooks 'kkp-chord-after-release-hook)
       [])
 
      ;; Repeat of a held chord modifier → swallow.
