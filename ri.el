@@ -25,13 +25,14 @@
 (eval-and-compile
   (let ((dir (file-name-directory (or load-file-name buffer-file-name))))
     (when dir
-      (dolist (sub '("mini-modal" "kkp-chord" "keymap-legend" "status-frame"))
+      (dolist (sub '("mini-modal" "kkp-chord" "keymap-legend" "status-frame" "semantic-regions"))
         (add-to-list 'load-path (expand-file-name sub dir))))))
 
 (require 'mini-modal)
 (require 'kkp-chord)
 (require 'keymap-legend)
 (require 'status-frame)
+(require 'semantic-regions)
 
 ;; Customized by `ri-enable'.
 ;; ---------------------------------------------------------------------------
@@ -251,6 +252,11 @@ Active only in NORM mode and when no transient menu is open."
   (keymap-legend-show "NORM" ri--normal-help-map '(:title "Normal Mode"))
   (set-transient-map (make-sparse-keymap) nil #'keymap-legend-hide))
 
+(defun sr--maybe-enable ()
+  "Enable `sr-mode' in text-editing buffers, skipping minibuffer and special-mode."
+  (unless (or (minibufferp)
+              (derived-mode-p 'special-mode))
+    (sr-mode 1)))
 ;;;###autoload
 (defun ri-enable ()
   "Enable `ri' globally."
@@ -271,6 +277,26 @@ Active only in NORM mode and when no transient menu is open."
     (dolist (entry to-remove)
       (setq minor-mode-alist (delq entry minor-mode-alist))))
   (push '(t (:eval (ri--mode-line-text))) minor-mode-alist)
-  (define-key mini-modal-map "?" #'ri--show-help))
+  (define-key mini-modal-map "?" #'ri--show-help)
+  ;; Semantic regions setup.
+  (add-hook 'after-change-major-mode #'sr--maybe-enable)
+  (dolist (buf (buffer-list))
+    (with-current-buffer buf
+      (sr--maybe-enable)))
+  (define-key mini-modal-map "j" #'sr-nav-left)
+  (define-key mini-modal-map "l" #'sr-nav-right)
+  (define-key mini-modal-map "i" #'sr-nav-up)
+  (define-key mini-modal-map "k" #'sr-nav-down)
+  (define-key mini-modal-map "u" #'sr-nav-prev)
+  (define-key mini-modal-map "o" #'sr-nav-next)
+  (define-key mini-modal-map "y" #'sr-nav-first)
+  (define-key mini-modal-map "p" #'sr-nav-last)
+  (define-key mini-modal-map "a" #'sr-set-line-mode)
+  (define-key mini-modal-map "A" #'sr-set-line-star-mode)
+  (define-key mini-modal-map "W" #'sr-set-character-mode)
+  (define-key mini-modal-map (kbd "<up>") 'undefined)
+  (define-key mini-modal-map (kbd "<down>") 'undefined)
+  (define-key mini-modal-map (kbd "<left>") 'undefined)
+  (define-key mini-modal-map (kbd "<right>") 'undefined))
 
 (provide 'ri)
