@@ -49,13 +49,31 @@
   "Hide the status frame."
   (status-frame-hide))
 
+(defvar ri--menu-state nil
+  "Current RI menu, or nil when no menu is active.")
+
+(defvar ri--restore-message-after-release nil
+  "Echo-area message to restore once after the next Kitty key release.")
+
+(defun ri--restore-message-after-release ()
+  "Restore a pending RI message after a swallowed Kitty key release."
+  (when ri--restore-message-after-release
+    (let ((text ri--restore-message-after-release))
+      (setq ri--restore-message-after-release nil)
+      (message "%s" text))))
+
+(defun ri--close-menu ()
+  "Close the current RI menu and hide its status frame."
+  (setq ri--menu-state nil)
+  (ri--hide-frame))
+
 ;; ── ESC handler shared by both menus ────────────────────────────────────
 
 (defun ri--exit-menu ()
   "Exit the current menu, hide the frame, and return to NORM mode."
   (interactive)
-  (ri--hide-frame)
   (set-transient-map nil)
+  (ri--close-menu)
   (mini-modal-normal))
 
 ;; ── Keymaps ─────────────────────────────────────────────────────────────
@@ -80,22 +98,31 @@
 (defun ri-space-menu ()
   "Show the Space menu via a transient keymap."
   (interactive)
+  (setq ri--menu-state 'space)
   (ri--show-frame "j - Editor, v - Paste")
-  (set-transient-map ri--space-layer-map t #'ri--hide-frame))
+  (set-transient-map
+   ri--space-layer-map t
+   (lambda ()
+     ;; Do not close a submenu that replaced this menu.
+     (when (eq ri--menu-state 'space)
+       (ri--close-menu)))))
 
 (defun ri-editor-menu ()
   "Enter the Editor submenu."
   (interactive)
+  (setq ri--menu-state 'editor)
   (ri--update-frame "v - Quit")
-  (set-transient-map ri--editor-layer-map t #'ri--hide-frame)
-  ;; The old transient-map cleanup may have hidden the frame; re-show.
-  (ri--show-frame "v - Quit"))
+  (set-transient-map
+   ri--editor-layer-map t
+   (lambda ()
+     (when (eq ri--menu-state 'editor)
+       (ri--close-menu)))))
 
 (defun ri-space-paste ()
   "Paste and exit the Space menu."
   (interactive)
-  (ri--hide-frame)
   (set-transient-map nil)
+  (ri--close-menu)
   (yank))
 
 ;; ── Quit with unsaved-file check ────────────────────────────────────────
@@ -118,15 +145,25 @@ otherwise just the base name is shown."
 
 (defun ri--quit-with-check ()
   "Quit Emacs, unless there are unsaved files.
-Unsaved files are reported in the echo area."
+Unsaved files are reported in the echo area and the menu is dismissed."
   (interactive)
   (let ((unsaved (ri--unsaved-files)))
     (if unsaved
-        (message "Cannot quit with unsaved files: %s"
-                 (format "[%s]" (mapconcat (lambda (f) (format "\"%s\"" f))
-                                            unsaved ", ")))
-      (ri--hide-frame)
+        (progn
+          (set-transient-map nil)
+          (ri--close-menu)
+          (let ((text
+                 (format "Cannot quit with unsaved files: [%s]"
+                         (mapconcat (lambda (f) (format "\"%s\"" f))
+                                    unsaved ", "))))
+            ;; The physical release of `v' is a KKP input event.  Emacs can
+            ;; clear the echo area when that event arrives even though
+            ;; kkp-chord swallows it.  Remember this message and replay it
+            ;; from `kkp-chord-after-release-hook'.
+            (setq ri--restore-message-after-release text)
+            (message "%s" text)))
       (set-transient-map nil)
+      (ri--close-menu)
       (save-buffers-kill-terminal))))
 
 ;; ── v: paste momentary layer (tap-hold via KKP chord) ──────────────────
@@ -153,7 +190,7 @@ Unsaved files are reported in the echo area."
   "Return non-nil when a KKP chord should be active.
 Active only in NORM mode and when no transient menu is open."
   (and (bound-and-true-p mini-modal-mode)
-       (null overriding-terminal-local-map)))
+       (null ri--menu-state)))
 
 (defun ri-chord-setup ()
   "Register KKP chords for momentary layers."
@@ -171,6 +208,7 @@ Active only in NORM mode and when no transient menu is open."
   "Enable `ri' globally."
   (interactive)
   (setq status-frame-height 6)
+  (add-hook 'kkp-chord-after-release-hook #'ri--restore-message-after-release)
   (ri-chord-setup)
   (define-key mini-modal-map (kbd "RET") 'undefined)
   (define-key mini-modal-map "v" #'ri-space-paste)
