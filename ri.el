@@ -1,32 +1,30 @@
-;;; ri.el --- Ri modal editing for Kitty terminal -*- lexical-binding: t; -*-
+;;; ri.el --- Ri modal editing via the Kitty Keyboard Protocol -*- lexical-binding: t; -*-
 ;;
 ;; Copyright (C) 2026 Roman Frołow
 ;;
 ;; Author: Roman Frołow
 ;; Maintainer: Roman Frołow
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (mini-modal "0.1") (kkp "0.1") (keymap-legend "0.1") (status-frame "0.1"))
+;; Package-Requires: ((emacs "29.1") (mini-modal "0.1") (kkp-chord "0.1") (keymap-legend "0.1") (status-frame "0.1") (semantic-regions "0.1"))
 ;; Keywords: convenience, editing, terminals
 ;; URL: https://github.com/rofrol/ri-mode
 ;; SPDX-License-Identifier: Apache-2.0
 
 ;;; Commentary:
 
-;; Ri-mode provides modal editing for the Kitty terminal via mini-modal.
-;; Load and enable with:
+;; Ri-mode provides modal editing for terminals supporting the Kitty Keyboard Protocol (Kitty, Ghostty, WezTerm).
 ;;
-;;   (use-package ri
-;;     :load-path "~/personal_projects/emacs/ri-mode"
-;;     :config
-;;     (ri-enable))
+;; For local development with vendored dependencies, load via dev.el:
+;;
+;;     emacs -Q -l ./dev.el
+;;
+;; Or from your Emacs config:
+;;
+;;     (load "~/personal_projects/emacs/ri-mode/dev.el")
 
 ;;; Code:
 
-(eval-and-compile
-  (let ((dir (file-name-directory (or load-file-name buffer-file-name))))
-    (when dir
-      (dolist (sub '("mini-modal" "kkp-chord" "keymap-legend" "status-frame" "semantic-regions"))
-        (add-to-list 'load-path (expand-file-name sub dir))))))
+;;;; Dependencies
 
 (require 'mini-modal)
 (require 'kkp-chord)
@@ -34,10 +32,7 @@
 (require 'status-frame)
 (require 'semantic-regions)
 
-;; Customized by `ri-enable'.
-;; ---------------------------------------------------------------------------
-;; Space menu
-;; ---------------------------------------------------------------------------
+;;;; Status frame
 
 (defun ri--show-frame (text)
   "Show the status frame with TEXT."
@@ -50,6 +45,8 @@
 (defun ri--hide-frame ()
   "Hide the status frame."
   (status-frame-hide))
+
+;;;; Menu state
 
 (defvar ri--menu-state nil
   "Current RI menu, or nil when no menu is active.")
@@ -69,6 +66,7 @@
   (setq ri--menu-state nil)
   (keymap-legend-hide)
   (ri--hide-frame))
+
 (defun ri--exit-menu ()
   "Exit the current menu, hide the frame, and return to NORM mode."
   (interactive)
@@ -76,7 +74,8 @@
   (ri--close-menu)
   (mini-modal-normal))
 
-;; ── Keymaps ─────────────────────────────────────────────────────────────
+;;;; Keymaps
+
 (defvar ri--space-layer-map
   (let ((map (make-sparse-keymap)))
     (define-key map "j" '(menu-item "Editor" ri-editor-menu))
@@ -91,6 +90,9 @@
     (define-key map (kbd "<escape>") #'ri--exit-menu)
     map)
   "Keymap for the Editor submenu.")
+
+;;;; Menu commands
+
 (defun ri-space-menu ()
   "Show the Space menu via a transient keymap."
   (interactive)
@@ -113,6 +115,7 @@
    (lambda ()
      (when (eq ri--menu-state 'editor)
        (ri--close-menu)))))
+
 (defun ri-space-paste ()
   "Paste and exit the Space menu."
   (interactive)
@@ -120,7 +123,7 @@
   (ri--close-menu)
   (yank))
 
-;; ── Quit with unsaved-file check ────────────────────────────────────────
+;;;; Quit with unsaved-file check
 
 (defun ri--unsaved-files ()
   "Return a list of unsaved file names.
@@ -161,7 +164,7 @@ Unsaved files are reported in the echo area and the menu is dismissed."
       (ri--close-menu)
       (save-buffers-kill-terminal))))
 
-;; ── v: paste momentary layer (tap-hold via KKP chord) ──────────────────
+;;;; Paste momentary layer (v: tap-hold via KKP chord)
 
 (defun ri-paste-before ()
   "Paste (yank) before the cursor."
@@ -198,8 +201,8 @@ Active only in NORM mode and when no transient menu is open."
                  '(:title "Paste" :release "Paste")))
     :on-release #'keymap-legend-hide
     :map ri--paste-layer-map))
-;; Keybindings and hooks are registered by `ri-enable'.
-;; ── Mode line ────────────────────────────────────────────────────────────
+
+;;;; Mode line
 
 (defun ri--submode-name ()
   "Return the human-readable name for the current `sr-submode'."
@@ -221,9 +224,7 @@ Active only in NORM mode and when no transient menu is open."
       (format " NORM[%s] [Press ? for help]" (ri--submode-name))
     " INST"))
 
-;; Replaced by `ri-enable' — see `ri-enable' for the lighter setup.
-
-;; ── Help keymap legend for NORM mode (?) ─────────────────────────────────
+;;;; Help keymap legend
 
 (defvar ri--normal-help-map
   (let ((map (make-sparse-keymap)))
@@ -252,11 +253,16 @@ Active only in NORM mode and when no transient menu is open."
   (keymap-legend-show "NORM" ri--normal-help-map '(:title "Normal Mode"))
   (set-transient-map (make-sparse-keymap) nil #'keymap-legend-hide))
 
+;;;; Semantic regions auto-enable
+
 (defun sr--maybe-enable ()
   "Enable `sr-mode' in text-editing buffers, skipping minibuffer and special-mode."
   (unless (or (minibufferp)
               (derived-mode-p 'special-mode))
     (sr-mode 1)))
+
+;;;; Global setup
+
 ;;;###autoload
 (defun ri-enable ()
   "Enable `ri' globally."
@@ -300,3 +306,4 @@ Active only in NORM mode and when no transient menu is open."
   (define-key mini-modal-map (kbd "<right>") 'undefined))
 
 (provide 'ri)
+;;; ri.el ends here
