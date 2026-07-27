@@ -5,7 +5,7 @@
 ;; Author: Roman Frołow
 ;; Maintainer: Roman Frołow
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (mini-modal "0.1") (kkp-chord "0.1") (keymap-legend "0.1") (status-frame "0.1") (semantic-regions "0.1"))
+;; Package-Requires: ((emacs "29.1") (mini-modal "0.1") (kkp-chord "0.1") (keymap-legend "0.1") (status-frame "0.1") (semantic-regions "0.1") (modal-cursor "0.1"))
 ;; Keywords: convenience, editing, terminals
 ;; URL: https://github.com/rofrol/ri-mode
 ;; SPDX-License-Identifier: Apache-2.0
@@ -31,6 +31,7 @@
 (require 'keymap-legend)
 (require 'status-frame)
 (require 'semantic-regions)
+(require 'modal-cursor)
 (require 'cl-lib)
 
 ;;;; Status frame
@@ -326,6 +327,7 @@ Active only in NORM mode and when no transient menu is open."
   "Enable `ri' globally."
   (interactive)
   (setq status-frame-height 6)
+  (modal-cursor-mode 1)
   (mini-modal-setup)
   (kkp-chord-mode 1)
   (global-kkp-mode 1)
