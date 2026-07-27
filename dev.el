@@ -7,7 +7,8 @@
                      "kkp-chord"
                      "keymap-legend"
                      "status-frame"
-                     "semantic-regions"))
+                     "semantic-regions"
+                     "modal-cursor"))
     (add-to-list 'load-path
                  (expand-file-name package root))))
 
