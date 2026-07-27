@@ -256,6 +256,9 @@ Active only in NORM mode and when no transient menu is open."
   "Enable `ri' globally."
   (interactive)
   (setq status-frame-height 6)
+  (mini-modal-setup)
+  (kkp-chord-mode 1)
+  (global-kkp-mode 1)
   (add-hook 'kkp-chord-after-release-hook #'ri--restore-message-after-release)
   (ri-chord-setup)
   (define-key mini-modal-map (kbd "RET") 'undefined)
