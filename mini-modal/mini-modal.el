@@ -62,8 +62,13 @@ Skips the minibuffer and buffers derived from `special-mode'
   :group 'mini-modal)
 
 (defun mini-modal-normal ()
-  "Enter normal state (enable `mini-modal-mode' in current buffer)."
+  "Enter normal state (enable `mini-modal-mode' in current buffer).
+When exiting insert mode, move the cursor back one character
+so it sits ON the last character, matching Ki behavior."
   (interactive)
+  (unless mini-modal-mode
+    (unless (bolp)
+      (backward-char)))
   (mini-modal-mode 1))
 
 (defun mini-modal-insert ()
