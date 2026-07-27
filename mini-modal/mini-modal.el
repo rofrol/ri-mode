@@ -41,8 +41,10 @@ When disabled (INST): normal editing, `ESC' returns to normal mode."
   (force-mode-line-update))
 
 (defun mini-modal--turn-on ()
-  "Enable `mini-modal-mode' unconditionally in the current buffer."
-  (mini-modal-mode 1))
+  "Enable `mini-modal-mode' in the current buffer.
+Skips the minibuffer so prompts (`yes-or-no-p', etc.) accept input."
+  (unless (minibufferp)
+    (mini-modal-mode 1)))
 
 ;;;###autoload
 (define-globalized-minor-mode mini-modal-global-mode
