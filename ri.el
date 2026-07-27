@@ -25,10 +25,11 @@
 (eval-and-compile
   (let ((dir (file-name-directory (or load-file-name buffer-file-name))))
     (when dir
-      (dolist (sub '("mini-modal"))
+      (dolist (sub '("mini-modal" "status-frame"))
         (add-to-list 'load-path (expand-file-name sub dir))))))
 
 (require 'mini-modal)
+(require 'status-frame)
 
 ;; Customized by `ri-enable'.
 (defun my-status-frame-show ()
