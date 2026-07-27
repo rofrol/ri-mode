@@ -33,6 +33,7 @@
 (require 'semantic-regions)
 (require 'modal-cursor)
 (require 'ri-extend)
+(require 'ri-duplicate)
 (require 'cl-lib)
 
 ;;;; Status frame
@@ -120,12 +121,19 @@
      (when (eq ri--menu-state 'editor)
        (ri--close-menu)))))
 
+(defun ri--finish-edit-command ()
+  "Leave Extend after an edit command and refresh RI UI state."
+  (ri--exit-extend)
+  (ri--update-highlight)
+  (force-mode-line-update))
+
 (defun ri-space-paste ()
-  "Paste and exit the Space menu."
+  "Paste, leave Extend, and exit the Space menu."
   (interactive)
   (set-transient-map nil)
   (ri--close-menu)
-  (yank))
+  (yank)
+  (ri--finish-edit-command))
 
 ;;;; Quit with unsaved-file check
 
@@ -179,16 +187,24 @@ Unsaved files are reported in the echo area and the menu is dismissed."
 
 ;;;; Paste momentary layer (v: tap-hold via KKP chord)
 
-(defun ri-paste-before ()
-  "Paste (yank) before the cursor."
+(defun ri-paste ()
+  "Paste (yank) and leave Extend."
   (interactive)
-  (yank))
+  (yank)
+  (ri--finish-edit-command))
+
+(defun ri-paste-before ()
+  "Paste (yank) before the cursor and leave Extend."
+  (interactive)
+  (yank)
+  (ri--finish-edit-command))
 
 (defun ri-paste-after ()
-  "Paste (yank) after the cursor."
+  "Paste (yank) after the cursor and leave Extend."
   (interactive)
   (unless (eobp) (forward-char))
-  (yank))
+  (yank)
+  (ri--finish-edit-command))
 
 (defun ri-enter-insert-left ()
   "Move to the start of the current unit and enter insert mode."
@@ -208,6 +224,19 @@ Unsaved files are reported in the echo area and the menu is dismissed."
   (ri--update-highlight)
   (mini-modal-insert))
 
+(defvar ri--copy-layer-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "j" '(menu-item "<< Gap Dup" ri--dup-chord-before-gap))
+    (define-key map "l" '(menu-item "Gap Dup >>" ri--dup-chord-after-gap))
+    (define-key map "o" '(menu-item "Gap Dup >" ri--dup-chord-after-next-gap))
+    (define-key map "u" '(menu-item "< Gap Dup" ri--dup-chord-before-prev-gap))
+    (define-key map ";" '(menu-item "Dup >" ri--dup-chord-after))
+    (define-key map "h" '(menu-item "< Dup" ri--dup-chord-before))
+    (define-key map "i" '(menu-item "Dup ^" ri--dup-chord-above))
+    (define-key map "k" '(menu-item "Dup v" ri--dup-chord-below))
+    map)
+  "Keymap for the Copy/Dup momentary layer (c held).")
+
 (defvar ri--paste-layer-map
   (let ((map (make-sparse-keymap)))
     (define-key map "h" '(menu-item "< Paste" ri-paste-before))
@@ -219,9 +248,14 @@ Unsaved files are reported in the echo area and the menu is dismissed."
 
 (defconst ri--layer-specs
   (list
+   (list :key ?c
+         :label "Copy/≡ Dup"
+         :tap #'ri-copy-unit
+         :map ri--copy-layer-map
+         :release "Copy")
    (list :key ?v
          :label "≡ Paste"
-         :tap #'yank
+         :tap #'ri-paste
          :map ri--paste-layer-map
          :release "Paste"))
   "Momentary layer specifications.
@@ -278,9 +312,11 @@ Active only in NORM mode and when no transient menu is open."
     "?"))
 
 (defun ri--mode-line-text ()
-  "Return the mode-line text with mode, submode, and help hint."
+  "Return the mode-line text with mode, submode, Extend, and help hint."
   (if (bound-and-true-p mini-modal-mode)
-      (format " NORM[%s] [Press ? for help]" (ri--submode-name))
+      (format " NORM[%s]%s [Press ? for help]"
+              (ri--submode-name)
+              (if (ri--selection-active-p) " Extend" ""))
     " INST"))
 
 ;;;; Help keymap legend
@@ -304,6 +340,7 @@ Active only in NORM mode and when no transient menu is open."
     (define-key map "S" '(menu-item "WORD*" ri-extend-set-word-star-mode))
     (define-key map (kbd "M-s") '(menu-item "WORD+" ri-extend-set-word-plus-mode))
     (define-key map "w" '(menu-item "SUBWORD" ri-extend-set-subword-mode))
+    (define-key map "c" '(menu-item "Copy/≡ Dup" ri-copy-unit))
     (define-key map "v" '(menu-item "≡ Paste" ri-space-paste))
     (define-key map "f" '(menu-item "Extend" ri-toggle-extend))
     (define-key map (kbd "SPC") '(menu-item "Space" ri-space-menu))
@@ -343,6 +380,7 @@ Active only in NORM mode and when no transient menu is open."
   (ri-chord-setup)
   (define-key mini-modal-map "h" #'ri-enter-insert-left)
   (define-key mini-modal-map ";" #'ri-enter-insert-right)
+  (define-key mini-modal-map "c" #'ri-copy-unit)
   (define-key mini-modal-map "v" #'ri-space-paste)
   (define-key mini-modal-map (kbd "SPC") #'ri-space-menu)
   (let (to-remove)
