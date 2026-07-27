@@ -211,30 +211,37 @@
       nil)))
 
 (defun sr-forward-word-non-symbol ()
-  "Move forward by one non-symbol unit in Word mode."
+  "Move forward to the next non-symbol word (skip punctuation)."
   (interactive)
-  (let ((char (char-after)))
-    (cond
-     ((eobp) nil)
-     ((and char (string-match-p sr-word-chars (string char)))
-      (skip-chars-forward "[:alnum:]_-")
-      (skip-chars-forward " \t\n"))
-     ((memq char '(?\s ?\t))
-      (skip-chars-forward " \t"))
-     ((eq char ?\n)
-      (forward-char 1))
-     (t
-      (forward-char 1)))))
+  (when (looking-at sr-word-chars)
+    (skip-chars-forward "[:alnum:]_-"))
+  (let ((found nil))
+    (while (not found)
+      (skip-chars-forward " \t\n")
+      (cond
+       ((eobp)
+        (setq found t))
+       ((looking-at sr-word-chars)
+        (setq found t))
+       (t
+        (forward-char 1))))))
 
 (defun sr-backward-word-non-symbol ()
-  "Move backward by one non-symbol unit in Word mode."
+  "Move backward to the previous non-symbol word (skip punctuation)."
   (interactive)
-  (skip-chars-backward " \t\n")
-  (when (not (bobp))
-    (backward-char 1)
-    (if (looking-at sr-word-chars)
+  (let ((found nil))
+    (while (not found)
+      (skip-chars-backward " \t\n")
+      (cond
+       ((bobp)
+        (setq found t))
+       ((save-excursion
+          (backward-char 1)
+          (looking-at sr-word-chars))
         (skip-chars-backward "[:alnum:]_-")
-      (backward-char 1))))
+        (setq found t))
+       (t
+        (backward-char 1))))))
 
 (defun sr-forward-bigword-all ()
   "Move forward by one bigword unit in WORD* mode."
