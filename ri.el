@@ -35,6 +35,25 @@
 (require 'ri-extend)
 (require 'ri-duplicate)
 (require 'cl-lib)
+(require 'face-remap)
+
+;;;; Mode-line styling
+
+(defface ri-mode-line
+  '((t (:foreground "#ffffff" :background "#3478c6")))
+  "Face used for the `ri' status line."
+  :group 'ri)
+
+(defvar-local ri--mode-line-face-remappings nil
+  "Face remapping cookies for the `ri' status line.")
+
+(defun ri--mode-line-enable ()
+  "Apply the classic blue RI styling to the current buffer mode line."
+  (unless ri--mode-line-face-remappings
+    (setq ri--mode-line-face-remappings
+          (mapcar (lambda (face)
+                    (face-remap-add-relative face 'ri-mode-line))
+                  '(mode-line-active mode-line-inactive mode-line)))))
 
 ;;;; Status frame
 
@@ -362,6 +381,7 @@ Active only in NORM mode and when no transient menu is open."
   (unless (or (minibufferp)
               (derived-mode-p 'special-mode))
     (sr-mode 1)
+    (ri--mode-line-enable)
     ;; Run after semantic-regions so Extend can widen its unit overlay.
     (add-hook 'post-command-hook #'ri--update-highlight t t)))
 
