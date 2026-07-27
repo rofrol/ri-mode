@@ -31,6 +31,7 @@
 (require 'keymap-legend)
 (require 'status-frame)
 (require 'semantic-regions)
+(require 'cl-lib)
 
 ;;;; Status frame
 
@@ -79,7 +80,7 @@
 (defvar ri--space-layer-map
   (let ((map (make-sparse-keymap)))
     (define-key map "j" '(menu-item "Editor" ri-editor-menu))
-    (define-key map "v" '(menu-item "Paste" ri-space-paste))
+    (define-key map "v" '(menu-item "≡ Paste" ri-space-paste))
     (define-key map (kbd "<escape>") #'ri--exit-menu)
     map)
   "Keymap for the Space menu.")
@@ -184,6 +185,28 @@ Unsaved files are reported in the echo area and the menu is dismissed."
     map)
   "Keymap for the paste momentary layer (v held).")
 
+;;;; Layer specs (single source of truth for labels and icons)
+
+(defconst ri--layer-specs
+  (list
+   (list :key ?v
+         :label "≡ Paste"
+         :tap #'yank
+         :map ri--paste-layer-map
+         :release "Paste"))
+  "Momentary layer specifications.
+:key     -- KKP keycode for the chord modifier.
+:label   -- Display label with icon (used in menus and legend titles).
+:tap     -- Command called on tap (no sub-key pressed).
+:map     -- Keymap for the momentary layer.
+:release -- Label shown on release, or nil.")
+
+(defun ri--layer-spec (keycode)
+  "Return the layer spec for KEYCODE, or nil."
+  (cl-find keycode ri--layer-specs
+           :key (lambda (s) (plist-get s :key))
+           :test #'eql))
+
 (defun ri--chord-when-p ()
   "Return non-nil when a KKP chord should be active.
 Active only in NORM mode and when no transient menu is open."
@@ -191,16 +214,22 @@ Active only in NORM mode and when no transient menu is open."
        (null ri--menu-state)))
 
 (defun ri-chord-setup ()
-  "Register KKP chords for momentary layers."
-  (kkp-chord-define ?v
-    :tap #'yank
-    :when #'ri--chord-when-p
-    :on-press (lambda ()
-                (keymap-legend-show
-                 "Paste" ri--paste-layer-map
-                 '(:title "Paste" :release "Paste")))
-    :on-release #'keymap-legend-hide
-    :map ri--paste-layer-map))
+  "Register KKP chords for momentary layers from `ri--layer-specs'."
+  (dolist (spec ri--layer-specs)
+    (let ((key (plist-get spec :key))
+          (tap (plist-get spec :tap))
+          (map (plist-get spec :map))
+          (label (plist-get spec :label))
+          (release (plist-get spec :release)))
+      (kkp-chord-define key
+        :tap tap
+        :when #'ri--chord-when-p
+        :on-press (lambda ()
+                    (ri--hide-frame)
+                    (keymap-legend-show label map
+                      (list :title label :release release)))
+        :on-release #'keymap-legend-hide
+        :map map))))
 
 ;;;; Mode line
 
@@ -240,7 +269,7 @@ Active only in NORM mode and when no transient menu is open."
     (define-key map "a" '(menu-item "LINE" sr-set-line-mode))
     (define-key map "A" '(menu-item "LINE*" sr-set-line-star-mode))
     (define-key map "W" '(menu-item "CHAR" sr-set-character-mode))
-    (define-key map "v" '(menu-item "Paste" ri-space-paste))
+    (define-key map "v" '(menu-item "≡ Paste" ri-space-paste))
     (define-key map (kbd "SPC") '(menu-item "Menu" ri-space-menu))
     (define-key map "?" '(menu-item "Help" ignore))
     (define-key map (kbd "<escape>") '(menu-item "Close" ignore))
