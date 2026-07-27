@@ -2,7 +2,7 @@
 
 ;; Author: Roman Frolow
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "27.1"))
+;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: convenience, editing
 ;; URL: https://github.com/yourname/mini-modal
 
@@ -10,64 +10,62 @@
 
 ;; Minimal modal editing:
 ;;
-;;   NORM:
+;;   NORM (mini-modal-mode on):
 ;;     h   -> enter insert mode
+;;     ESC -> no-op (already normal)
 ;;
-;;   INST:
+;;   INST (mini-modal-mode off):
 ;;     ESC -> return to normal mode
 ;;
 ;; The mode line displays NORM or INST.
 
 ;;; Code:
 
-(defvar-local mini-modal-state 'normal)
-
-(defvar mini-modal-normal-map
+(defvar mini-modal-map
   (let ((map (make-sparse-keymap)))
+    (suppress-keymap map t)
     (define-key map (kbd "h") #'mini-modal-insert)
-    map))
-
-(defvar mini-modal-insert-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "<escape>") #'mini-modal-normal)
-    map))
-
-(defun mini-modal--update-map ()
-  (setq minor-mode-overriding-map-alist
-        `((mini-modal-mode
-           . ,(if (eq mini-modal-state 'normal)
-                  mini-modal-normal-map
-                mini-modal-insert-map))))
-  (force-mode-line-update))
-
-(defun mini-modal-normal ()
-  "Enter normal state."
-  (interactive)
-  (setq mini-modal-state 'normal)
-  (mini-modal--update-map))
-
-(defun mini-modal-insert ()
-  "Enter insert state."
-  (interactive)
-  (setq mini-modal-state 'insert)
-  (mini-modal--update-map))
-
-(defun mini-modal--lighter ()
-  (if (eq mini-modal-state 'normal)
-      " NORM"
-    " INST"))
+    map)
+  "Keymap for `mini-modal-mode' (normal mode).
+Self-insert is suppressed; only explicitly bound keys work.")
 
 ;;;###autoload
 (define-minor-mode mini-modal-mode
-  "Minimal normal/insert modal editing mode."
-  :lighter (:eval (mini-modal--lighter))
-  :keymap nil
-  (if mini-modal-mode
-      (mini-modal-normal)
-    (setq minor-mode-overriding-map-alist
-          (assq-delete-all 'mini-modal-mode
-                           minor-mode-overriding-map-alist))
-    (force-mode-line-update)))
+  "Minimal normal/insert modal editing mode.
+
+When enabled (NORM): self-insert is suppressed, `h' enters insert mode.
+When disabled (INST): normal editing, `ESC' returns to normal mode."
+  :lighter (:eval (if mini-modal-mode " NORM" " INST"))
+  :keymap mini-modal-map
+  :group 'mini-modal
+  (force-mode-line-update))
+
+(defun mini-modal--turn-on ()
+  "Enable `mini-modal-mode' unconditionally in the current buffer."
+  (mini-modal-mode 1))
+
+;;;###autoload
+(define-globalized-minor-mode mini-modal-global-mode
+  mini-modal-mode
+  mini-modal--turn-on
+  :group 'mini-modal)
+
+(defun mini-modal-normal ()
+  "Enter normal state (enable `mini-modal-mode' in current buffer)."
+  (interactive)
+  (mini-modal-mode 1))
+
+(defun mini-modal-insert ()
+  "Enter insert state (disable `mini-modal-mode' in current buffer)."
+  (interactive)
+  (mini-modal-mode -1))
+
+;;;###autoload
+(defun mini-modal-setup ()
+  "Configure global ESC binding and enable `mini-modal-global-mode'.
+Call this once during init."
+  (keymap-global-set "<escape>" #'mini-modal-normal)
+  (mini-modal-global-mode 1))
 
 (provide 'mini-modal)
 
