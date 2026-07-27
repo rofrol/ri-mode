@@ -32,39 +32,112 @@
 (require 'status-frame)
 
 ;; Customized by `ri-enable'.
-(defun my-status-frame-show ()
+;; ---------------------------------------------------------------------------
+;; Space menu
+;; ---------------------------------------------------------------------------
+
+(defun ri--show-frame (text)
+  "Show the status frame with TEXT."
+  (status-frame-show text))
+
+(defun ri--update-frame (text)
+  "Update the status frame text to TEXT."
+  (status-frame-set-text text))
+
+(defun ri--hide-frame ()
+  "Hide the status frame."
+  (status-frame-hide))
+
+;; ── ESC handler shared by both menus ────────────────────────────────────
+
+(defun ri--exit-menu ()
+  "Exit the current menu, hide the frame, and return to NORM mode."
   (interactive)
-  (status-frame-show
-   "Status frame
+  (ri--hide-frame)
+  (set-transient-map nil)
+  (mini-modal-normal))
 
-Line 2
-Line 3
-Line 4
-Line 5
-Line 6"))
+;; ── Keymaps ─────────────────────────────────────────────────────────────
 
-(defun my-status-frame-hide-before-next-key ()
-  "Hide status frame before processing the next key."
-  (when (and (boundp 'status-frame--frame)
-             status-frame--frame
-             (frame-visible-p status-frame--frame))
-    (status-frame-hide)
-    (remove-hook 'pre-command-hook
-                 #'my-status-frame-hide-before-next-key)))
+(defvar ri--space-layer-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "j" #'ri-editor-menu)
+    (define-key map "v" #'ri-space-paste)
+    (define-key map (kbd "<escape>") #'ri--exit-menu)
+    map)
+  "Keymap for the Space menu.")
 
-(defun my-status-frame-space ()
+(defvar ri--editor-layer-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "v" #'ri--quit-with-check)
+    (define-key map (kbd "<escape>") #'ri--exit-menu)
+    map)
+  "Keymap for the Editor submenu.")
+
+;; ── Commands ────────────────────────────────────────────────────────────
+
+(defun ri-space-menu ()
+  "Show the Space menu via a transient keymap."
   (interactive)
-  (my-status-frame-show)
-  (add-hook 'pre-command-hook
-            #'my-status-frame-hide-before-next-key))
+  (ri--show-frame "j - Editor, v - Paste")
+  (set-transient-map ri--space-layer-map t #'ri--hide-frame))
 
-(global-set-key (kbd "SPC") #'my-status-frame-space)
+(defun ri-editor-menu ()
+  "Enter the Editor submenu."
+  (interactive)
+  (ri--update-frame "v - Quit")
+  (set-transient-map ri--editor-layer-map t #'ri--hide-frame)
+  ;; The old transient-map cleanup may have hidden the frame; re-show.
+  (ri--show-frame "v - Quit"))
+
+(defun ri-space-paste ()
+  "Paste and exit the Space menu."
+  (interactive)
+  (ri--hide-frame)
+  (set-transient-map nil)
+  (yank))
+
+;; ── Quit with unsaved-file check ────────────────────────────────────────
+
+(defun ri--unsaved-files ()
+  "Return a list of unsaved file names.
+Files under a git root are displayed relative to that root;
+otherwise just the base name is shown."
+  (let (result)
+    (dolist (buf (buffer-list))
+      (when (and (buffer-file-name buf)
+                 (buffer-modified-p buf))
+        (let* ((file (buffer-file-name buf))
+               (git-root (locate-dominating-file file ".git"))
+               (display-name (if git-root
+                                 (file-relative-name file git-root)
+                               (file-name-nondirectory file))))
+          (push display-name result))))
+    (nreverse result)))
+
+(defun ri--quit-with-check ()
+  "Quit Emacs, unless there are unsaved files.
+Unsaved files are reported in the echo area."
+  (interactive)
+  (let ((unsaved (ri--unsaved-files)))
+    (if unsaved
+        (message "Cannot quit with unsaved files: %s"
+                 (format "[%s]" (mapconcat (lambda (f) (format "\"%s\"" f))
+                                            unsaved ", ")))
+      (ri--hide-frame)
+      (set-transient-map nil)
+      (save-buffers-kill-terminal))))
+
+;; Keybindings and hooks are registered by `ri-enable'.
 
 ;;;###autoload
 (defun ri-enable ()
   "Enable `ri' globally."
   (interactive)
-)
+  (setq status-frame-height 6)
+  (define-key mini-modal-map (kbd "RET") 'undefined)
+  (define-key mini-modal-map "v" #'ri-space-paste)
+  (define-key mini-modal-map (kbd "SPC") #'ri-space-menu))
 
 (provide 'ri)
 
