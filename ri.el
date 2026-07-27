@@ -34,6 +34,8 @@
 (require 'modal-cursor)
 (require 'ri-extend)
 (require 'ri-duplicate)
+(require 'ri-edit)
+(require 'ri-transform)
 (require 'cl-lib)
 (require 'face-remap)
 
@@ -256,6 +258,37 @@ Unsaved files are reported in the echo area and the menu is dismissed."
     map)
   "Keymap for the Copy/Dup momentary layer (c held).")
 
+(defvar ri--eat-layer-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "j" '(menu-item "<< Eat" ri-eat-left))
+    (define-key map "l" '(menu-item "Eat >>" ri-eat-right))
+    (define-key map "u" '(menu-item "< Eat" ri-eat-prev))
+    (define-key map "o" '(menu-item "Eat >" ri-eat-next))
+    (define-key map "y" '(menu-item "|< Eat" ri-eat-first))
+    (define-key map "p" '(menu-item "Eat >|" ri-eat-last)) map))
+
+(defvar ri--open-layer-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "j" '(menu-item "<< Open" ri-open-left))
+    (define-key map "l" '(menu-item "Open >>" ri-open-right))
+    (define-key map "u" '(menu-item "< Open" ri-open-prev))
+    (define-key map "o" '(menu-item "Open >" ri-open-next))
+    (define-key map "h" '(menu-item "< Insert" ri-enter-insert-left))
+    (define-key map ";" '(menu-item "Insert >" ri-enter-insert-right))
+    (define-key map "i" '(menu-item "Open ^" ri-open-above))
+    (define-key map "k" '(menu-item "Open v" ri-open-below)) map))
+
+(defvar ri--swap-layer-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "i" '(menu-item "Swap ^" ri-swap-up))
+    (define-key map "j" '(menu-item "<< Swap" ri-swap-left))
+    (define-key map "l" '(menu-item "Swap >>" ri-swap-right))
+    (define-key map "k" '(menu-item "Swap v" ri-swap-down))
+    (define-key map "u" '(menu-item "< Swap" ri-swap-prev))
+    (define-key map "y" '(menu-item "|< Swap" ri-swap-first))
+    (define-key map "p" '(menu-item "Swap >|" ri-swap-last))
+    (define-key map "o" '(menu-item "Swap >" ri-swap-next)) map))
+
 (defvar ri--paste-layer-map
   (let ((map (make-sparse-keymap)))
     (define-key map "h" '(menu-item "< Paste" ri-paste-before))
@@ -272,6 +305,10 @@ Unsaved files are reported in the echo area and the menu is dismissed."
          :tap #'ri-copy-unit
          :map ri--copy-layer-map
          :release "Copy")
+   (list :key ?r :label "Delete/≡ Eat" :tap #'ri-delete-selection :map ri--eat-layer-map :release "Delete")
+   (list :key ?g :label "≡ Open" :tap #'ri-change-selection :map ri--open-layer-map :release "Change")
+   (list :key ?t :label "≡ Swap" :tap nil :map ri--swap-layer-map :release nil)
+   (list :key ?F :label "… Transform" :tap nil :map ri--transform-layer-map :release nil)
    (list :key ?v
          :label "≡ Paste"
          :tap #'ri-paste
@@ -360,6 +397,10 @@ Active only in NORM mode and when no transient menu is open."
     (define-key map (kbd "M-s") '(menu-item "WORD+" ri-extend-set-word-plus-mode))
     (define-key map "w" '(menu-item "SUBWORD" ri-extend-set-subword-mode))
     (define-key map "c" '(menu-item "Copy/≡ Dup" ri-copy-unit))
+    (define-key map "r" '(menu-item "Delete/≡ Eat" ri-delete-selection))
+    (define-key map "g" '(menu-item "≡ Open" ri-change-selection))
+    (define-key map "t" '(menu-item "≡ Swap" ignore))
+    (define-key map "F" '(menu-item "… Transform" ignore))
     (define-key map "v" '(menu-item "≡ Paste" ri-space-paste))
     (define-key map "f" '(menu-item "Extend" ri-toggle-extend))
     (define-key map "z" '(menu-item "≡ Undo/Redo" ri-smart-undo))
@@ -403,6 +444,10 @@ Active only in NORM mode and when no transient menu is open."
   (define-key mini-modal-map "h" #'ri-enter-insert-left)
   (define-key mini-modal-map ";" #'ri-enter-insert-right)
   (define-key mini-modal-map "c" #'ri-copy-unit)
+  (define-key mini-modal-map "r" #'ri-delete-selection)
+  (define-key mini-modal-map "g" #'ri-change-selection)
+  (define-key mini-modal-map "t" #'ignore)
+  (define-key mini-modal-map "F" #'ignore)
   (define-key mini-modal-map "v" #'ri-space-paste)
   (define-key mini-modal-map (kbd "SPC") #'ri-space-menu)
   (let (to-remove)
