@@ -129,6 +129,41 @@ Unsaved files are reported in the echo area."
       (set-transient-map nil)
       (save-buffers-kill-terminal))))
 
+;; ── v: paste momentary layer (tap-hold via KKP chord) ──────────────────
+
+(defun ri-paste-before ()
+  "Paste (yank) before the cursor."
+  (interactive)
+  (yank))
+
+(defun ri-paste-after ()
+  "Paste (yank) after the cursor."
+  (interactive)
+  (unless (eobp) (forward-char))
+  (yank))
+
+(defvar ri--paste-layer-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "h" #'ri-paste-before)
+    (define-key map ";" #'ri-paste-after)
+    map)
+  "Keymap for the paste momentary layer (v held).")
+
+(defun ri--chord-when-p ()
+  "Return non-nil when a KKP chord should be active.
+Active only in NORM mode and when no transient menu is open."
+  (and (bound-and-true-p mini-modal-mode)
+       (null overriding-terminal-local-map)))
+
+(defun ri-chord-setup ()
+  "Register KKP chords for momentary layers."
+  (kkp-chord-define ?v
+    :tap #'yank
+    :when #'ri--chord-when-p
+    :on-press (lambda () (ri--show-frame "h - Paste <, ; - Paste >"))
+    :on-release #'ri--hide-frame
+    :map ri--paste-layer-map))
+
 ;; Keybindings and hooks are registered by `ri-enable'.
 
 ;;;###autoload
@@ -136,6 +171,7 @@ Unsaved files are reported in the echo area."
   "Enable `ri' globally."
   (interactive)
   (setq status-frame-height 6)
+  (ri-chord-setup)
   (define-key mini-modal-map (kbd "RET") 'undefined)
   (define-key mini-modal-map "v" #'ri-space-paste)
   (define-key mini-modal-map (kbd "SPC") #'ri-space-menu))
