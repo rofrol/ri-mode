@@ -345,7 +345,10 @@ Active only in NORM mode and when no transient menu is open."
       (setq minor-mode-alist (delq entry minor-mode-alist))))
   (push '(t (:eval (ri--mode-line-text))) minor-mode-alist)
   (define-key mini-modal-map "?" #'ri--show-help)
-  ;; Semantic regions setup.
+  ;; Semantic regions setup.  Unit highlighting belongs to NORM only; in
+  ;; INST the insertion bar is the sole cursor indication.
+  (setq sr-highlight-predicate
+        (lambda () (bound-and-true-p mini-modal-mode)))
   (add-hook 'find-file-hook #'sr--maybe-enable)
   (dolist (buf (buffer-list))
     (with-current-buffer buf

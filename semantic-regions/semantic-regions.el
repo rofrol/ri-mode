@@ -31,6 +31,14 @@
   "Face used to highlight the current unit."
   :group 'semantic-regions)
 
+(defcustom sr-highlight-predicate nil
+  "Optional function controlling whether the current unit is highlighted.
+When nil, highlighting is always enabled while `sr-mode' is active.
+When non-nil, it is called with no arguments; highlighting is shown only
+when it returns non-nil."
+  :type '(choice (const :tag "Always" nil) function)
+  :group 'semantic-regions)
+
 ;; ── Submode ──────────────────────────────────────────────────────────────
 
 (defvar-local sr-submode 'line
@@ -161,14 +169,18 @@
   "Overlay used for highlighting the current unit.")
 
 (defun sr--update-highlight ()
-  "Update the highlight overlay to the unit at point."
-  (let ((bounds (sr--get-current-unit-bounds)))
-    (when bounds
-      (unless sr--highlight-overlay
-        (setq sr--highlight-overlay (make-overlay (point) (point)))
-        (overlay-put sr--highlight-overlay 'face 'sr-highlight-face)
-        (overlay-put sr--highlight-overlay 'priority 100))
-      (move-overlay sr--highlight-overlay (car bounds) (cdr bounds)))))
+  "Update the highlight overlay to the unit at point.
+Remove it when `sr-highlight-predicate' disallows highlighting."
+  (if (and sr-highlight-predicate
+           (not (funcall sr-highlight-predicate)))
+      (sr--remove-highlight)
+    (let ((bounds (sr--get-current-unit-bounds)))
+      (when bounds
+        (unless sr--highlight-overlay
+          (setq sr--highlight-overlay (make-overlay (point) (point)))
+          (overlay-put sr--highlight-overlay 'face 'sr-highlight-face)
+          (overlay-put sr--highlight-overlay 'priority 100))
+        (move-overlay sr--highlight-overlay (car bounds) (cdr bounds))))))
 
 (defun sr--remove-highlight ()
   "Remove the highlight overlay."
