@@ -361,6 +361,18 @@
      (sr--snap-to-unit-start)))
   (sr--update-highlight))
 
+(defun sr--nav-prev-blank-line ()
+  "Move to the previous blank line and skip leading whitespace."
+  (let ((found nil))
+    (while (and (not (bobp))
+                (not found))
+      (forward-line -1)
+      (when (looking-at-p "^[ \t]*$")
+        (setq found t)))
+    (if found
+        (skip-chars-forward " \t")
+      (goto-char (point-min)))))
+
 (defun sr--nav-prev-empty-line ()
   "Move to the previous empty line."
   (let ((found nil))
@@ -369,9 +381,20 @@
       (forward-line -1)
       (when (looking-at-p "^[ \t]*$")
         (setq found t)))
-    (if found
-        (forward-line 1)
+    (unless found
       (goto-char (point-min)))))
+
+(defun sr--nav-next-blank-line ()
+  "Move to the next blank line and skip leading whitespace."
+  (let ((found nil))
+    (while (and (not (eobp))
+                (not found))
+      (forward-line 1)
+      (when (looking-at-p "^[ \t]*$")
+        (setq found t)))
+    (if found
+        (skip-chars-forward " \t")
+      (goto-char (point-max)))))
 
 (defun sr--nav-next-empty-line ()
   "Move to the next empty line."
@@ -381,8 +404,7 @@
       (forward-line 1)
       (when (looking-at-p "^[ \t]*$")
         (setq found t)))
-    (if found
-        (forward-line -1)
+    (unless found
       (goto-char (point-max)))))
 
 (defun sr-nav-prev ()
@@ -398,7 +420,7 @@
     ('subword
      (sr-backward-subword-non-symbol))
     ('line
-     (sr--nav-prev-empty-line))
+     (sr--nav-prev-blank-line))
     ('line-star
      (sr--nav-prev-empty-line))
     (_
@@ -418,7 +440,7 @@
     ('subword
      (sr-forward-subword-non-symbol))
     ('line
-     (sr--nav-next-empty-line))
+     (sr--nav-next-blank-line))
     ('line-star
      (sr--nav-next-empty-line))
     (_
