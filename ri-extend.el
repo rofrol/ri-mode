@@ -24,6 +24,9 @@
 (defvar-local ri--selection nil
   "The active `ri--selection-state', or nil outside extend mode.")
 
+(defvar-local ri--dup-last-bounds nil
+  "Temporary bounds of a just-created inline duplicate.")
+
 (defun ri--selection-active-p ()
   "Return non-nil when the current buffer has an extended selection."
   (and (ri--selection-state-p ri--selection) t))
@@ -195,9 +198,9 @@ the active extend edge is `end'."
          (car bounds))))))
 
 (defun ri--update-highlight ()
-  "Update semantic-regions overlay for the active extended selection."
-  (if (ri--selection-active-p)
-      (when-let* ((bounds (ri--selection-bounds)))
+  "Update semantic-regions overlay for Extend or temporary duplicate bounds."
+  (if (or (ri--selection-active-p) ri--dup-last-bounds)
+      (when-let* ((bounds (or ri--dup-last-bounds (ri--selection-bounds))))
         (unless sr--highlight-overlay
           (setq sr--highlight-overlay (make-overlay (point) (point)))
           (overlay-put sr--highlight-overlay 'face 'sr-highlight-face)
