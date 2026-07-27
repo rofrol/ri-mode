@@ -562,6 +562,14 @@
 
 ;; ── Minor mode ───────────────────────────────────────────────────────────
 
+;; ── Deferred highlight after file open ──────────────────────────────────
+
+(defun sr--on-find-file ()
+  "Call `sr--update-highlight' when `sr-mode' is enabled.
+Intended for `find-file-hook'."
+  (when sr-mode
+    (sr--update-highlight)))
+
 ;;;###autoload
 (define-minor-mode sr-mode
   "Enable semantic-regions highlight overlay in the current buffer.
@@ -571,9 +579,11 @@ The overlay tracks the current unit as point moves."
   (if sr-mode
       (progn
         (add-hook 'post-command-hook #'sr--update-highlight nil t)
+        (add-hook 'find-file-hook #'sr--on-find-file)
         (sr--update-highlight))
     (sr--remove-highlight)
-    (remove-hook 'post-command-hook #'sr--update-highlight t)))
+    (remove-hook 'post-command-hook #'sr--update-highlight t)
+    (remove-hook 'find-file-hook #'sr--on-find-file)))
 
 (provide 'semantic-regions)
 ;;; semantic-regions.el ends here

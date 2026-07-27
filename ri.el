@@ -285,7 +285,7 @@ Active only in NORM mode and when no transient menu is open."
   (push '(t (:eval (ri--mode-line-text))) minor-mode-alist)
   (define-key mini-modal-map "?" #'ri--show-help)
   ;; Semantic regions setup.
-  (add-hook 'after-change-major-mode #'sr--maybe-enable)
+  (add-hook 'find-file-hook #'sr--maybe-enable)
   (dolist (buf (buffer-list))
     (with-current-buffer buf
       (sr--maybe-enable)))
