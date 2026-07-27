@@ -380,6 +380,7 @@ Active only in NORM mode and when no transient menu is open."
   (define-key mini-modal-map (kbd "<up>") 'undefined)
   (define-key mini-modal-map (kbd "<down>") 'undefined)
   (define-key mini-modal-map (kbd "<left>") 'undefined)
+  (define-key mini-modal-map (kbd "<escape>") #'ri-extend-escape)
   (define-key mini-modal-map (kbd "<right>") 'undefined))
 
 (provide 'ri)

@@ -432,5 +432,17 @@ in CHAR mode, it selects the current line.  In SUBWORD mode, repeated
 (defun ri-extend-set-word-plus-mode () (interactive) (ri--set-submode-with-extend 'word-plus #'sr-set-word-plus-mode))
 (defun ri-extend-set-subword-mode () (interactive) (ri--set-submode-with-extend 'subword #'sr-set-subword-mode))
 
+
+(defun ri-extend-escape ()
+  "Exit selection-extend mode on Escape, or fall through to `mini-modal-normal'.
+In NORM mode with an active extended selection: exit extend mode.
+Otherwise: call `mini-modal-normal'."
+  (interactive)
+  (if (ri--selection-active-p)
+      (progn
+        (ri--exit-extend)
+        (ri--update-highlight)
+        (force-mode-line-update))
+    (mini-modal-normal)))
 (provide 'ri-extend)
 ;;; ri-extend.el ends here
