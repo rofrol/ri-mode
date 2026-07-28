@@ -428,7 +428,12 @@ Active only in NORM mode and when no transient menu is open."
         :on-press (lambda ()
                     (ri--hide-frame)
                     (keymap-legend-show label map
-                      (list :title label :release release)))
+                      (list :title label :release release))
+                    ;; Showing the momentary legend creates/updates a window,
+                    ;; which can make a TTY re-emit its default cursor shape.
+                    ;; The modal state did not change, so explicitly restore
+                    ;; the cursor that belongs to NORM.
+                    (modal-cursor--update))
         :on-release #'keymap-legend-hide
         :map map))))
 
