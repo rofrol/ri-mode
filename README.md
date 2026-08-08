@@ -24,6 +24,7 @@ add to init.el:
   "If there is no parser.c, run tree-sitter generate."
   (when (and (equal "parser.c" (car (last args)))
              (not (file-exists-p (expand-file-name "parser.c")))
+             ;; on macOS: brew install tree-sitter-cli
              (executable-find "tree-sitter"))
     (let ((default-directory (file-name-parent-directory default-directory)))
       (message "Generating parser.c with tree-sitter...")
