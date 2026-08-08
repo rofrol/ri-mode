@@ -360,8 +360,8 @@ initial anchor keeps the cursor direction instead of swapping it."
         (setf (ri--selection-state-active-edge state) edge)
         (goto-char (ri--point-at-unit-edge target edge))))))
 
-(defun ri-flip-selection ()
-  "Flip point to the opposite end of the current selection.
+(defun ri-swap-cursor ()
+  "Move point to the opposite end of the current selection or unit.
 In extend mode: swap point and anchor marker while preserving the full
 selection, including when a WORD edge has crossed its initial anchor.
 In normal mode: jump to the opposite end of the current unit."
