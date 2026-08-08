@@ -218,12 +218,12 @@ selection boundary the user already established."
         ('end
          (set-marker anchor sel-start)
          (when-let* ((point-bounds
-                      (sr--unit-bounds-at-edge sel-end 'end new-submode)))
+                      (ri--unit-bounds-at-edge sel-end 'end new-submode)))
            (goto-char (ri--point-at-unit-edge point-bounds 'end))))
         ('start
          (set-marker anchor sel-end)
          (when-let* ((point-bounds
-                      (sr--unit-bounds-at-edge sel-start 'start new-submode)))
+                      (ri--unit-bounds-at-edge sel-start 'start new-submode)))
            (goto-char (ri--point-at-unit-edge point-bounds 'start))))))))
 
 (defun ri--extend-record ()
