@@ -19,26 +19,82 @@
      (eq (overlay-get overlay 'face) 'sr-highlight-face))
    (overlays-at pos)))
 
-(ert-deftest ri-extend-test-switches-from-char-to-word ()
-  (ri-extend-test--with-buffer "foo bar baz"
-    (dolist (case '((nil end 1 4 "foo")
-                    (t start 1 2 "f")))
-      (pcase-let ((`(,swap ,edge ,beg ,end ,text) case))
+(ert-deftest ri-extend-test-submode-switch-preserves-selection ()
+  (ri-extend-test--with-buffer "foo bar baz\n"
+    (dolist
+        (case
+         '((ri-extend-set-line-star-mode line-star)
+           (ri-extend-set-line-mode line)
+           (ri-extend-set-character-mode char)
+           (ri-extend-set-word-mode word)
+           (ri-extend-set-word-star-mode word-star)
+           (ri-extend-set-word-plus-mode word-plus)
+           (ri-extend-set-subword-mode subword)))
+      (pcase-let ((`(,setter ,submode) case))
+        (dolist (swap '(nil t))
+          (goto-char 2)
+          (setq sr-submode 'char)
+          (should (ri--enter-extend))
+          (let ((before (ri--selection-bounds)))
+            (should (equal before (cons 2 3)))
+            (when swap
+              (ri-swap-cursor)
+              (should (equal (ri--selection-bounds) before)))
+            (funcall setter)
+            (should (eq sr-submode submode))
+            (should (ri--selection-active-p))
+            (should (eq (ri--selection-state-active-edge ri--selection)
+                        (if swap 'start 'end)))
+            (should (equal (ri--selection-bounds) before)))
+          (ri--exit-extend))))))
+
+(ert-deftest ri-extend-test-line-to-word-after-swap-preserves-extend ()
+  (ri-extend-test--with-buffer
+      "zero alpha\nbeta gamma\ndelta epsilon\n"
+    (goto-char 8)
+    (setq sr-submode 'char)
+    (should (ri--enter-extend))
+    (ri-extend-nav-down)
+    (ri-extend-nav-down)
+    (let ((extended-bounds (ri--selection-bounds)))
+      (should (equal extended-bounds (cons 8 24)))
+      (should
+       (equal (buffer-substring-no-properties
+               (car extended-bounds) (cdr extended-bounds))
+              "pha\nbeta gamma\nd"))
+      (ri-extend-set-line-mode)
+      (should (equal (ri--selection-bounds) extended-bounds))
+      (ri-swap-cursor)
+      (should (equal (ri--selection-bounds) extended-bounds))
+      (ri-extend-set-word-mode)
+      (should (eq sr-submode 'word))
+      (should (equal (ri--selection-bounds) extended-bounds))
+      (ri-extend-nav-right)
+      (should (equal (ri--selection-bounds) (cons 12 24)))
+      (ri-smart-undo)
+      (should (equal (ri--selection-bounds) extended-bounds)))
+    (ri--exit-extend)))
+
+(ert-deftest ri-extend-test-normal-submode-switch-snaps-to-unit-start ()
+  (ri-extend-test--with-buffer "  alpha beta\n"
+    (dolist
+        (case
+         '((ri-extend-set-line-star-mode line-star 1 (1 . 13))
+           (ri-extend-set-line-mode line 3 (3 . 13))
+           (ri-extend-set-character-mode char 1 (1 . 2))
+           (ri-extend-set-word-mode word 3 (3 . 8))
+           (ri-extend-set-word-star-mode word-star 3 (3 . 8))
+           (ri-extend-set-word-plus-mode word-plus 3 (3 . 8))
+           (ri-extend-set-subword-mode subword 3 (3 . 8))))
+      (pcase-let
+          ((`(,setter ,submode ,expected-point ,expected-bounds) case))
         (goto-char (point-min))
         (setq sr-submode 'char)
-        (should (ri--enter-extend))
-        (when swap
-          (ri-swap-cursor))
-        (ri-extend-set-word-mode)
-        (should (eq sr-submode 'word))
-        (should (ri--selection-active-p))
-        (should (eq (ri--selection-state-active-edge ri--selection) edge))
-        (let ((bounds (ri--selection-bounds)))
-          (should (equal bounds (cons beg end)))
-          (should (equal (buffer-substring-no-properties
-                          (car bounds) (cdr bounds))
-                         text)))
-        (ri--exit-extend)))))
+        (funcall setter)
+        (should (eq sr-submode submode))
+        (should (= (point) expected-point))
+        (should (equal (sr--get-current-unit-bounds)
+                       expected-bounds))))))
 
 (ert-deftest ri-extend-test-line-down-does-not-highlight-newline ()
   (ri-extend-test--with-buffer "foo\nbar\n"

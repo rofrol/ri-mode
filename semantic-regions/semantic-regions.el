@@ -401,6 +401,18 @@ Return REGION unchanged when it has no previous unit."
   "Return (START . END) of the current unit based on `sr-submode' and point."
   (sr--unit-bounds-at (point) sr-submode))
 
+(defun sr--meaningful-unit-bounds-at (pos &optional submode)
+  "Return bounds of the traversable unit at or after POS.
+When the unit at POS is a separator skipped by navigation, return the
+next unit instead.  SUBMODE defaults to `sr-submode'."
+  (when-let* ((region
+               (semantic-region-parse-at (or submode sr-submode) pos)))
+    (when (semantic-region--separator-p region)
+      (setq region (semantic-region-next region)))
+    (when region
+      (cons (semantic-region-beg region)
+            (semantic-region-end region)))))
+
 (defun sr--point-at-unit-edge (bounds edge)
   "Return the START or END of BOUNDS based on EDGE."
   (pcase edge
@@ -629,27 +641,32 @@ configured bounds source returns nil."
         (backward-char 1)))))
 
 
-(defun sr--first-subword-position-on-line ()
-  "Return the first SUBWORD character position on the current line."
+(defun sr--first-wordish-position-on-line ()
+  "Return the first traversable word-based unit on the current line."
   (save-excursion
-    (goto-char (line-beginning-position))
-    (when (re-search-forward sr-subword-chars (line-end-position) t)
-      (match-beginning 0))))
+    (let ((line-end (line-end-position)))
+      (when-let* ((bounds
+                   (sr--meaningful-unit-bounds-at
+                    (line-beginning-position) sr-submode)))
+        (when (< (car bounds) line-end)
+          (car bounds))))))
 
-(defun sr--nav-subword-line (direction)
-  "Move in DIRECTION to the next line containing a SUBWORD character.
+(defun sr--nav-wordish-line (direction)
+  "Move in DIRECTION to a line containing a traversable word-based unit.
 Restore point when no such line exists."
   (let ((origin (point))
         target)
     (while (and (zerop (forward-line direction))
-                (not (setq target (sr--first-subword-position-on-line)))))
+                (not (setq target
+                           (sr--first-wordish-position-on-line)))))
     (goto-char (or target origin))))
 
 ;; ── Navigation commands ──────────────────────────────────────────────────
 
 (defun sr-nav-up ()
   "Move point up by line.
-Skip blank lines in LINE mode and lines without subwords in SUBWORD mode."
+Skip blank lines in LINE mode and lines without traversable word-based
+units in word-based modes."
   (interactive)
   (pcase sr-submode
     ('line
@@ -657,8 +674,8 @@ Skip blank lines in LINE mode and lines without subwords in SUBWORD mode."
      (while (and (looking-at-p "^[ \t]*$")
                  (not (bobp)))
        (forward-line -1)))
-    ('subword
-     (sr--nav-subword-line -1))
+    ((or 'word 'word-plus 'word-star 'subword)
+     (sr--nav-wordish-line -1))
     (_
      (forward-line -1)))
   (sr--snap-to-unit-start)
@@ -666,7 +683,8 @@ Skip blank lines in LINE mode and lines without subwords in SUBWORD mode."
 
 (defun sr-nav-down ()
   "Move point down by line.
-Skip blank lines in LINE mode and lines without subwords in SUBWORD mode."
+Skip blank lines in LINE mode and lines without traversable word-based
+units in word-based modes."
   (interactive)
   (pcase sr-submode
     ('line
@@ -674,8 +692,8 @@ Skip blank lines in LINE mode and lines without subwords in SUBWORD mode."
      (while (and (looking-at-p "^[ \t]*$")
                  (not (eobp)))
        (forward-line 1)))
-    ('subword
-     (sr--nav-subword-line 1))
+    ((or 'word 'word-plus 'word-star 'subword)
+     (sr--nav-wordish-line 1))
     (_
      (forward-line 1)))
   (sr--snap-to-unit-start)

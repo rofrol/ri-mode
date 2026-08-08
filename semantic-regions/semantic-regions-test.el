@@ -293,6 +293,22 @@
                     (cdr (sr--get-current-unit-bounds)))
                    "Code"))))
 
+(ert-deftest semantic-region-test-wordish-vertical-skips-leading-whitespace ()
+  (semantic-region-test--with-buffer "  alpha\n  beta\n"
+    (dolist (submode '(word word-plus word-star subword))
+      (goto-char 11)
+      (setq sr-submode submode)
+      (sr-nav-up)
+      (should (= (point) 3))
+      (should (equal (semantic-region-string
+                      (semantic-region-parse-at submode (point)))
+                     "alpha"))
+      (sr-nav-down)
+      (should (= (point) 11))
+      (should (equal (semantic-region-string
+                      (semantic-region-parse-at submode (point)))
+                     "beta")))))
+
 ;;; Bounds compatibility regression tests ----------------------------------
 
 ;;; Frozen oracle: verbatim copy of the pre-integration implementation ----

@@ -18,6 +18,7 @@
   "Complete state of one active extended selection."
   anchor
   initial-end
+  preserved-boundary
   active-edge
   undo-stack)
 
@@ -36,7 +37,8 @@
   "One selection-extension state for undo."
   point
   anchor
-  active-edge)
+  active-edge
+  preserved-boundary)
 
 (defun ri--point-at-unit-edge (bounds edge)
   "Return cursor position for EDGE, keeping the end cursor inside BOUNDS."
@@ -44,8 +46,21 @@
       (1- (cdr bounds))
     (car bounds)))
 
-(defun ri--unit-bounds-at-edge (pos edge submode)
-  (sr--unit-bounds-at (if (eq edge 'end) (max (point-min) (1- pos)) pos) submode))
+(defun ri--set-preserved-boundary (state position)
+  "Keep STATE's exact active boundary at POSITION."
+  (let ((marker (ri--selection-state-preserved-boundary state)))
+    (if (markerp marker)
+        (set-marker marker position)
+      (setf (ri--selection-state-preserved-boundary state)
+            (copy-marker position)))))
+
+(defun ri--clear-preserved-boundary (state)
+  "Release STATE's exact active boundary override."
+  (let ((marker (ri--selection-state-preserved-boundary state)))
+    (when (markerp marker)
+      (set-marker marker nil))
+    (setf (ri--selection-state-preserved-boundary state) nil)))
+
 
 (defun ri--next-unit-bounds (pos submode)
   "Return bounds of the unit after SUBMODE's unit at POS."
@@ -84,15 +99,21 @@ This prevents movement helpers from changing the active selection."
 
 (defun ri--selection-bounds ()
   "Return (start . end) of the current selection.
-In extend mode, horizontal unit modes keep selection boundaries exact;
+In extend mode, a submode change or cursor swap preserves the exact
+selection already established until navigation moves the active edge.
+Otherwise, horizontal unit modes keep selection boundaries exact;
 WORD, WORD*, and SUBWORD keep the initial unit in the range while the
-current unit crosses it, without changing cursor direction.
-For line modes, only the active edge snaps to a line boundary; the
-inactive anchor remains at the exact boundary already established.
+current unit crosses it, without changing cursor direction.  For line
+modes, only the active edge snaps to a line boundary; the inactive
+anchor remains at the exact boundary already established.
 In normal mode: current unit bounds."
   (if-let* ((state ri--selection)
             (anchor (ri--selection-state-anchor state)))
       (let* ((anchor-pos (marker-position anchor))
+             (preserved-pos
+              (when-let* ((marker
+                           (ri--selection-state-preserved-boundary state)))
+                (marker-position marker)))
              (point-pos (point))
              (point-boundary (ri--extend-point-boundary))
              (raw-start (min anchor-pos point-pos))
@@ -101,6 +122,9 @@ In normal mode: current unit bounds."
               (or (ri--selection-state-active-edge state)
                   (if (< anchor-pos point-pos) 'end 'start))))
         (cond
+         ((integerp preserved-pos)
+          (cons (min anchor-pos preserved-pos)
+                (max anchor-pos preserved-pos)))
          ((and (= raw-start (point-min))
                (= point-boundary (point-max)))
           (cons raw-start point-boundary))
@@ -161,7 +185,8 @@ current semantic unit."
   "Exit selection-extend mode and release its complete state."
   (when-let* ((state ri--selection))
     (dolist (marker (list (ri--selection-state-anchor state)
-                          (ri--selection-state-initial-end state)))
+                          (ri--selection-state-initial-end state)
+                          (ri--selection-state-preserved-boundary state)))
       (when (markerp marker)
         (set-marker marker nil))))
   (setq ri--selection nil))
@@ -186,7 +211,8 @@ current submode has no unit at point, leave extension mode inactive."
 When FORCE-START is non-nil, keep point at the unit start even when
 the active extend edge is `end'."
   (unless (eq sr-submode 'char)
-    (when-let* ((bounds (sr--get-current-unit-bounds)))
+    (when-let* ((bounds
+                 (sr--meaningful-unit-bounds-at (point) sr-submode)))
       (goto-char
        (if (and (not force-start)
                 (ri--selection-active-p)
@@ -199,42 +225,43 @@ the active extend edge is `end'."
   (let ((sr-highlight-bounds-function #'ri--highlight-bounds))
     (sr--update-highlight)))
 
-(defun ri--adjust-anchor-for-new-submode (new-submode)
-  "Adjust extend boundaries after changing to NEW-SUBMODE.
-The active edge is resnapped to the corresponding boundary in
-NEW-SUBMODE.  The inactive boundary (the anchor) stays at the exact
-selection boundary the user already established."
+(defun ri--preserve-selection-for-submode-switch ()
+  "Keep exact selection bounds while changing semantic submodes."
   (when-let* ((state ri--selection)
-              (anchor (ri--selection-state-anchor state)))
-    (let* ((old-bounds (ri--selection-bounds))
-           (anchor-pos (marker-position anchor))
-           (sel-start (car old-bounds))
-           (sel-end (cdr old-bounds))
+              (anchor (ri--selection-state-anchor state))
+              (bounds (ri--selection-bounds)))
+    (let* ((anchor-pos (marker-position anchor))
            (active-edge
             (or (ri--selection-state-active-edge state)
                 (if (< anchor-pos (point)) 'end 'start))))
-      (setf (ri--selection-state-active-edge state) active-edge)
+      (when-let* ((initial-end
+                   (ri--selection-state-initial-end state)))
+        (set-marker initial-end nil))
+      (setf (ri--selection-state-initial-end state) nil
+            (ri--selection-state-active-edge state) active-edge)
       (pcase active-edge
         ('end
-         (set-marker anchor sel-start)
-         (when-let* ((point-bounds
-                      (ri--unit-bounds-at-edge sel-end 'end new-submode)))
-           (goto-char (ri--point-at-unit-edge point-bounds 'end))))
+         (set-marker anchor (car bounds))
+         (goto-char (ri--point-at-unit-edge bounds 'end))
+         (ri--set-preserved-boundary state (cdr bounds)))
         ('start
-         (set-marker anchor sel-end)
-         (when-let* ((point-bounds
-                      (ri--unit-bounds-at-edge sel-start 'start new-submode)))
-           (goto-char (ri--point-at-unit-edge point-bounds 'start))))))))
+         (set-marker anchor (cdr bounds))
+         (goto-char (car bounds))
+         (ri--set-preserved-boundary state (car bounds)))))))
 
 (defun ri--extend-record ()
-  "Push point, anchor, and active edge onto the selection undo stack.
+  "Push the cursor-facing selection state onto the extension undo stack.
 Do nothing outside extend mode."
   (when-let* ((state ri--selection))
     (push (ri--extend-entry-create
            :point (point)
            :anchor (when-let* ((anchor (ri--selection-state-anchor state)))
                      (marker-position anchor))
-           :active-edge (ri--selection-state-active-edge state))
+           :active-edge (ri--selection-state-active-edge state)
+           :preserved-boundary
+           (when-let* ((boundary
+                        (ri--selection-state-preserved-boundary state)))
+             (marker-position boundary)))
           (ri--selection-state-undo-stack state))))
 
 (defun ri--extend-undo ()
@@ -248,11 +275,16 @@ the stack is empty, exit extend mode gracefully."
              (record (pop (ri--selection-state-undo-stack state)))
              (point (ri--extend-entry-point record))
              (anchor (ri--extend-entry-anchor record))
-             (active-edge (ri--extend-entry-active-edge record)))
+             (active-edge (ri--extend-entry-active-edge record))
+             (preserved-boundary
+              (ri--extend-entry-preserved-boundary record)))
         (goto-char point)
         (when (and (ri--selection-state-anchor state) anchor)
           (set-marker (ri--selection-state-anchor state) anchor))
         (setf (ri--selection-state-active-edge state) active-edge)
+        (if preserved-boundary
+            (ri--set-preserved-boundary state preserved-boundary)
+          (ri--clear-preserved-boundary state))
         (ri--update-highlight))
     (ri--exit-extend)
     (ri--update-highlight)))
@@ -336,12 +368,14 @@ In normal mode: jump to the opposite end of the current unit."
               (progn
                 (goto-char (car bounds))
                 (set-marker anchor (cdr bounds))
-                (setf (ri--selection-state-active-edge state) 'start))
+                (setf (ri--selection-state-active-edge state) 'start)
+                (ri--set-preserved-boundary state (car bounds)))
             (goto-char (if (> (cdr bounds) (car bounds))
                            (1- (cdr bounds))
                          (cdr bounds)))
             (set-marker anchor (car bounds))
-            (setf (ri--selection-state-active-edge state) 'end))))
+            (setf (ri--selection-state-active-edge state) 'end)
+            (ri--set-preserved-boundary state (cdr bounds)))))
     (when-let* ((bounds (sr--get-current-unit-bounds)))
       (if (= (point) (car bounds))
           (goto-char (if (> (cdr bounds) (car bounds))
@@ -380,6 +414,7 @@ In normal mode: jump to the opposite end of the current unit."
          (setq active-edge nil)))
       (when-let* ((initial-end (ri--selection-state-initial-end state)))
         (set-marker initial-end nil))
+      (ri--clear-preserved-boundary state)
       (setf (ri--selection-state-initial-end state) nil
             (ri--selection-state-active-edge state) active-edge
             (ri--selection-state-undo-stack state) nil))))
@@ -401,34 +436,59 @@ in CHAR mode, it selects the current line.  In SUBWORD mode, repeated
     (force-mode-line-update)))
 
 
-(defun ri-extend-nav-left ()
-  (interactive) (ri--extend-record)
-  (if (and (ri--selection-active-p) (sr--horizontal-submode-p))
-      (ri--extend-horizontal-move 'left) (sr-nav-left))
+(defun ri--finish-extend-navigation (origin)
+  "Finish extension navigation that started at ORIGIN."
+  (when (and ri--selection (/= origin (point)))
+    (ri--clear-preserved-boundary ri--selection))
   (ri--update-highlight))
-(defun ri-extend-nav-right ()
-  (interactive) (ri--extend-record)
-  (if (and (ri--selection-active-p) (sr--horizontal-submode-p))
-      (ri--extend-horizontal-move 'right) (sr-nav-right))
-  (ri--update-highlight))
-(defun ri-extend-nav-up () (interactive) (ri--extend-record) (sr-nav-up) (ri--update-highlight))
-(defun ri-extend-nav-down () (interactive) (ri--extend-record) (sr-nav-down) (ri--update-highlight))
-(defun ri-extend-nav-prev () (interactive) (ri--extend-record) (sr-nav-prev) (ri--update-highlight))
-(defun ri-extend-nav-next () (interactive) (ri--extend-record) (sr-nav-next) (ri--update-highlight))
-(defun ri-extend-nav-first () (interactive) (ri--extend-record) (sr-nav-first) (ri--update-highlight))
-(defun ri-extend-nav-last () (interactive) (ri--extend-record) (sr-nav-last) (ri--update-highlight))
 
-(defun ri--set-submode-with-extend (submode setter)
-  (when (ri--selection-active-p) (ri--adjust-anchor-for-new-submode submode))
-  (funcall setter)
-  (ri--update-highlight))
-(defun ri-extend-set-line-mode () (interactive) (ri--set-submode-with-extend 'line #'sr-set-line-mode))
-(defun ri-extend-set-line-star-mode () (interactive) (ri--set-submode-with-extend 'line-star #'sr-set-line-star-mode))
-(defun ri-extend-set-character-mode () (interactive) (ri--set-submode-with-extend 'char #'sr-set-character-mode))
-(defun ri-extend-set-word-mode () (interactive) (ri--set-submode-with-extend 'word #'sr-set-word-mode))
-(defun ri-extend-set-word-star-mode () (interactive) (ri--set-submode-with-extend 'word-star #'sr-set-word-star-mode))
-(defun ri-extend-set-word-plus-mode () (interactive) (ri--set-submode-with-extend 'word-plus #'sr-set-word-plus-mode))
-(defun ri-extend-set-subword-mode () (interactive) (ri--set-submode-with-extend 'subword #'sr-set-subword-mode))
+(defun ri--run-extend-navigation (movement)
+  "Record the selection, run MOVEMENT, and refresh Extend state."
+  (ri--extend-record)
+  (let ((origin (point)))
+    (funcall movement)
+    (ri--finish-extend-navigation origin)))
+
+(defun ri--run-extend-horizontal-navigation (direction fallback)
+  "Extend in DIRECTION, or invoke FALLBACK outside horizontal Extend."
+  (ri--extend-record)
+  (let ((origin (point)))
+    (if (and (ri--selection-active-p) (sr--horizontal-submode-p))
+        (ri--extend-horizontal-move direction)
+      (funcall fallback))
+    (ri--finish-extend-navigation origin)))
+
+(defun ri-extend-nav-left ()
+  (interactive)
+  (ri--run-extend-horizontal-navigation 'left #'sr-nav-left))
+(defun ri-extend-nav-right ()
+  (interactive)
+  (ri--run-extend-horizontal-navigation 'right #'sr-nav-right))
+(defun ri-extend-nav-up () (interactive) (ri--run-extend-navigation #'sr-nav-up))
+(defun ri-extend-nav-down () (interactive) (ri--run-extend-navigation #'sr-nav-down))
+(defun ri-extend-nav-prev () (interactive) (ri--run-extend-navigation #'sr-nav-prev))
+(defun ri-extend-nav-next () (interactive) (ri--run-extend-navigation #'sr-nav-next))
+(defun ri-extend-nav-first () (interactive) (ri--run-extend-navigation #'sr-nav-first))
+(defun ri-extend-nav-last () (interactive) (ri--run-extend-navigation #'sr-nav-last))
+
+(defun ri--set-submode-with-extend (setter)
+  "Switch submodes with SETTER without changing an active selection.
+Outside Extend, place point at the start of the first traversable unit
+at or after its old position."
+  (let ((extending (ri--selection-active-p)))
+    (when extending
+      (ri--preserve-selection-for-submode-switch))
+    (funcall setter)
+    (unless extending
+      (ri--snap-to-unit-start))
+    (ri--update-highlight)))
+(defun ri-extend-set-line-mode () (interactive) (ri--set-submode-with-extend #'sr-set-line-mode))
+(defun ri-extend-set-line-star-mode () (interactive) (ri--set-submode-with-extend #'sr-set-line-star-mode))
+(defun ri-extend-set-character-mode () (interactive) (ri--set-submode-with-extend #'sr-set-character-mode))
+(defun ri-extend-set-word-mode () (interactive) (ri--set-submode-with-extend #'sr-set-word-mode))
+(defun ri-extend-set-word-star-mode () (interactive) (ri--set-submode-with-extend #'sr-set-word-star-mode))
+(defun ri-extend-set-word-plus-mode () (interactive) (ri--set-submode-with-extend #'sr-set-word-plus-mode))
+(defun ri-extend-set-subword-mode () (interactive) (ri--set-submode-with-extend #'sr-set-subword-mode))
 
 
 (defun ri-extend-escape ()
