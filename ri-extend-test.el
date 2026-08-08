@@ -12,6 +12,13 @@
      (goto-char (point-min))
      ,@body))
 
+(defun ri-extend-test--highlighted-p (pos)
+  "Return non-nil when POS has the semantic highlight face."
+  (cl-some
+   (lambda (overlay)
+     (eq (overlay-get overlay 'face) 'sr-highlight-face))
+   (overlays-at pos)))
+
 (ert-deftest ri-extend-test-switches-from-char-to-word ()
   (ri-extend-test--with-buffer "foo bar baz"
     (dolist (case '((nil end 1 4 "foo")
@@ -38,21 +45,32 @@
     (setq sr-submode 'line)
     (should (ri--enter-extend))
     (ri-extend-nav-down)
-    (let ((bounds (ri--selection-bounds))
-          (highlighted-p
-           (lambda (pos)
-             (cl-some
-              (lambda (overlay)
-                (eq (overlay-get overlay 'face) 'sr-highlight-face))
-              (overlays-at pos)))))
+    (let ((bounds (ri--selection-bounds)))
       (should (equal bounds (cons 1 8)))
       (should (equal (buffer-substring-no-properties
                       (car bounds) (cdr bounds))
                      "foo\nbar"))
       (dolist (pos '(1 2 3 5 6 7))
-        (should (funcall highlighted-p pos)))
+        (should (ri-extend-test--highlighted-p pos)))
       (dolist (pos '(4 8))
-        (should-not (funcall highlighted-p pos))))
+        (should-not (ri-extend-test--highlighted-p pos))))
+    (ri--exit-extend)))
+
+(ert-deftest ri-extend-test-line-to-word-keeps-newlines-unpainted ()
+  (ri-extend-test--with-buffer "foo\nbar\nbaz\n"
+    (setq sr-submode 'line)
+    (should (ri--enter-extend))
+    (ri-extend-nav-down)
+    (ri-extend-nav-down)
+    (let ((line-bounds (ri--selection-bounds)))
+      (should (equal line-bounds (cons 1 12)))
+      (ri-extend-set-word-mode)
+      (should (eq sr-submode 'word))
+      (should (equal (ri--selection-bounds) line-bounds))
+      (dolist (pos '(1 2 3 5 6 7 9 10 11))
+        (should (ri-extend-test--highlighted-p pos)))
+      (dolist (pos '(4 8 12))
+        (should-not (ri-extend-test--highlighted-p pos))))
     (ri--exit-extend)))
 
 (ert-deftest ri-extend-test-swaps-normal-unit-cursor ()

@@ -14,9 +14,6 @@
 (require 'semantic-regions)
 (require 'ri-extend)
 
-(defvar-local ri--dup-last-bounds nil
-  "Temporary bounds used to highlight a newly duplicated inline unit.")
-
 (defmacro ri--with-buffer-edit (&rest body)
   "Run BODY as one complete buffer undo unit."
   (declare (indent 0) (debug t))
@@ -34,13 +31,6 @@
 (defun ri--current-unit-text ()
   "Return text of the current selection, or the current unit."
   (ri--bounds-text (ri--selection-bounds)))
-
-(defun ri--highlight-bounds ()
-  "Return current RI/semantic-regions highlight bounds, or nil."
-  (when (and sr--highlight-overlay
-             (overlay-buffer sr--highlight-overlay))
-    (cons (overlay-start sr--highlight-overlay)
-          (overlay-end sr--highlight-overlay))))
 
 (defun ri--dup-target-bounds (direction bounds)
   "Return bounds of the unit reached from BOUNDS in DIRECTION."
@@ -138,8 +128,7 @@
 
 (defun ri--dup-inline (pos-side)
   "Duplicate the selection inline at its POS-SIDE boundary."
-  (let* ((orig-bounds (or (ri--highlight-bounds)
-                          (ri--selection-bounds)))
+  (let* ((orig-bounds (ri--highlight-bounds))
          (text (ri--bounds-text orig-bounds)))
     (when text
       (let ((ins-start (funcall pos-side orig-bounds)))

@@ -27,9 +27,6 @@
 (defvar-local ri--dup-last-bounds nil
   "Temporary bounds of a just-created inline duplicate.")
 
-(defvar-local ri--line-highlight-overlays nil
-  "Overlays rendering multiline LINE selections without their newlines.")
-
 (defun ri--selection-active-p ()
   "Return non-nil when the current buffer has an extended selection."
   (and (ri--selection-state-p ri--selection) t))
@@ -154,6 +151,12 @@ In normal mode: current unit bounds."
           (cons raw-start raw-end))))
     (sr--get-current-unit-bounds)))
 
+(defun ri--highlight-bounds ()
+  "Return the model bounds RI requests for highlighting.
+A temporary duplicate takes precedence over the active selection or
+current semantic unit."
+  (or ri--dup-last-bounds (ri--selection-bounds)))
+
 (defun ri--exit-extend ()
   "Exit selection-extend mode and release its complete state."
   (when-let* ((state ri--selection))
@@ -191,59 +194,9 @@ the active extend edge is `end'."
            (ri--point-at-unit-edge bounds 'end)
          (car bounds))))))
 
-(defun ri--clear-line-highlight-overlays ()
-  "Delete overlays used to render a multiline LINE selection."
-  (mapc #'delete-overlay ri--line-highlight-overlays)
-  (setq ri--line-highlight-overlays nil))
-
-(defun ri--update-line-highlight-overlays (bounds)
-  "Render BOUNDS as line segments that exclude newline characters."
-  (let ((available ri--line-highlight-overlays)
-        used)
-    (save-excursion
-      (goto-char (car bounds))
-      (let ((start (car bounds))
-            (end (cdr bounds)))
-        (while (< start end)
-          (let ((line-end (min end (line-end-position))))
-            (when (< start line-end)
-              (let ((overlay (pop available)))
-                (unless overlay
-                  (setq overlay (make-overlay start line-end))
-                  (overlay-put overlay 'face 'sr-highlight-face)
-                  (overlay-put overlay 'priority 100))
-                (move-overlay overlay start line-end)
-                (push overlay used)))
-            (if (= line-end end)
-                (setq start end)
-              (setq start (1+ line-end))
-              (goto-char start))))))
-    (mapc #'delete-overlay available)
-    (setq ri--line-highlight-overlays (nreverse used))))
-
 (defun ri--update-highlight ()
-  "Update semantic-regions overlays for Extend or temporary duplicate bounds."
-  (if (or (ri--selection-active-p) ri--dup-last-bounds)
-      (when-let* ((bounds (or ri--dup-last-bounds (ri--selection-bounds))))
-        (unless sr--highlight-overlay
-          (setq sr--highlight-overlay (make-overlay (point) (point)))
-          (overlay-put sr--highlight-overlay 'priority 100))
-        (move-overlay sr--highlight-overlay (car bounds) (cdr bounds))
-        (let ((split-lines
-               (and (ri--selection-active-p)
-                    (not ri--dup-last-bounds)
-                    (memq sr-submode '(line line-star))
-                    (save-excursion
-                      (goto-char (car bounds))
-                      (search-forward "\n" (cdr bounds) t)))))
-          (overlay-put sr--highlight-overlay 'face
-                       (unless split-lines 'sr-highlight-face))
-          (if split-lines
-              (ri--update-line-highlight-overlays bounds)
-            (ri--clear-line-highlight-overlays))))
-    (ri--clear-line-highlight-overlays)
-    (when sr--highlight-overlay
-      (overlay-put sr--highlight-overlay 'face 'sr-highlight-face))
+  "Refresh highlighting from RI's model through semantic-regions."
+  (let ((sr-highlight-bounds-function #'ri--highlight-bounds))
     (sr--update-highlight)))
 
 (defun ri--adjust-anchor-for-new-submode (new-submode)
@@ -395,6 +348,10 @@ In normal mode: jump to the opposite end of the current unit."
                          (1- (cdr bounds))
                        (cdr bounds)))
         (goto-char (car bounds))))))
+
+(defun ri--select-all-submode-p ()
+  "Return non-nil when repeated Extend has a select-all behavior."
+  (memq sr-submode '(line line-star char word word-plus word-star)))
 
 (defun ri--select-all-in-extend ()
   "Select the whole buffer or current line according to `sr-submode`."

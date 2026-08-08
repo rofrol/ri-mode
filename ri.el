@@ -507,14 +507,13 @@ Active only in NORM mode and when no transient menu is open."
 
 ;;;; Semantic regions auto-enable
 
-(defun sr--maybe-enable ()
-  "Enable `sr-mode' in text-editing buffers, skipping minibuffer and special-mode."
+(defun ri--maybe-enable-semantic-regions ()
+  "Enable RI-backed semantic highlighting in text-editing buffers."
   (unless (or (minibufferp)
               (derived-mode-p 'special-mode))
+    (setq-local sr-highlight-bounds-function #'ri--highlight-bounds)
     (sr-mode 1)
-    (ri--mode-line-enable)
-    ;; Run after semantic-regions so Extend can widen its unit overlay.
-    (add-hook 'post-command-hook #'ri--update-highlight t t)))
+    (ri--mode-line-enable)))
 
 ;;;; Global setup
 
@@ -551,10 +550,10 @@ Active only in NORM mode and when no transient menu is open."
   ;; INST the insertion bar is the sole cursor indication.
   (setq sr-highlight-predicate
         (lambda () (bound-and-true-p mini-modal-mode)))
-  (add-hook 'find-file-hook #'sr--maybe-enable)
+  (add-hook 'find-file-hook #'ri--maybe-enable-semantic-regions)
   (dolist (buf (buffer-list))
     (with-current-buffer buf
-      (sr--maybe-enable)))
+      (ri--maybe-enable-semantic-regions)))
   (define-key mini-modal-map "j" #'ri-extend-nav-left)
   (define-key mini-modal-map "l" #'ri-extend-nav-right)
   (define-key mini-modal-map "i" #'ri-extend-nav-up)
