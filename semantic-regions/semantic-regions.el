@@ -14,6 +14,10 @@
 ;; "current unit" is computed, and navigation commands move point
 ;; by those units while keeping a highlight overlay on the active unit.
 ;;
+;; LINE and CHAR also share the `semantic-region-*' API for parsing,
+;; traversing, extending, changing units, selecting, inspecting, and
+;; deleting regions.  Other submodes keep their specialized behavior.
+;;
 ;;; Code:
 
 (require 'cl-lib)
@@ -80,6 +84,180 @@ when it returns non-nil."
 (defvar sr-subword-chars "[[:alnum:]]"
   "Regex character class for meaningful characters in Subword mode.")
 
+
+;; ── Shared LINE/CHAR region API ─────────────────────────────────────────
+
+(cl-defstruct (semantic-region
+               (:constructor semantic-region--create (unit buffer beg end))
+               (:copier nil))
+  "A well-formed LINE or CHAR region in BUFFER."
+  (unit nil :read-only t)
+  (buffer nil :read-only t)
+  (beg nil :read-only t)
+  (end nil :read-only t))
+
+(defun semantic-region--require-unit (unit)
+  "Return UNIT when it is supported, otherwise signal an error."
+  (unless (memq unit '(line char))
+    (error "Unsupported semantic region unit: %S" unit))
+  unit)
+
+(defun semantic-region--require-live (region)
+  "Return REGION when it is a semantic region in a live buffer."
+  (unless (semantic-region-p region)
+    (signal 'wrong-type-argument (list 'semantic-region-p region)))
+  (unless (buffer-live-p (semantic-region-buffer region))
+    (error "Semantic region buffer is no longer live"))
+  region)
+
+(defun semantic-region--build (unit buffer beg end)
+  "Build a UNIT region in BUFFER spanning BEG through END."
+  (semantic-region--require-unit unit)
+  (unless (buffer-live-p buffer)
+    (error "Cannot build a semantic region in a dead buffer"))
+  (with-current-buffer buffer
+    (setq beg (if (markerp beg) (marker-position beg) beg)
+          end (if (markerp end) (marker-position end) end))
+    (unless (and (integerp beg)
+                 (integerp end)
+                 (<= (point-min) beg end (point-max)))
+      (error "Invalid semantic region bounds: %S through %S" beg end))
+    (semantic-region--create unit buffer beg end)))
+
+(defun semantic-region--line-bounds-at (pos)
+  "Return trimmed line bounds at POS in the current buffer."
+  (save-excursion
+    (goto-char pos)
+    (let ((bol (line-beginning-position))
+          (eol (line-end-position)))
+      (goto-char bol)
+      (skip-chars-forward " \t" eol)
+      (let ((beg (point)))
+        (goto-char eol)
+        (skip-chars-backward " \t" bol)
+        (let ((end (point)))
+          (if (> end beg)
+              (cons beg end)
+            (cons beg beg)))))))
+
+(defun semantic-region--char-bounds-at (pos)
+  "Return single-character bounds at POS in the current buffer."
+  (save-excursion
+    (goto-char pos)
+    (cons (point) (min (1+ (point)) (point-max)))))
+
+(defun semantic-region--bounds-at (unit pos)
+  "Return bounds for LINE or CHAR UNIT at POS in the current buffer."
+  (semantic-region--require-unit unit)
+  (pcase unit
+    ('line (semantic-region--line-bounds-at pos))
+    ('char (semantic-region--char-bounds-at pos))))
+
+(defun semantic-region-parse-at (unit pos)
+  "Return a LINE or CHAR semantic region at POS in the current buffer."
+  (let ((buffer (current-buffer))
+        (bounds (semantic-region--bounds-at unit pos)))
+    (semantic-region--build unit buffer (car bounds) (cdr bounds))))
+
+(defun semantic-region--next-position (region)
+  "Return the position of the unit after REGION, or nil at buffer end."
+  (pcase (semantic-region-unit region)
+    ('char
+     (when (< (semantic-region-end region) (point-max))
+       (semantic-region-end region)))
+    ('line
+     (save-excursion
+       (goto-char (semantic-region-end region))
+       (forward-line 1)
+       (when (< (point) (point-max))
+         (point))))))
+
+(defun semantic-region--prev-position (region)
+  "Return the position of the unit before REGION, or nil at buffer start."
+  (pcase (semantic-region-unit region)
+    ('char
+     (when (> (semantic-region-beg region) (point-min))
+       (1- (semantic-region-beg region))))
+    ('line
+     (save-excursion
+       (goto-char (semantic-region-beg region))
+       (when (> (line-beginning-position) (point-min))
+         (forward-line -1)
+         (point))))))
+
+(defun semantic-region-next (region)
+  "Return the unit after REGION, or nil when REGION is the last unit."
+  (semantic-region--require-live region)
+  (with-current-buffer (semantic-region-buffer region)
+    (when-let* ((pos (semantic-region--next-position region)))
+      (semantic-region-parse-at (semantic-region-unit region) pos))))
+
+(defun semantic-region-prev (region)
+  "Return the unit before REGION, or nil when REGION is the first unit."
+  (semantic-region--require-live region)
+  (with-current-buffer (semantic-region-buffer region)
+    (when-let* ((pos (semantic-region--prev-position region)))
+      (semantic-region-parse-at (semantic-region-unit region) pos))))
+
+(defun semantic-region-extend-next (region)
+  "Return REGION extended through its next unit.
+Return REGION unchanged when it has no next unit."
+  (if-let* ((next (semantic-region-next region)))
+      (semantic-region--build
+       (semantic-region-unit region)
+       (semantic-region-buffer region)
+       (semantic-region-beg region)
+       (semantic-region-end next))
+    region))
+
+(defun semantic-region-extend-prev (region)
+  "Return REGION extended through its previous unit.
+Return REGION unchanged when it has no previous unit."
+  (if-let* ((prev (semantic-region-prev region)))
+      (semantic-region--build
+       (semantic-region-unit region)
+       (semantic-region-buffer region)
+       (semantic-region-beg prev)
+       (semantic-region-end region))
+    region))
+
+(defun semantic-region-change-unit (region unit)
+  "Reparse REGION's first position as LINE or CHAR UNIT."
+  (semantic-region--require-live region)
+  (with-current-buffer (semantic-region-buffer region)
+    (semantic-region-parse-at unit (semantic-region-beg region))))
+
+(defun semantic-region-select (region)
+  "Select REGION in its buffer and return REGION."
+  (semantic-region--require-live region)
+  (with-current-buffer (semantic-region-buffer region)
+    (goto-char (semantic-region-end region))
+    (push-mark (semantic-region-beg region) nil t))
+  region)
+
+(defun semantic-region-string (region)
+  "Return REGION's text without text properties."
+  (semantic-region--require-live region)
+  (with-current-buffer (semantic-region-buffer region)
+    (buffer-substring-no-properties
+     (semantic-region-beg region)
+     (semantic-region-end region))))
+
+(defun semantic-region-length (region)
+  "Return REGION's length in characters."
+  (semantic-region--require-live region)
+  (- (semantic-region-end region) (semantic-region-beg region)))
+
+(defun semantic-region-empty-p (region)
+  "Return non-nil when REGION has zero width."
+  (zerop (semantic-region-length region)))
+
+(defun semantic-region-delete (region)
+  "Delete REGION's text from its buffer."
+  (semantic-region--require-live region)
+  (with-current-buffer (semantic-region-buffer region)
+    (delete-region (semantic-region-beg region) (semantic-region-end region))))
+
 ;; ── Unit bounds ──────────────────────────────────────────────────────────
 
 (defun sr--subword-bounds-at (pos)
@@ -98,21 +276,10 @@ when it returns non-nil."
   (save-excursion
     (goto-char pos)
     (pcase submode
-      ('line
-       (save-excursion
-         (let ((bol (line-beginning-position))
-               (eol (line-end-position)))
-           (goto-char bol)
-           (skip-chars-forward " \t" eol)
-           (let ((s (point)))
-             (goto-char eol)
-             (skip-chars-backward " \t" bol)
-             (let ((e (point)))
-               (if (> e s) (cons s e) (cons s s)))))))
+      ((or 'line 'char)
+       (semantic-region--bounds-at submode pos))
       ('line-star
        (cons (line-beginning-position) (line-end-position)))
-      ('char
-       (cons pos (min (1+ pos) (point-max))))
       ((or 'word 'word-plus)
        (save-excursion
          (let ((char (char-after)))
