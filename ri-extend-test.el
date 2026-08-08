@@ -169,6 +169,34 @@
     (ri-swap-cursor)
     (should (= (point) 1))))
 
+(ert-deftest ri-extend-test-node-error-survives-key-release ()
+  (ri-extend-test--with-buffer "plain text"
+    (let ((sr-node-language-alist
+           '((fundamental-mode . deliberately-missing)))
+          (kkp-chord-after-release-hook
+           '(ri--restore-message-after-release))
+          (ri--restore-message-after-release nil)
+          restored)
+      (should-error (ri-set-node-mode) :type 'user-error)
+      (let ((expected ri--restore-message-after-release))
+        (should (string-match-p
+                 "NODE requires.*deliberately-missing"
+                 expected))
+        (cl-letf (((symbol-function 'kkp-chord--parse)
+                   (lambda (_input)
+                     (list :keycode ?d
+                           :event-type kkp-chord--event-release
+                           :modifier-num 0)))
+                  ((symbol-function 'kkp-chord--on-release) #'ignore)
+                  ((symbol-function 'message)
+                   (lambda (format-string &rest args)
+                     (setq restored (apply #'format format-string args)))))
+          (should (equal
+                   (kkp-chord--translate-advice #'ignore "release")
+                   [])))
+        (should (equal restored expected))
+        (should-not ri--restore-message-after-release)))))
+
 (ert-deftest ri-extend-test-registers-swap-cursor-binding ()
   (let ((mini-modal-map (make-sparse-keymap))
         (minor-mode-alist nil)
@@ -188,9 +216,9 @@
       (should (eq (lookup-key ri--normal-help-map "/")
                   #'ri-swap-cursor))
       (should (eq (lookup-key mini-modal-map "d")
-                  #'ri-extend-set-node-mode))
+                  #'ri-set-node-mode))
       (should (eq (lookup-key ri--normal-help-map "d")
-                  #'ri-extend-set-node-mode))
+                  #'ri-set-node-mode))
       (let ((sr-submode 'node))
         (should (equal (ri--submode-name) "NODE"))))))
 

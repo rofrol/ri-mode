@@ -86,6 +86,19 @@
       (setq ri--restore-message-after-release nil)
       (message "%s" text))))
 
+(defun ri--call-preserving-user-error (function)
+  "Call FUNCTION and preserve its user error across the next key release."
+  (condition-case err
+      (funcall function)
+    (user-error
+     (setq ri--restore-message-after-release (error-message-string err))
+     (signal (car err) (cdr err)))))
+
+(defun ri-set-node-mode ()
+  "Switch to NODE, keeping a missing-parser error visible after key-up."
+  (interactive)
+  (ri--call-preserving-user-error #'ri-extend-set-node-mode))
+
 (defun ri--close-menu ()
   "Hide any active menu and restore the status frame."
   (setq ri--menu-state nil)
@@ -494,7 +507,7 @@ Active only in NORM mode and when no transient menu is open."
     (define-key map "S" '(menu-item "WORD*" ri-extend-set-word-star-mode))
     (define-key map (kbd "M-s") '(menu-item "WORD+" ri-extend-set-word-plus-mode))
     (define-key map "w" '(menu-item "SUBWORD" ri-extend-set-subword-mode))
-    (define-key map "d" '(menu-item "NODE" ri-extend-set-node-mode))
+    (define-key map "d" '(menu-item "NODE" ri-set-node-mode))
     (define-key map "c" '(menu-item "Copy/≡ Dup" ri-copy-unit))
     (define-key map "r" '(menu-item "Delete/≡ Eat" ri-delete-selection))
     (define-key map "g" '(menu-item "≡ Open" ri-change-selection))
@@ -582,7 +595,7 @@ Active only in NORM mode and when no transient menu is open."
   (define-key mini-modal-map "S" #'ri-extend-set-word-star-mode)
   (define-key mini-modal-map (kbd "M-s") #'ri-extend-set-word-plus-mode)
   (define-key mini-modal-map "w" #'ri-extend-set-subword-mode)
-  (define-key mini-modal-map "d" #'ri-extend-set-node-mode)
+  (define-key mini-modal-map "d" #'ri-set-node-mode)
   (define-key mini-modal-map "f" #'ri-toggle-extend)
   (define-key mini-modal-map "z" #'ri-smart-undo)
   (define-key mini-modal-map "Z" #'undo-redo)
