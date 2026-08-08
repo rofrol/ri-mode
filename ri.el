@@ -493,6 +493,7 @@ Active only in NORM mode and when no transient menu is open."
     (define-key map "Z" '(menu-item "Coarse Redo" undo-redo))
     (define-key map (kbd "SPC") '(menu-item "Space" ri-space-menu))
     (define-key map (kbd "<return>") '(menu-item "Save" save-buffer))
+    (define-key map "/" '(menu-item "⇋ Curs" ri-flip-selection))
     (define-key map "?" '(menu-item "Help" ignore))
     (define-key map (kbd "<escape>") '(menu-item "Close" ignore))
     map)
@@ -544,6 +545,7 @@ Active only in NORM mode and when no transient menu is open."
     (dolist (entry to-remove)
       (setq minor-mode-alist (delq entry minor-mode-alist))))
   (push '(t (:eval (ri--mode-line-text))) minor-mode-alist)
+  (define-key mini-modal-map "/" #'ri-flip-selection)
   (define-key mini-modal-map "?" #'ri--show-help)
   ;; Semantic regions setup.  Unit highlighting belongs to NORM only; in
   ;; INST the insertion bar is the sole cursor indication.
