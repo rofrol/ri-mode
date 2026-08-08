@@ -461,6 +461,7 @@ Active only in NORM mode and when no transient menu is open."
         ('word-plus "WORD+")
         ('word-star "WORD*")
         ('subword "SUBWORD")
+        ('node "NODE")
         (_ "?"))
     "?"))
 
@@ -493,6 +494,7 @@ Active only in NORM mode and when no transient menu is open."
     (define-key map "S" '(menu-item "WORD*" ri-extend-set-word-star-mode))
     (define-key map (kbd "M-s") '(menu-item "WORD+" ri-extend-set-word-plus-mode))
     (define-key map "w" '(menu-item "SUBWORD" ri-extend-set-subword-mode))
+    (define-key map "d" '(menu-item "NODE" ri-extend-set-node-mode))
     (define-key map "c" '(menu-item "Copy/≡ Dup" ri-copy-unit))
     (define-key map "r" '(menu-item "Delete/≡ Eat" ri-delete-selection))
     (define-key map "g" '(menu-item "≡ Open" ri-change-selection))
@@ -580,6 +582,7 @@ Active only in NORM mode and when no transient menu is open."
   (define-key mini-modal-map "S" #'ri-extend-set-word-star-mode)
   (define-key mini-modal-map (kbd "M-s") #'ri-extend-set-word-plus-mode)
   (define-key mini-modal-map "w" #'ri-extend-set-subword-mode)
+  (define-key mini-modal-map "d" #'ri-extend-set-node-mode)
   (define-key mini-modal-map "f" #'ri-toggle-extend)
   (define-key mini-modal-map "z" #'ri-smart-undo)
   (define-key mini-modal-map "Z" #'undo-redo)

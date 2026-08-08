@@ -9,8 +9,10 @@
 ;;
 ;;; Commentary:
 ;;
-;; Unit-based navigation with semantic submodes: LINE, LINE*, CHAR, WORD, WORD+, WORD*, and SUBWORD.  Each submode defines how the "current unit" is computed, and navigation commands move point
-;; by those units while keeping a highlight overlay on the active unit.
+;; Unit-based navigation with semantic submodes: LINE, LINE*, CHAR, WORD,
+;; WORD+, WORD*, SUBWORD, and NODE.  Each submode defines how the "current
+;; unit" is computed, and navigation commands move point by those units while
+;; keeping a highlight overlay on the active unit.
 ;;
 ;; Every submode shares the `semantic-region-*' API for parsing,
 ;; traversing, extending, changing units, selecting, inspecting, and
@@ -21,6 +23,7 @@
 (require 'cl-lib)
 (require 'pcase)
 (require 'subword)
+(require 'treesit)
 
 ;; ── Customization ────────────────────────────────────────────────────────
 
@@ -34,6 +37,7 @@
   :group 'semantic-regions)
 
 (defcustom sr-highlight-predicate nil
+  
   "Optional function controlling whether the current unit is highlighted.
 When nil, highlighting is always enabled while `sr-mode' is active.
 When non-nil, it is called with no arguments; highlighting is shown only
@@ -50,8 +54,9 @@ consumer provide selection bounds without taking ownership of overlays.")
 ;; ── Submode ──────────────────────────────────────────────────────────────
 
 (defvar-local sr-submode 'line
-  "Submode within semantic-regions: `line', `line-star', `char',
-`word', `word-plus', `word-star', or `subword'.")
+  "Submode within semantic-regions.
+Supported values are `line', `line-star', `char', `word', `word-plus',
+`word-star', `subword', and `node'.")
 
 (defconst sr--submode-properties
   '((line      :line t)
@@ -60,7 +65,8 @@ consumer provide selection bounds without taking ownership of overlays.")
     (word      :wordish t :horizontal t)
     (word-plus :wordish t :horizontal t)
     (word-star :wordish t :horizontal t)
-    (subword   :wordish t :horizontal t))
+    (subword   :wordish t :horizontal t)
+    (node               :horizontal t))
   "Properties of every supported `sr-submode'.")
 
 (defun sr--submode-property-p (property &optional submode)
@@ -99,6 +105,157 @@ consumer provide selection bounds without taking ownership of overlays.")
         (let ((end (progn (subword-forward 1) (point))))
           (subword-backward 1)
           (cons (point) end))))))
+
+;; ── Tree-sitter nodes ────────────────────────────────────────────────────
+
+(defvar-local sr--node-current nil
+  "Current tree-sitter node while `sr-submode' is `node'.")
+
+(defun sr--node-live-p (node)
+  "Return non-nil when NODE can still be queried safely."
+  (condition-case nil
+      (and (treesit-node-p node)
+           (treesit-node-check node 'live)
+           (not (treesit-node-check node 'outdated)))
+    (error nil)))
+
+(defun sr--node-bounds (node)
+  "Return accessible, nonempty buffer bounds for NODE."
+  (when (sr--node-live-p node)
+    (condition-case nil
+        (let ((beg (treesit-node-start node))
+              (end (treesit-node-end node)))
+          (when (and (< beg end)
+                     (<= (point-min) beg end (point-max)))
+            (cons beg end)))
+      (error nil))))
+
+(defun sr--node-at-edge-p (node pos)
+  "Return non-nil when POS is on either selectable edge of NODE."
+  (when-let* ((bounds (sr--node-bounds node)))
+    (or (= pos (car bounds))
+        (= pos (1- (cdr bounds))))))
+
+(defun sr--node-top-at (pos)
+  "Return Ki-style top syntax node at or after POS.
+Start with the leaf at POS, then choose the largest non-root ancestor
+that starts at the same position.  This selects a complete construct
+at keywords and opening delimiters while retaining fine nodes elsewhere."
+  (when (treesit-available-p)
+    (condition-case nil
+        (when (treesit-language-at pos)
+          (when-let* ((node (treesit-node-at pos))
+                      (_bounds (sr--node-bounds node)))
+            (let ((start (treesit-node-start node))
+                  (parent (treesit-node-parent node)))
+              ;; Ki's TopNode excludes the parser root.
+              (while (and parent
+                          (treesit-node-parent parent)
+                          (= start (treesit-node-start parent))
+                          (sr--node-bounds parent))
+                (setq node parent
+                      parent (treesit-node-parent node)))
+              (when (treesit-node-parent node)
+                node))))
+      (error nil))))
+
+(defun sr--node-current-at (pos)
+  "Return the selected syntax node at POS, refreshing stale state."
+  (if (and (sr--node-live-p sr--node-current)
+           (sr--node-at-edge-p sr--node-current pos))
+      sr--node-current
+    (setq sr--node-current (sr--node-top-at pos))))
+
+(defun semantic-region--node-bounds-at (pos)
+  "Return bounds of the Ki-style syntax node at POS."
+  (when-let* ((node (sr--node-current-at pos)))
+    (sr--node-bounds node)))
+
+(defun semantic-region--node-for-region (region)
+  "Return the tree-sitter node represented by node REGION."
+  (let ((bounds (cons (semantic-region-beg region)
+                      (semantic-region-end region))))
+    (if (and (sr--node-live-p sr--node-current)
+             (equal (sr--node-bounds sr--node-current) bounds))
+        sr--node-current
+      (condition-case nil
+          (when-let* ((leaf (treesit-node-at (car bounds)))
+                      (parser (treesit-node-parser leaf))
+                      (root (treesit-parser-root-node parser))
+                      (node (treesit-node-descendant-for-range
+                             root (car bounds) (cdr bounds))))
+            ;; The smallest covering node need not have the exact requested
+            ;; range.  Ascend until it does.
+            (while (and node
+                        (not (equal (sr--node-bounds node) bounds)))
+              (setq node (treesit-node-parent node)))
+            (when node
+              ;; Prefer the most ancestral non-root node with this exact
+              ;; range, matching Ki's sibling-navigation behavior.
+              (let ((parent (treesit-node-parent node)))
+                (while (and parent
+                            (treesit-node-parent parent)
+                            (equal (sr--node-bounds parent) bounds))
+                  (setq node parent
+                        parent (treesit-node-parent node))))
+              (setq sr--node-current node)))
+        (error nil)))))
+
+(defun semantic-region--node-sibling-region (region direction named)
+  "Return REGION's sibling in DIRECTION.
+When NAMED is non-nil, skip anonymous punctuation nodes."
+  (with-current-buffer (semantic-region-buffer region)
+    (condition-case nil
+        (when-let* ((node (semantic-region--node-for-region region))
+                    (sibling
+                     (if (eq direction 'next)
+                         (treesit-node-next-sibling node named)
+                       (treesit-node-prev-sibling node named)))
+                    (bounds (sr--node-bounds sibling)))
+          (setq sr--node-current sibling)
+          (semantic-region--build
+           'node (current-buffer) (car bounds) (cdr bounds)))
+      (error nil))))
+
+(defun sr--node-with-different-range (node step)
+  "Apply STEP from NODE until reaching a node with different bounds."
+  (let ((origin (sr--node-bounds node))
+        (target (funcall step node)))
+    (while (and target
+                (let ((bounds (sr--node-bounds target)))
+                  (or (null bounds) (equal bounds origin))))
+      (setq target (funcall step target)))
+    target))
+
+(defun sr--node-target (node movement)
+  "Return the syntax node reached from NODE by MOVEMENT."
+  (pcase movement
+    ('up
+     (sr--node-with-different-range node #'treesit-node-parent))
+    ('down
+     (sr--node-with-different-range
+      node (lambda (current) (treesit-node-child current 0 t))))
+    ('left (treesit-node-prev-sibling node t))
+    ('right (treesit-node-next-sibling node t))
+    ('prev (treesit-node-prev-sibling node))
+    ('next (treesit-node-next-sibling node))
+    ('first
+     (when-let* ((parent (treesit-node-parent node)))
+       (treesit-node-child parent 0 t)))
+    ('last
+     (when-let* ((parent (treesit-node-parent node)))
+       (treesit-node-child parent -1 t)))))
+
+(defun sr--goto-node-target (movement)
+  "Move to the syntax node reached by MOVEMENT."
+  (condition-case nil
+      (when-let* ((node (sr--node-current-at (point)))
+                  (target (sr--node-target node movement))
+                  (bounds (sr--node-bounds target)))
+        (setq sr--node-current target)
+        (goto-char (car bounds))
+        t)
+    (error nil)))
 
 ;; ── Shared semantic-region API ──────────────────────────────────────────
 
@@ -218,6 +375,7 @@ consumer provide selection bounds without taking ownership of overlays.")
     ('char (semantic-region--char-bounds-at pos))
     ((or 'word 'word-plus) (semantic-region--word-bounds-at pos))
     ('word-star (semantic-region--word-star-bounds-at pos))
+    ('node (semantic-region--node-bounds-at pos))
     ('subword (sr--subword-bounds-at pos))))
 
 (defun semantic-region-parse-at (unit pos)
@@ -280,54 +438,60 @@ consumer provide selection bounds without taking ownership of overlays.")
 (defun semantic-region-next (region)
   "Return the next region for REGION's unit, or nil at buffer end.
 WORD skips whitespace and symbols.  WORD+, WORD*, and SUBWORD skip
-whitespace.  LINE, LINE*, and CHAR traverse adjacent units."
+whitespace.  NODE traverses named sibling nodes.  LINE, LINE*, and CHAR
+traverse adjacent units."
   (semantic-region--require-live region)
-  (with-current-buffer (semantic-region-buffer region)
-    (let ((unit (semantic-region-unit region))
-          (lower-bound (semantic-region-end region))
-          (probe (semantic-region--next-position region))
-          next)
-      (while (and probe (not next))
-        (let ((candidate (semantic-region-parse-at unit probe)))
-          (cond
-           ((or (null candidate)
-                (< (semantic-region-beg candidate) lower-bound))
-            (setq probe (when (< probe (point-max)) (1+ probe))))
-           ((semantic-region--separator-p candidate)
-            (let ((next-probe (semantic-region--next-position candidate)))
-              (setq probe
-                    (if (and next-probe (> next-probe probe))
-                        next-probe
-                      (when (< probe (point-max)) (1+ probe))))))
-           (t
-            (setq next candidate)))))
-      next)))
+  (if (eq (semantic-region-unit region) 'node)
+      (semantic-region--node-sibling-region region 'next t)
+    (with-current-buffer (semantic-region-buffer region)
+      (let ((unit (semantic-region-unit region))
+            (lower-bound (semantic-region-end region))
+            (probe (semantic-region--next-position region))
+            next)
+        (while (and probe (not next))
+          (let ((candidate (semantic-region-parse-at unit probe)))
+            (cond
+             ((or (null candidate)
+                  (< (semantic-region-beg candidate) lower-bound))
+              (setq probe (when (< probe (point-max)) (1+ probe))))
+             ((semantic-region--separator-p candidate)
+              (let ((next-probe (semantic-region--next-position candidate)))
+                (setq probe
+                      (if (and next-probe (> next-probe probe))
+                          next-probe
+                        (when (< probe (point-max)) (1+ probe))))))
+             (t
+              (setq next candidate)))))
+        next))))
 
 (defun semantic-region-prev (region)
   "Return the previous region for REGION's unit, or nil at buffer start.
 WORD skips whitespace and symbols.  WORD+, WORD*, and SUBWORD skip
-whitespace.  LINE, LINE*, and CHAR traverse adjacent units."
+whitespace.  NODE traverses named sibling nodes.  LINE, LINE*, and CHAR
+traverse adjacent units."
   (semantic-region--require-live region)
-  (with-current-buffer (semantic-region-buffer region)
-    (let ((unit (semantic-region-unit region))
-          (upper-bound (semantic-region-beg region))
-          (probe (semantic-region--prev-position region))
-          prev)
-      (while (and probe (not prev))
-        (let ((candidate (semantic-region-parse-at unit probe)))
-          (cond
-           ((or (null candidate)
-                (> (semantic-region-end candidate) upper-bound))
-            (setq probe (when (> probe (point-min)) (1- probe))))
-           ((semantic-region--separator-p candidate)
-            (let ((prev-probe (semantic-region--prev-position candidate)))
-              (setq probe
-                    (if (and prev-probe (< prev-probe probe))
-                        prev-probe
-                      (when (> probe (point-min)) (1- probe))))))
-           (t
-            (setq prev candidate)))))
-      prev)))
+  (if (eq (semantic-region-unit region) 'node)
+      (semantic-region--node-sibling-region region 'prev t)
+    (with-current-buffer (semantic-region-buffer region)
+      (let ((unit (semantic-region-unit region))
+            (upper-bound (semantic-region-beg region))
+            (probe (semantic-region--prev-position region))
+            prev)
+        (while (and probe (not prev))
+          (let ((candidate (semantic-region-parse-at unit probe)))
+            (cond
+             ((or (null candidate)
+                  (> (semantic-region-end candidate) upper-bound))
+              (setq probe (when (> probe (point-min)) (1- probe))))
+             ((semantic-region--separator-p candidate)
+              (let ((prev-probe (semantic-region--prev-position candidate)))
+                (setq probe
+                      (if (and prev-probe (< prev-probe probe))
+                          prev-probe
+                        (when (> probe (point-min)) (1- probe))))))
+             (t
+              (setq prev candidate)))))
+        prev))))
 
 (defun semantic-region-extend-next (region)
   "Return REGION extended through its next unit.
@@ -667,6 +831,8 @@ units in word-based modes."
      (while (and (looking-at-p "^[ \t]*$")
                  (not (bobp)))
        (forward-line -1)))
+    ('node
+     (sr--goto-node-target 'up))
     ((or 'word 'word-plus 'word-star 'subword)
      (sr--nav-wordish-line -1))
     (_
@@ -685,6 +851,8 @@ units in word-based modes."
      (while (and (looking-at-p "^[ \t]*$")
                  (not (eobp)))
        (forward-line 1)))
+    ('node
+     (sr--goto-node-target 'down))
     ((or 'word 'word-plus 'word-star 'subword)
      (sr--nav-wordish-line 1))
     (_
@@ -754,8 +922,10 @@ units in word-based modes."
      (sr--nav-prev-blank-line))
     ('line-star
      (sr--nav-prev-empty-line))
+    ('node
+     (sr--goto-node-target 'prev))
     (_
-     (message "Prev/Next navigation (u/o) is for WORD, WORD+, WORD*, Subword, LINE, and LINE* modes.")))
+     (message "Prev/Next navigation (u/o) is for NODE, WORD, WORD+, WORD*, Subword, LINE, and LINE* modes.")))
   (sr--update-highlight))
 
 (defun sr-nav-next ()
@@ -774,32 +944,36 @@ units in word-based modes."
      (sr--nav-next-blank-line))
     ('line-star
      (sr--nav-next-empty-line))
+    ('node
+     (sr--goto-node-target 'next))
     (_
-     (message "Prev/Next navigation (u/o) is for WORD, WORD+, WORD*, Subword, LINE, and LINE* modes.")))
+     (message "Prev/Next navigation (u/o) is for NODE, WORD, WORD+, WORD*, Subword, LINE, and LINE* modes.")))
   (sr--update-highlight))
 
 (defun sr-nav-left ()
   "Move point left/backward by one unit."
   (interactive)
   (pcase sr-submode
+    ('node (sr--goto-node-target 'left))
     ('char (backward-char))
     ('word (sr-backward-word-non-symbol))
     ('word-plus (sr-backward-word-all))
     ('word-star (sr-backward-bigword-all))
     ('subword (sr-backward-subword-all))
-    (_ (message "Left/Right navigation (j/l) requires Character, Word, WORD+, WORD*, or Subword mode.")))
+    (_ (message "Left/Right navigation (j/l) requires NODE, Character, Word, WORD+, WORD*, or Subword mode.")))
   (sr--update-highlight))
 
 (defun sr-nav-right ()
   "Move point right/forward by one unit."
   (interactive)
   (pcase sr-submode
+    ('node (sr--goto-node-target 'right))
     ('char (forward-char))
     ('word (sr-forward-word-non-symbol))
     ('word-plus (sr-forward-word-all))
     ('word-star (sr-forward-bigword-all))
     ('subword (sr-forward-subword-all))
-    (_ (message "Left/Right navigation (j/l) requires Character, Word, WORD+, WORD*, or Subword mode.")))
+    (_ (message "Left/Right navigation (j/l) requires NODE, Character, Word, WORD+, WORD*, or Subword mode.")))
   (sr--update-highlight))
 
 ;; ── First / Last ─────────────────────────────────────────────────────────
@@ -841,6 +1015,8 @@ units in word-based modes."
     (pcase sr-submode
       ('char
        (goto-char (line-beginning-position)))
+      ('node
+       (sr--goto-node-target 'first))
       ((or 'line 'line-star)
        (goto-char (point-min))
        (sr--snap-to-unit-start))
@@ -859,6 +1035,8 @@ units in word-based modes."
     (pcase sr-submode
       ('char
        (goto-char (line-end-position)))
+      ('node
+       (sr--goto-node-target 'last))
       ((or 'line 'line-star)
        (goto-char (point-max))
        (sr--snap-to-unit-start))
@@ -874,6 +1052,8 @@ units in word-based modes."
 
 (defun sr--set-submode (submode human-name)
   "Set `sr-submode' to SUBMODE and show HUMAN-NAME in the echo area."
+  (unless (eq sr-submode submode)
+    (setq sr--node-current nil))
   (setq sr-submode submode)
   (sr--update-highlight)
   (message "semantic-regions: %s" human-name))
@@ -912,6 +1092,11 @@ units in word-based modes."
   "Switch to WORD+ submode."
   (interactive)
   (sr--set-submode 'word-plus "WORD+ Mode"))
+
+(defun sr-set-node-mode ()
+  "Switch to NODE submode."
+  (interactive)
+  (sr--set-submode 'node "NODE Mode"))
 
 ;; ── Minor mode ───────────────────────────────────────────────────────────
 

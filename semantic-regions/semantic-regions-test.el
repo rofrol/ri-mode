@@ -20,6 +20,16 @@
      (goto-char (point-min))
      ,@body))
 
+(defmacro semantic-region-test--with-json-buffer (text &rest body)
+  "Run BODY in a temporary JSON buffer backed by tree-sitter."
+  (declare (indent 1))
+  `(semantic-region-test--with-buffer ,text
+     (unless (and (treesit-available-p)
+                  (treesit-language-available-p 'json))
+       (ert-skip "JSON tree-sitter grammar unavailable"))
+     (treesit-parser-create 'json)
+     ,@body))
+
 (defun semantic-region-test--highlighted-p (pos)
   "Return non-nil when POS has the semantic highlight face."
   (cl-some
@@ -28,7 +38,7 @@
    (overlays-at pos)))
 
 (defconst semantic-region-test--units
-  '(line line-star char word word-plus word-star subword)
+  '(line line-star char word word-plus word-star subword node)
   "Units supported by the shared semantic-region API.")
 
 ;;; parse-at: construction is always valid --------------------------------
@@ -319,6 +329,70 @@
       (should (equal (semantic-region-string
                       (semantic-region-parse-at submode (point)))
                      "beta")))))
+
+;;; NODE -------------------------------------------------------------------
+
+(ert-deftest semantic-region-test-node-without-parser-is-unavailable ()
+  (semantic-region-test--with-buffer "plain text"
+    (should-not (semantic-region-parse-at 'node (point-min)))))
+
+(ert-deftest semantic-region-test-node-navigation-matches-ki ()
+  (semantic-region-test--with-json-buffer
+      "[{\"x\": 123}, true, {\"y\": {}}]"
+    (setq sr-submode 'node)
+    (goto-char 2)
+    (should (equal (semantic-region-string
+                    (semantic-region-parse-at 'node (point)))
+                   "{\"x\": 123}"))
+    ;; Left/Right traverse named siblings.
+    (sr-nav-right)
+    (should (equal (semantic-region-string
+                    (semantic-region-parse-at 'node (point)))
+                   "true"))
+    (sr-nav-left)
+    (should (equal (semantic-region-string
+                    (semantic-region-parse-at 'node (point)))
+                   "{\"x\": 123}"))
+    ;; Previous/Next include anonymous punctuation siblings.
+    (sr-nav-next)
+    (should (equal (semantic-region-string
+                    (semantic-region-parse-at 'node (point)))
+                   ","))
+    (sr-nav-next)
+    (should (equal (semantic-region-string
+                    (semantic-region-parse-at 'node (point)))
+                   "true"))
+    ;; First/Last use named siblings; Up/Down use parent/first named child.
+    (sr-nav-last)
+    (should (equal (semantic-region-string
+                    (semantic-region-parse-at 'node (point)))
+                   "{\"y\": {}}"))
+    (sr-nav-first)
+    (should (equal (semantic-region-string
+                    (semantic-region-parse-at 'node (point)))
+                   "{\"x\": 123}"))
+    (sr-nav-up)
+    (should (equal (semantic-region-string
+                    (semantic-region-parse-at 'node (point)))
+                   "[{\"x\": 123}, true, {\"y\": {}}]"))
+    (sr-nav-down)
+    (should (equal (semantic-region-string
+                    (semantic-region-parse-at 'node (point)))
+                   "{\"x\": 123}"))))
+
+(ert-deftest semantic-region-test-node-api-traverses-named-siblings ()
+  (semantic-region-test--with-json-buffer
+      "[{\"x\": 123}, true]"
+    (let* ((object (semantic-region-parse-at 'node 2))
+           (boolean (semantic-region-next object)))
+      (should (eq (semantic-region-unit object) 'node))
+      (should (equal (semantic-region-string boolean) "true"))
+      (should (equal (semantic-region-string
+                      (semantic-region-prev boolean))
+                     "{\"x\": 123}"))
+      (should (equal (semantic-region-string
+                      (semantic-region-extend-next object))
+                     "{\"x\": 123}, true")))))
 
 ;;; Bounds compatibility regression tests ----------------------------------
 

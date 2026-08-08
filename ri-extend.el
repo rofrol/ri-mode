@@ -102,10 +102,11 @@ This prevents movement helpers from changing the active selection."
 In extend mode, a submode change or cursor swap preserves the exact
 selection already established until navigation moves the active edge.
 Otherwise, horizontal unit modes keep selection boundaries exact;
-WORD, WORD*, and SUBWORD keep the initial unit in the range while the
-current unit crosses it, without changing cursor direction.  For line
-modes, only the active edge snaps to a line boundary; the inactive
-anchor remains at the exact boundary already established.
+WORD, WORD*, SUBWORD, and NODE keep the initial unit in the range while
+the current unit crosses it, without changing cursor direction.  NODE
+always contributes its complete syntax-node bounds.  For line modes,
+only the active edge snaps to a line boundary; the inactive anchor
+remains at the exact boundary already established.
 In normal mode: current unit bounds."
   (if-let* ((state ri--selection)
             (anchor (ri--selection-state-anchor state)))
@@ -128,6 +129,21 @@ In normal mode: current unit bounds."
          ((and (= raw-start (point-min))
                (= point-boundary (point-max)))
           (cons raw-start point-boundary))
+         ((eq sr-submode 'node)
+          (let ((current-bounds (sr--get-current-unit-bounds))
+                (initial-end
+                 (when-let* ((marker
+                              (ri--selection-state-initial-end state)))
+                   (marker-position marker))))
+            (if current-bounds
+                (if (eq active-edge 'end)
+                    (cons (min anchor-pos (car current-bounds))
+                          (max (or initial-end anchor-pos)
+                               (cdr current-bounds)))
+                  (cons (min anchor-pos (car current-bounds))
+                        (max anchor-pos (cdr current-bounds))))
+              (cons (min anchor-pos point-boundary)
+                    (max (or initial-end anchor-pos) point-boundary)))))
          ((and (sr--wordish-submode-p)
                (eq active-edge 'end)
                (ri--selection-state-initial-end state))
@@ -424,7 +440,7 @@ In normal mode: jump to the opposite end of the current unit."
 When entering: select the current unit and put point on its last character.
 In WORD, WORD*, LINE, and LINE* modes, repeated `f` selects the buffer;
 in CHAR mode, it selects the current line.  In SUBWORD mode, repeated
-`f` is a no-op."
+`f` is a no-op; in NODE mode, it leaves Extend."
   (interactive)
   (unless (and (ri--selection-active-p) (eq sr-submode 'subword))
     (if (ri--selection-active-p)
@@ -491,6 +507,7 @@ at or after its old position."
 (defun ri-extend-set-word-star-mode () (interactive) (ri--set-submode-with-extend #'sr-set-word-star-mode))
 (defun ri-extend-set-word-plus-mode () (interactive) (ri--set-submode-with-extend #'sr-set-word-plus-mode))
 (defun ri-extend-set-subword-mode () (interactive) (ri--set-submode-with-extend #'sr-set-subword-mode))
+(defun ri-extend-set-node-mode () (interactive) (ri--set-submode-with-extend #'sr-set-node-mode))
 
 
 (defun ri-extend-escape ()
