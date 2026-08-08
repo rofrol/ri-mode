@@ -32,7 +32,7 @@
 
 (defface sr-highlight-face
   '((t :inherit region :background "#c7e6ff" :extend nil))
-  "Face used to highlight the current unit."
+  "Face used to highlight the current semantic range."
   :group 'semantic-regions)
 
 (defcustom sr-highlight-predicate nil
@@ -42,6 +42,12 @@ When non-nil, it is called with no arguments; highlighting is shown only
 when it returns non-nil."
   :type '(choice (const :tag "Always" nil) function)
   :group 'semantic-regions)
+
+(defvar-local sr-highlight-bounds-function nil
+  "Optional function returning the buffer bounds to highlight.
+The function is called without arguments and must return (BEG . END)
+or nil.  When nil, highlight the current semantic unit.  This lets a
+consumer provide selection bounds without taking ownership of overlays.")
 
 ;; ── Submode ──────────────────────────────────────────────────────────────
 
@@ -404,28 +410,62 @@ Return REGION unchanged when it has no previous unit."
 
 ;; ── Highlight ────────────────────────────────────────────────────────────
 
-(defvar-local sr--highlight-overlay nil
-  "Overlay used for highlighting the current unit.")
+(defvar-local sr--highlight-overlays nil
+  "Overlays rendering the current semantic highlight.")
+
+(defun sr--render-highlight-bounds (bounds)
+  "Render BOUNDS without painting newline glyphs inside a text range.
+A range containing only one newline remains visible so CHAR mode can
+still represent that unit.  Reuse existing overlays where possible."
+  (let ((available sr--highlight-overlays)
+        used)
+    (cl-labels
+        ((render-segment
+          (start end)
+          (when (< start end)
+            (let ((overlay (pop available)))
+              (unless overlay
+                (setq overlay (make-overlay start end))
+                (overlay-put overlay 'face 'sr-highlight-face)
+                (overlay-put overlay 'priority 100))
+              (move-overlay overlay start end)
+              (push overlay used)))))
+      (let ((start (car bounds))
+            (end (cdr bounds)))
+        (if (and (= (- end start) 1)
+                 (eq (char-after start) ?\n))
+            (render-segment start end)
+          (save-excursion
+            (goto-char start)
+            (while (< start end)
+              (let ((line-end (min end (line-end-position))))
+                (render-segment start line-end)
+                (if (= line-end end)
+                    (setq start end)
+                  (setq start (1+ line-end))
+                  (goto-char start))))))))
+    (mapc #'delete-overlay available)
+    (setq sr--highlight-overlays (nreverse used))))
 
 (defun sr--update-highlight ()
-  "Update the highlight overlay to the unit at point.
-Remove it when `sr-highlight-predicate' disallows highlighting."
+  "Render the requested bounds through the semantic highlight owner.
+Remove the highlight when `sr-highlight-predicate' disallows it or the
+configured bounds source returns nil."
   (if (and sr-highlight-predicate
            (not (funcall sr-highlight-predicate)))
       (sr--remove-highlight)
-    (let ((bounds (sr--get-current-unit-bounds)))
-      (when bounds
-        (unless sr--highlight-overlay
-          (setq sr--highlight-overlay (make-overlay (point) (point)))
-          (overlay-put sr--highlight-overlay 'face 'sr-highlight-face)
-          (overlay-put sr--highlight-overlay 'priority 100))
-        (move-overlay sr--highlight-overlay (car bounds) (cdr bounds))))))
+    (let ((bounds
+           (if sr-highlight-bounds-function
+               (funcall sr-highlight-bounds-function)
+             (sr--get-current-unit-bounds))))
+      (if bounds
+          (sr--render-highlight-bounds bounds)
+        (sr--remove-highlight)))))
 
 (defun sr--remove-highlight ()
-  "Remove the highlight overlay."
-  (when sr--highlight-overlay
-    (delete-overlay sr--highlight-overlay)
-    (setq sr--highlight-overlay nil)))
+  "Remove all semantic highlight overlays."
+  (mapc #'delete-overlay sr--highlight-overlays)
+  (setq sr--highlight-overlays nil))
 
 ;; ── Snapping ─────────────────────────────────────────────────────────────
 

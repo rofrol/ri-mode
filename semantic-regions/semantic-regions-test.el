@@ -20,6 +20,13 @@
      (goto-char (point-min))
      ,@body))
 
+(defun semantic-region-test--highlighted-p (pos)
+  "Return non-nil when POS has the semantic highlight face."
+  (cl-some
+   (lambda (overlay)
+     (eq (overlay-get overlay 'face) 'sr-highlight-face))
+   (overlays-at pos)))
+
 (defconst semantic-region-test--units
   '(line line-star char word word-plus word-star subword)
   "Units supported by the shared semantic-region API.")
@@ -426,6 +433,21 @@ pre-existing property of the old code, not something the
       ;; on an empty buffer; only word-ish submodes return nil at eobp.
       (when (memq submode '(word word-plus word-star))
         (should (null (sr--unit-bounds-at 1 submode)))))))
+
+(ert-deftest semantic-region-test-highlight-provider-splits-multiline-range ()
+  (semantic-region-test--with-buffer "foo\nbar\n"
+    (let ((sr-highlight-bounds-function (lambda () (cons 1 8))))
+      (sr--update-highlight)
+      (dolist (pos '(1 2 3 5 6 7))
+        (should (semantic-region-test--highlighted-p pos)))
+      (dolist (pos '(4 8))
+        (should-not (semantic-region-test--highlighted-p pos))))))
+
+(ert-deftest semantic-region-test-single-newline-unit-remains-visible ()
+  (semantic-region-test--with-buffer "\n"
+    (let ((sr-highlight-bounds-function (lambda () (cons 1 2))))
+      (sr--update-highlight)
+      (should (semantic-region-test--highlighted-p 1)))))
 
 (provide 'semantic-regions-test)
 ;;; semantic-regions-test.el ends here
