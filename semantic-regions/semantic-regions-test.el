@@ -4,9 +4,9 @@
 ;; supported unit: parsing, navigation, extension, unit changes, and
 ;; buffer interaction.
 ;;
-;; The second battery protects the ri-mode integration.  Every submode
-;; uses the shared bounds engine.  A frozen copy of the old implementation
-;; remains below as the regression oracle.
+;; The second battery verifies that every submode preserves its bounds
+;; behavior while using the shared engine.  A frozen copy of the old
+;; implementation remains below as the regression oracle.
 
 (require 'ert)
 (require 'subword)
@@ -266,8 +266,7 @@
       (semantic-region-delete r)
       (should (equal (buffer-string) "foo ar baz")))))
 
-;;; Integration regression tests --------------------------------------------
-;; Every semantic submode now uses the shared engine.
+;;; Bounds compatibility regression tests ----------------------------------
 
 ;;; Frozen oracle: verbatim copy of the pre-integration implementation ----
 
