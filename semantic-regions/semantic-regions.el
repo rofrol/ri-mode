@@ -45,6 +45,14 @@ when it returns non-nil."
   :type '(choice (const :tag "Always" nil) function)
   :group 'semantic-regions)
 
+(defcustom sr-node-language-alist
+  '((emacs-lisp-mode . elisp))
+  "Languages used to create NODE parsers in non-tree-sitter major modes.
+Each entry maps an exact major-mode symbol to a tree-sitter language.
+Modes that already create a parser do not need an entry."
+  :type '(alist :key-type symbol :value-type symbol)
+  :group 'semantic-regions)
+
 (defvar-local sr-highlight-bounds-function nil
   "Optional function returning the buffer bounds to highlight.
 The function is called without arguments and must return (BEG . END)
@@ -111,6 +119,56 @@ Supported values are `line', `line-star', `char', `word', `word-plus',
 (defvar-local sr--node-current nil
   "Current tree-sitter node while `sr-submode' is `node'.")
 
+(defun sr--node-existing-language-at (pos)
+  "Return the tree-sitter language already parsing POS."
+  (when (treesit-available-p)
+    (condition-case nil
+        (or (treesit-language-at pos)
+            (when-let* ((parser (car (treesit-parser-list))))
+              (treesit-parser-language parser)))
+      (error nil))))
+
+(defun sr--node-mapped-language ()
+  "Return the configured tree-sitter language for `major-mode'."
+  (alist-get major-mode sr-node-language-alist))
+
+(defun sr--ensure-node-parser (pos)
+  "Return a parser language for POS, creating a configured parser if possible."
+  (or (sr--node-existing-language-at pos)
+      (when (treesit-available-p)
+        (when-let* ((language (sr--node-mapped-language)))
+          (when (treesit-language-available-p language)
+            (condition-case nil
+                (progn
+                  (treesit-parser-create language)
+                  language)
+              (error nil)))))))
+
+(defun sr--require-node-parser ()
+  "Return NODE's parser language or signal an actionable user error."
+  (or (sr--ensure-node-parser (point))
+      (cond
+       ((not (treesit-available-p))
+        (user-error "NODE requires an Emacs build with tree-sitter support"))
+       ((not (sr--node-mapped-language))
+        (user-error
+         "NODE requires an active tree-sitter parser in %s"
+         major-mode))
+       ((not (treesit-language-available-p (sr--node-mapped-language)))
+        (user-error
+         "NODE requires the tree-sitter grammar `%s'"
+         (sr--node-mapped-language)))
+       (t
+        (condition-case err
+            (progn
+              (treesit-parser-create (sr--node-mapped-language))
+              (sr--node-mapped-language))
+          (error
+           (user-error
+            "Cannot create NODE parser for `%s': %s"
+            (sr--node-mapped-language)
+            (error-message-string err))))))))
+
 (defun sr--node-live-p (node)
   "Return non-nil when NODE can still be queried safely."
   (condition-case nil
@@ -137,27 +195,23 @@ Supported values are `line', `line-star', `char', `word', `word-plus',
         (= pos (1- (cdr bounds))))))
 
 (defun sr--node-top-at (pos)
-  "Return Ki-style top syntax node at or after POS.
-Start with the leaf at POS, then choose the largest non-root ancestor
-that starts at the same position.  This selects a complete construct
-at keywords and opening delimiters while retaining fine nodes elsewhere."
-  (when (treesit-available-p)
-    (condition-case nil
-        (when (treesit-language-at pos)
-          (when-let* ((node (treesit-node-at pos))
-                      (_bounds (sr--node-bounds node)))
-            (let ((start (treesit-node-start node))
-                  (parent (treesit-node-parent node)))
-              ;; Ki's TopNode excludes the parser root.
-              (while (and parent
-                          (treesit-node-parent parent)
-                          (= start (treesit-node-start parent))
-                          (sr--node-bounds parent))
-                (setq node parent
-                      parent (treesit-node-parent node)))
-              (when (treesit-node-parent node)
-                node))))
-      (error nil))))
+  "Return Ki-style top tree-sitter node at or after POS."
+  (condition-case nil
+      (when-let* ((language (sr--ensure-node-parser pos))
+                  (node (treesit-node-at pos language))
+                  (_bounds (sr--node-bounds node)))
+        (let ((start (treesit-node-start node))
+              (parent (treesit-node-parent node)))
+          ;; Ki's TopNode excludes the parser root.
+          (while (and parent
+                      (treesit-node-parent parent)
+                      (= start (treesit-node-start parent))
+                      (sr--node-bounds parent))
+            (setq node parent
+                  parent (treesit-node-parent node)))
+          (when (treesit-node-parent node)
+            node)))
+    (error nil)))
 
 (defun sr--node-current-at (pos)
   "Return the selected syntax node at POS, refreshing stale state."
@@ -167,7 +221,7 @@ at keywords and opening delimiters while retaining fine nodes elsewhere."
     (setq sr--node-current (sr--node-top-at pos))))
 
 (defun semantic-region--node-bounds-at (pos)
-  "Return bounds of the Ki-style syntax node at POS."
+  "Return bounds of the Ki-style tree-sitter node at POS."
   (when-let* ((node (sr--node-current-at pos)))
     (sr--node-bounds node)))
 
@@ -179,7 +233,8 @@ at keywords and opening delimiters while retaining fine nodes elsewhere."
              (equal (sr--node-bounds sr--node-current) bounds))
         sr--node-current
       (condition-case nil
-          (when-let* ((leaf (treesit-node-at (car bounds)))
+          (when-let* ((language (sr--ensure-node-parser (car bounds)))
+                      (leaf (treesit-node-at (car bounds) language))
                       (parser (treesit-node-parser leaf))
                       (root (treesit-parser-root-node parser))
                       (node (treesit-node-descendant-for-range
@@ -228,7 +283,7 @@ When NAMED is non-nil, skip anonymous punctuation nodes."
     target))
 
 (defun sr--node-target (node movement)
-  "Return the syntax node reached from NODE by MOVEMENT."
+  "Return the tree-sitter node reached from NODE by MOVEMENT."
   (pcase movement
     ('up
      (sr--node-with-different-range node #'treesit-node-parent))
@@ -247,7 +302,7 @@ When NAMED is non-nil, skip anonymous punctuation nodes."
        (treesit-node-child parent -1 t)))))
 
 (defun sr--goto-node-target (movement)
-  "Move to the syntax node reached by MOVEMENT."
+  "Move to the tree-sitter node reached by MOVEMENT."
   (condition-case nil
       (when-let* ((node (sr--node-current-at (point)))
                   (target (sr--node-target node movement))
@@ -1094,8 +1149,9 @@ units in word-based modes."
   (sr--set-submode 'word-plus "WORD+ Mode"))
 
 (defun sr-set-node-mode ()
-  "Switch to NODE submode."
+  "Switch to NODE submode backed exclusively by tree-sitter."
   (interactive)
+  (sr--require-node-parser)
   (sr--set-submode 'node "NODE Mode"))
 
 ;; ── Minor mode ───────────────────────────────────────────────────────────

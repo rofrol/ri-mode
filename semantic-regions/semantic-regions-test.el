@@ -336,6 +336,29 @@
   (semantic-region-test--with-buffer "plain text"
     (should-not (semantic-region-parse-at 'node (point-min)))))
 
+(ert-deftest semantic-region-test-node-mode-requires-tree-sitter-parser ()
+  (semantic-region-test--with-buffer "plain text"
+    (should-error (sr-set-node-mode) :type 'user-error)
+    (should (eq sr-submode 'line))))
+
+(ert-deftest semantic-region-test-node-mode-creates-configured-parser ()
+  (semantic-region-test--with-buffer "[{\"x\": 1}]"
+    (unless (and (treesit-available-p)
+                 (treesit-language-available-p 'json))
+      (ert-skip "JSON tree-sitter grammar unavailable"))
+    (let ((sr-node-language-alist '((fundamental-mode . json))))
+      (goto-char 2)
+      (should-not (treesit-parser-list))
+      (sr-set-node-mode)
+      (should (eq sr-submode 'node))
+      (should (equal
+               (mapcar #'treesit-parser-language (treesit-parser-list))
+               '(json)))
+      (should (equal (semantic-region-string
+                      (semantic-region-parse-at 'node (point)))
+                     "{\"x\": 1}")))))
+
+
 (ert-deftest semantic-region-test-node-navigation-matches-ki ()
   (semantic-region-test--with-json-buffer
       "[{\"x\": 123}, true, {\"y\": {}}]"

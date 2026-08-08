@@ -39,8 +39,7 @@
            (ri-extend-set-word-mode word)
            (ri-extend-set-word-star-mode word-star)
            (ri-extend-set-word-plus-mode word-plus)
-           (ri-extend-set-subword-mode subword)
-           (ri-extend-set-node-mode node)))
+           (ri-extend-set-subword-mode subword)))
       (pcase-let ((`(,setter ,submode) case))
         (dolist (swap '(nil t))
           (goto-char 2)
@@ -85,6 +84,7 @@
       (ri-smart-undo)
       (should (equal (ri--selection-bounds) extended-bounds)))
     (ri--exit-extend)))
+
 
 (ert-deftest ri-extend-test-node-extends-across-named-siblings ()
   (ri-extend-test--with-json-buffer
