@@ -122,9 +122,19 @@ when disabled it uses `modal-cursor-insert-type'."
 ;; ---------------------------------------------------------------------------
 ;; Cursor type
 
-(defun modal-cursor--set-type (type)
-  "Set buffer-local `cursor-type' to TYPE and sync TTY cursor shape."
-  (setq cursor-type type)
+(defun modal-cursor--normal-state-p ()
+  "Return non-nil when the watched mode signals normal state."
+  (and (boundp modal-cursor-watched-mode)
+       (symbol-value modal-cursor-watched-mode)))
+
+(defun modal-cursor--current-type ()
+  "Return the configured cursor type for the current modal state."
+  (if (modal-cursor--normal-state-p)
+      modal-cursor-normal-type
+    modal-cursor-insert-type))
+
+(defun modal-cursor--sync-tty-shape (type)
+  "Reassert the physical TTY cursor shape for TYPE."
   (when (modal-cursor--tty-p)
     ;; Emacs re-applies the terminal's "very visible" cursor after
     ;; redisplay when `visible-cursor' is non-nil.  That can reset the
@@ -132,6 +142,24 @@ when disabled it uses `modal-cursor-insert-type'."
     (setq visible-cursor nil)
     (send-string-to-terminal
      (if (eq type 'box) "\e[2 q" "\e[6 q"))))
+
+(defun modal-cursor--set-type (type)
+  "Set buffer-local `cursor-type' to TYPE and sync TTY cursor shape."
+  (setq cursor-type type)
+  (modal-cursor--sync-tty-shape type))
+
+(defun modal-cursor-refresh ()
+  "Reapply the cursor type for the current modal state.
+Use this after UI operations that redraw terminal windows without
+signaling a transition through `modal-cursor-watched-mode'."
+  (interactive)
+  (modal-cursor--set-type (modal-cursor--current-type)))
+
+(defun modal-cursor--pre-redisplay (window)
+  "Reassert the selected normal-state WINDOW's TTY cursor shape."
+  (when (and (eq window (selected-window))
+             (modal-cursor--normal-state-p))
+    (modal-cursor--sync-tty-shape modal-cursor-normal-type)))
 
 ;; ---------------------------------------------------------------------------
 ;; Blink hook management
@@ -162,14 +190,19 @@ when disabled it uses `modal-cursor-insert-type'."
   ;; buffers created after `modal-cursor-mode' was enabled.
   (let ((hook (intern (format "%s-hook" modal-cursor-watched-mode))))
     (add-hook hook #'modal-cursor--update nil t))
-  (if (and (boundp modal-cursor-watched-mode)
-           (symbol-value modal-cursor-watched-mode))
-      ;; Normal mode: box cursor, no blink hooks.
+  (if (modal-cursor--normal-state-p)
+      ;; Normal mode: box cursor, no blink hooks.  Reassert the physical
+      ;; shape before redisplay because terminal UI changes can reset it
+      ;; without changing the modal state.
       (progn
         (modal-cursor--blink-hooks-remove)
-        (modal-cursor--set-type modal-cursor-normal-type))
+        (add-hook 'pre-redisplay-functions
+                  #'modal-cursor--pre-redisplay nil t)
+        (modal-cursor-refresh))
     ;; Insert mode: thin cursor, manage blink hooks.
-    (modal-cursor--set-type modal-cursor-insert-type)
+    (remove-hook 'pre-redisplay-functions
+                 #'modal-cursor--pre-redisplay t)
+    (modal-cursor-refresh)
     (modal-cursor--blink-hooks-install)
     (modal-cursor--blink-schedule)))
 
@@ -205,6 +238,8 @@ steady while typing, blinking after idle."
         (with-current-buffer buf
           (let ((hook (intern (format "%s-hook" modal-cursor-watched-mode))))
             (remove-hook hook #'modal-cursor--update t))
+          (remove-hook 'pre-redisplay-functions
+                       #'modal-cursor--pre-redisplay t)
           (modal-cursor--blink-hooks-remove))))))
 
 (provide 'modal-cursor)
