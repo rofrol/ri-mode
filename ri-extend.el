@@ -447,6 +447,8 @@ in CHAR mode, it selects the current line.  In SUBWORD mode, repeated
   (ri--extend-record)
   (let ((origin (point)))
     (funcall movement)
+    (when (ri--selection-active-p)
+      (ri--snap-to-unit-start))
     (ri--finish-extend-navigation origin)))
 
 (defun ri--run-extend-horizontal-navigation (direction fallback)

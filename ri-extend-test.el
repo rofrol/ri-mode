@@ -101,6 +101,7 @@
     (setq sr-submode 'line)
     (should (ri--enter-extend))
     (ri-extend-nav-down)
+    (should (= (point) 7))
     (let ((bounds (ri--selection-bounds)))
       (should (equal bounds (cons 1 8)))
       (should (equal (buffer-substring-no-properties
