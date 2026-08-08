@@ -12,6 +12,16 @@
      (goto-char (point-min))
      ,@body))
 
+(defmacro ri-extend-test--with-json-buffer (text &rest body)
+  "Run BODY in a temporary JSON buffer backed by tree-sitter."
+  (declare (indent 1))
+  `(ri-extend-test--with-buffer ,text
+     (unless (and (treesit-available-p)
+                  (treesit-language-available-p 'json))
+       (ert-skip "JSON tree-sitter grammar unavailable"))
+     (treesit-parser-create 'json)
+     ,@body))
+
 (defun ri-extend-test--highlighted-p (pos)
   "Return non-nil when POS has the semantic highlight face."
   (cl-some
@@ -29,7 +39,8 @@
            (ri-extend-set-word-mode word)
            (ri-extend-set-word-star-mode word-star)
            (ri-extend-set-word-plus-mode word-plus)
-           (ri-extend-set-subword-mode subword)))
+           (ri-extend-set-subword-mode subword)
+           (ri-extend-set-node-mode node)))
       (pcase-let ((`(,setter ,submode) case))
         (dolist (swap '(nil t))
           (goto-char 2)
@@ -73,6 +84,26 @@
       (should (equal (ri--selection-bounds) (cons 12 24)))
       (ri-smart-undo)
       (should (equal (ri--selection-bounds) extended-bounds)))
+    (ri--exit-extend)))
+
+(ert-deftest ri-extend-test-node-extends-across-named-siblings ()
+  (ri-extend-test--with-json-buffer
+      "[{\"x\": 123}, true, {\"y\": {}}]"
+    (setq sr-submode 'char)
+    (goto-char 2)
+    (ri-extend-set-node-mode)
+    (should (eq sr-submode 'node))
+    (should (equal (sr--get-current-unit-bounds) (cons 2 12)))
+    (should (ri--enter-extend))
+    ;; Ki recipe: NODE, Extend, Right, Right, Left.
+    (ri-extend-nav-right)
+    (ri-extend-nav-right)
+    (ri-extend-nav-left)
+    (let ((bounds (ri--selection-bounds)))
+      (should (equal (buffer-substring-no-properties
+                      (car bounds) (cdr bounds))
+                     "{\"x\": 123}, true"))
+      (should (= (point) (1- (cdr bounds)))))
     (ri--exit-extend)))
 
 (ert-deftest ri-extend-test-normal-submode-switch-snaps-to-unit-start ()
@@ -155,7 +186,13 @@
       (should (eq (lookup-key mini-modal-map "/")
                   #'ri-swap-cursor))
       (should (eq (lookup-key ri--normal-help-map "/")
-                  #'ri-swap-cursor)))))
+                  #'ri-swap-cursor))
+      (should (eq (lookup-key mini-modal-map "d")
+                  #'ri-extend-set-node-mode))
+      (should (eq (lookup-key ri--normal-help-map "d")
+                  #'ri-extend-set-node-mode))
+      (let ((sr-submode 'node))
+        (should (equal (ri--submode-name) "NODE"))))))
 
 (provide 'ri-extend-test)
 ;;; ri-extend-test.el ends here
