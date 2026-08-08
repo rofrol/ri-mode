@@ -273,6 +273,26 @@
       (semantic-region-delete r)
       (should (equal (buffer-string) "foo ar baz")))))
 
+
+(ert-deftest semantic-region-test-subword-vertical-skips-symbol-only-lines ()
+  (semantic-region-test--with-buffer
+      ";; deleting regions while retaining its unit-specific bounds.\n;;\n;;; Code:\n"
+    (search-forward "Code")
+    (goto-char (match-beginning 0))
+    (setq sr-submode 'subword)
+    (sr-nav-up)
+    (should (= (line-number-at-pos) 1))
+    (should (equal (buffer-substring-no-properties
+                    (car (sr--get-current-unit-bounds))
+                    (cdr (sr--get-current-unit-bounds)))
+                   "deleting"))
+    (sr-nav-down)
+    (should (= (line-number-at-pos) 3))
+    (should (equal (buffer-substring-no-properties
+                    (car (sr--get-current-unit-bounds))
+                    (cdr (sr--get-current-unit-bounds)))
+                   "Code"))))
+
 ;;; Bounds compatibility regression tests ----------------------------------
 
 ;;; Frozen oracle: verbatim copy of the pre-integration implementation ----
