@@ -142,6 +142,18 @@
      (when (eq ri--menu-state 'editor)
        (ri--close-menu)))))
 
+(defun ri-transform-menu ()
+  "Show the Transform menu until a transformation is chosen."
+  (interactive)
+  (setq ri--menu-state 'transform)
+  (keymap-legend-show
+   "Transform" ri--transform-menu-map '(:title "Transform"))
+  (set-transient-map
+   ri--transform-menu-map nil
+   (lambda ()
+     (when (eq ri--menu-state 'transform)
+       (ri--close-menu)))))
+
 (defun ri--finish-edit-command ()
   "Leave Extend after an edit command and refresh RI UI state."
   (ri--exit-extend)
@@ -389,7 +401,6 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
    (list :key ?r :label "Delete/≡ Eat" :tap #'ri-delete-selection :map ri--eat-layer-map :release "Delete")
    (list :key ?g :label "≡ Open" :tap #'ri-change-selection :map ri--open-layer-map :release "Change")
    (list :key ?t :label "≡ Swap" :tap nil :map ri--swap-layer-map :release nil)
-   (list :key ?F :label "… Transform" :tap nil :map ri--transform-layer-map :release nil)
    (list :key ?v
          :label "≡ Paste"
          :tap #'ri-paste-selection
@@ -486,7 +497,7 @@ Active only in NORM mode and when no transient menu is open."
     (define-key map "r" '(menu-item "Delete/≡ Eat" ri-delete-selection))
     (define-key map "g" '(menu-item "≡ Open" ri-change-selection))
     (define-key map "t" '(menu-item "≡ Swap" ignore))
-    (define-key map "F" '(menu-item "… Transform" ignore))
+    (define-key map "F" '(menu-item "… Transform" ri-transform-menu))
     (define-key map "v" '(menu-item "≡ Paste" ri-paste-selection))
     (define-key map "f" '(menu-item "Extend" ri-toggle-extend))
     (define-key map "z" '(menu-item "≡ Undo/Redo" ri-smart-undo))
@@ -534,7 +545,7 @@ Active only in NORM mode and when no transient menu is open."
   (define-key mini-modal-map "r" #'ri-delete-selection)
   (define-key mini-modal-map "g" #'ri-change-selection)
   (define-key mini-modal-map "t" #'ignore)
-  (define-key mini-modal-map "F" #'ignore)
+  (define-key mini-modal-map "F" #'ri-transform-menu)
   (define-key mini-modal-map "v" #'ri-paste-selection)
   (define-key mini-modal-map (kbd "SPC") #'ri-space-menu)
   (let (to-remove)

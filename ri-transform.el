@@ -7,7 +7,7 @@
 ;;; Commentary:
 
 ;; Text transformations for `ri-mode': case conversions, wrap/unwrap,
-;; and comment toggling, invoked via the `F` momentary layer.
+;; and comment toggling, invoked via the persistent `F' menu.
 
 ;;; Code:
 
@@ -173,10 +173,10 @@ transformed string.  Point is left at the start of the replaced text."
         (comment-or-uncomment-region (car bounds) (cdr bounds))))
     (ri--update-highlight)))
 
-;; ── Momentary layer entry ────────────────────────────────────────
+;; ── Menu keymap ──────────────────────────────────────────────────
 
-(defvar-keymap ri--transform-layer-map
-  :doc "Transform momentary layer."
+(defvar-keymap ri--transform-menu-map
+  :doc "Keymap for the Transform menu."
   "q" '(menu-item "UPPER CASE" ri-transform-upper)
   "w" '(menu-item "UPPER_SNAKE_CASE" ri-transform-upper-snake)
   "e" '(menu-item "PascalCase" ri-transform-pascal)
@@ -189,7 +189,8 @@ transformed string.  Point is left at the start of the replaced text."
   "j" '(menu-item "Wrap" ri-transform-wrap)
   "h" '(menu-item "Unwrap" ri-transform-unwrap)
   "k" '(menu-item "Line Comment" ri-transform-line-comment)
-  "l" '(menu-item "Block Comment" ri-transform-block-comment))
+  "l" '(menu-item "Block Comment" ri-transform-block-comment)
+  "<escape>" #'ri--exit-menu)
 
 (provide 'ri-transform)
 ;;; ri-transform.el ends here
