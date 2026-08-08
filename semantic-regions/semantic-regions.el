@@ -628,35 +628,57 @@ configured bounds source returns nil."
           (subword-backward 1)
         (backward-char 1)))))
 
+
+(defun sr--first-subword-position-on-line ()
+  "Return the first SUBWORD character position on the current line."
+  (save-excursion
+    (goto-char (line-beginning-position))
+    (when (re-search-forward sr-subword-chars (line-end-position) t)
+      (match-beginning 0))))
+
+(defun sr--nav-subword-line (direction)
+  "Move in DIRECTION to the next line containing a SUBWORD character.
+Restore point when no such line exists."
+  (let ((origin (point))
+        target)
+    (while (and (zerop (forward-line direction))
+                (not (setq target (sr--first-subword-position-on-line)))))
+    (goto-char (or target origin))))
+
 ;; ── Navigation commands ──────────────────────────────────────────────────
 
 (defun sr-nav-up ()
-  "Move point up by line, skipping blank lines in LINE and SUBWORD modes."
+  "Move point up by line.
+Skip blank lines in LINE mode and lines without subwords in SUBWORD mode."
   (interactive)
   (pcase sr-submode
-    ((or 'line 'subword)
+    ('line
      (forward-line -1)
      (while (and (looking-at-p "^[ \t]*$")
                  (not (bobp)))
        (forward-line -1)))
+    ('subword
+     (sr--nav-subword-line -1))
     (_
      (forward-line -1)))
   (sr--snap-to-unit-start)
   (sr--update-highlight))
 
 (defun sr-nav-down ()
-  "Move point down by line."
+  "Move point down by line.
+Skip blank lines in LINE mode and lines without subwords in SUBWORD mode."
   (interactive)
   (pcase sr-submode
     ('line
      (forward-line 1)
      (while (and (looking-at-p "^[ \t]*$")
                  (not (eobp)))
-       (forward-line 1))
-     (sr--snap-to-unit-start))
+       (forward-line 1)))
+    ('subword
+     (sr--nav-subword-line 1))
     (_
-     (forward-line 1)
-     (sr--snap-to-unit-start)))
+     (forward-line 1)))
+  (sr--snap-to-unit-start)
   (sr--update-highlight))
 
 (defun sr--nav-prev-blank-line ()
