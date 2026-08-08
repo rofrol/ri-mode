@@ -273,6 +273,17 @@
       (semantic-region-delete r)
       (should (equal (buffer-string) "foo ar baz")))))
 
+(ert-deftest semantic-region-test-subword-right-skips-symbol-separator ()
+  (semantic-region-test--with-buffer "Unit-based"
+    (setq sr-submode 'subword)
+    (sr-nav-right)
+    (should (= (point) 6))
+    (should (equal (sr--get-current-unit-bounds) (cons 6 11)))
+    (dolist (pos '(1 2 3 4 5))
+      (should-not (semantic-region-test--highlighted-p pos)))
+    (dolist (pos '(6 7 8 9 10))
+      (should (semantic-region-test--highlighted-p pos)))))
+
 
 (ert-deftest semantic-region-test-subword-vertical-skips-symbol-only-lines ()
   (semantic-region-test--with-buffer

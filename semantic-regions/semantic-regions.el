@@ -591,16 +591,11 @@ configured bounds source returns nil."
       (backward-char 1))))
 
 (defun sr-forward-subword-all ()
-  "Move forward by one subword unit."
+  "Move forward to the next subword unit."
   (interactive)
-  (unless (eobp)
-    (let ((bounds (sr--subword-bounds-at (point))))
-      (if (and bounds (> (cdr bounds) (point)))
-          (goto-char (cdr bounds))
-        (subword-forward 1)
-        (let ((bounds (sr--subword-bounds-at (point))))
-          (when bounds
-            (goto-char (car bounds))))))))
+  (when-let* ((current (semantic-region-parse-at 'subword (point)))
+              (next (semantic-region-next current)))
+    (goto-char (semantic-region-beg next))))
 
 (defun sr-backward-subword-all ()
   "Move backward by one subword unit."
