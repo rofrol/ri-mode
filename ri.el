@@ -433,7 +433,7 @@ Active only in NORM mode and when no transient menu is open."
                     ;; which can make a TTY re-emit its default cursor shape.
                     ;; The modal state did not change, so explicitly restore
                     ;; the cursor that belongs to NORM.
-                    (modal-cursor--update))
+                    (modal-cursor-refresh))
         :on-release #'keymap-legend-hide
         :map map))))
 
