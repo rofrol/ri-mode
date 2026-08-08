@@ -9,9 +9,7 @@
 ;;
 ;;; Commentary:
 ;;
-;; Unit-based navigation with semantic submodes: LINE, LINE*, CHAR,
-;; WORD, WORD+, WORD*, and SUBWORD.  Each submode defines how the
-;; "current unit" is computed, and navigation commands move point
+;; Unit-based navigation with semantic submodes: LINE, LINE*, CHAR, WORD, WORD+, WORD*, and SUBWORD.  Each submode defines how the "current unit" is computed, and navigation commands move point
 ;; by those units while keeping a highlight overlay on the active unit.
 ;;
 ;; Every submode shares the `semantic-region-*' API for parsing,
