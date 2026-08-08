@@ -14,9 +14,9 @@
 ;; "current unit" is computed, and navigation commands move point
 ;; by those units while keeping a highlight overlay on the active unit.
 ;;
-;; LINE and CHAR also share the `semantic-region-*' API for parsing,
+;; Every submode shares the `semantic-region-*' API for parsing,
 ;; traversing, extending, changing units, selecting, inspecting, and
-;; deleting regions.  Other submodes keep their specialized behavior.
+;; deleting regions while retaining its unit-specific bounds.
 ;;
 ;;; Code:
 
@@ -85,12 +85,23 @@ when it returns non-nil."
   "Regex character class for meaningful characters in Subword mode.")
 
 
-;; ── Shared LINE/CHAR region API ─────────────────────────────────────────
+(defun sr--subword-bounds-at (pos)
+  "Return (START . END) of the subword at POS."
+  (save-excursion
+    (goto-char pos)
+    (let ((bounds (bounds-of-thing-at-point 'word)))
+      (if bounds
+          bounds
+        (let ((end (progn (subword-forward 1) (point))))
+          (subword-backward 1)
+          (cons (point) end))))))
+
+;; ── Shared semantic-region API ──────────────────────────────────────────
 
 (cl-defstruct (semantic-region
                (:constructor semantic-region--create (unit buffer beg end))
                (:copier nil))
-  "A well-formed LINE or CHAR region in BUFFER."
+  "A well-formed semantic UNIT region in BUFFER."
   (unit nil :read-only t)
   (buffer nil :read-only t)
   (beg nil :read-only t)
@@ -98,7 +109,7 @@ when it returns non-nil."
 
 (defun semantic-region--require-unit (unit)
   "Return UNIT when it is supported, otherwise signal an error."
-  (unless (memq unit '(line char))
+  (unless (assq unit sr--submode-properties)
     (error "Unsupported semantic region unit: %S" unit))
   unit)
 
@@ -140,64 +151,179 @@ when it returns non-nil."
               (cons beg end)
             (cons beg beg)))))))
 
+(defun semantic-region--line-star-bounds-at (pos)
+  "Return full line bounds at POS in the current buffer."
+  (save-excursion
+    (goto-char pos)
+    (cons (line-beginning-position) (line-end-position))))
+
 (defun semantic-region--char-bounds-at (pos)
   "Return single-character bounds at POS in the current buffer."
   (save-excursion
     (goto-char pos)
     (cons (point) (min (1+ (point)) (point-max)))))
 
+(defun semantic-region--word-bounds-at (pos)
+  "Return WORD or WORD+ bounds at POS in the current buffer."
+  (save-excursion
+    (goto-char pos)
+    (let ((char (char-after)))
+      (cond
+       ((eobp) nil)
+       ((and char (string-match-p sr-word-chars (string char)))
+        (skip-chars-backward "[:alnum:]_-")
+        (let ((beg (point)))
+          (skip-chars-forward "[:alnum:]_-")
+          (cons beg (point))))
+       ((memq char '(?\s ?\t))
+        (skip-chars-backward " \t")
+        (let ((beg (point)))
+          (skip-chars-forward " \t")
+          (cons beg (point))))
+       ((eq char ?\n)
+        (cons (point) (1+ (point))))
+       (t
+        (cons (point) (1+ (point))))))))
+
+(defun semantic-region--word-star-bounds-at (pos)
+  "Return WORD* bounds at POS in the current buffer."
+  (save-excursion
+    (goto-char pos)
+    (let ((char (char-after)))
+      (cond
+       ((eobp) nil)
+       ((eq char ?\n)
+        (cons (point) (1+ (point))))
+       ((memq char '(?\s ?\t))
+        (skip-chars-backward " \t")
+        (let ((beg (point)))
+          (skip-chars-forward " \t")
+          (cons beg (point))))
+       (t
+        (skip-chars-backward "^ \t\n")
+        (let ((beg (point)))
+          (skip-chars-forward "^ \t\n")
+          (cons beg (point))))))))
+
 (defun semantic-region--bounds-at (unit pos)
-  "Return bounds for LINE or CHAR UNIT at POS in the current buffer."
+  "Return bounds for semantic UNIT at POS in the current buffer."
   (semantic-region--require-unit unit)
   (pcase unit
     ('line (semantic-region--line-bounds-at pos))
-    ('char (semantic-region--char-bounds-at pos))))
+    ('line-star (semantic-region--line-star-bounds-at pos))
+    ('char (semantic-region--char-bounds-at pos))
+    ((or 'word 'word-plus) (semantic-region--word-bounds-at pos))
+    ('word-star (semantic-region--word-star-bounds-at pos))
+    ('subword (sr--subword-bounds-at pos))))
 
 (defun semantic-region-parse-at (unit pos)
-  "Return a LINE or CHAR semantic region at POS in the current buffer."
-  (let ((buffer (current-buffer))
-        (bounds (semantic-region--bounds-at unit pos)))
-    (semantic-region--build unit buffer (car bounds) (cdr bounds))))
+  "Return a semantic UNIT region at POS, or nil when no unit exists."
+  (let ((buffer (current-buffer)))
+    (when-let* ((bounds (semantic-region--bounds-at unit pos)))
+      (semantic-region--build unit buffer (car bounds) (cdr bounds)))))
 
 (defun semantic-region--next-position (region)
-  "Return the position of the unit after REGION, or nil at buffer end."
+  "Return a probe position after REGION, or nil at buffer end."
   (pcase (semantic-region-unit region)
-    ('char
-     (when (< (semantic-region-end region) (point-max))
-       (semantic-region-end region)))
-    ('line
+    ((or 'line 'line-star)
      (save-excursion
        (goto-char (semantic-region-end region))
        (forward-line 1)
        (when (< (point) (point-max))
-         (point))))))
+         (point))))
+    (_
+     (when (< (semantic-region-end region) (point-max))
+       (semantic-region-end region)))))
 
 (defun semantic-region--prev-position (region)
-  "Return the position of the unit before REGION, or nil at buffer start."
+  "Return a probe position before REGION, or nil at buffer start."
   (pcase (semantic-region-unit region)
-    ('char
-     (when (> (semantic-region-beg region) (point-min))
-       (1- (semantic-region-beg region))))
-    ('line
+    ((or 'line 'line-star)
      (save-excursion
        (goto-char (semantic-region-beg region))
        (when (> (line-beginning-position) (point-min))
          (forward-line -1)
-         (point))))))
+         (point))))
+    (_
+     (when (> (semantic-region-beg region) (point-min))
+       (1- (semantic-region-beg region))))))
+
+(defun semantic-region--whitespace-p (region)
+  "Return non-nil when REGION contains only whitespace."
+  (with-current-buffer (semantic-region-buffer region)
+    (save-excursion
+      (goto-char (semantic-region-beg region))
+      (skip-chars-forward " \t\n" (semantic-region-end region))
+      (= (point) (semantic-region-end region)))))
+
+(defun semantic-region--separator-p (region)
+  "Return non-nil when REGION is skipped by its unit's traversal."
+  (pcase (semantic-region-unit region)
+    ('word
+     (or (semantic-region--whitespace-p region)
+         (and (= (1+ (semantic-region-beg region))
+                 (semantic-region-end region))
+              (with-current-buffer (semantic-region-buffer region)
+                (let ((char (char-after (semantic-region-beg region))))
+                  (and char
+                       (not (string-match-p
+                             sr-word-chars
+                             (string char)))))))))
+    ((or 'word-plus 'word-star 'subword)
+     (semantic-region--whitespace-p region))
+    (_ nil)))
 
 (defun semantic-region-next (region)
-  "Return the unit after REGION, or nil when REGION is the last unit."
+  "Return the next region for REGION's unit, or nil at buffer end.
+WORD skips whitespace and symbols.  WORD+, WORD*, and SUBWORD skip
+whitespace.  LINE, LINE*, and CHAR traverse adjacent units."
   (semantic-region--require-live region)
   (with-current-buffer (semantic-region-buffer region)
-    (when-let* ((pos (semantic-region--next-position region)))
-      (semantic-region-parse-at (semantic-region-unit region) pos))))
+    (let ((unit (semantic-region-unit region))
+          (lower-bound (semantic-region-end region))
+          (probe (semantic-region--next-position region))
+          next)
+      (while (and probe (not next))
+        (let ((candidate (semantic-region-parse-at unit probe)))
+          (cond
+           ((or (null candidate)
+                (< (semantic-region-beg candidate) lower-bound))
+            (setq probe (when (< probe (point-max)) (1+ probe))))
+           ((semantic-region--separator-p candidate)
+            (let ((next-probe (semantic-region--next-position candidate)))
+              (setq probe
+                    (if (and next-probe (> next-probe probe))
+                        next-probe
+                      (when (< probe (point-max)) (1+ probe))))))
+           (t
+            (setq next candidate)))))
+      next)))
 
 (defun semantic-region-prev (region)
-  "Return the unit before REGION, or nil when REGION is the first unit."
+  "Return the previous region for REGION's unit, or nil at buffer start.
+WORD skips whitespace and symbols.  WORD+, WORD*, and SUBWORD skip
+whitespace.  LINE, LINE*, and CHAR traverse adjacent units."
   (semantic-region--require-live region)
   (with-current-buffer (semantic-region-buffer region)
-    (when-let* ((pos (semantic-region--prev-position region)))
-      (semantic-region-parse-at (semantic-region-unit region) pos))))
+    (let ((unit (semantic-region-unit region))
+          (upper-bound (semantic-region-beg region))
+          (probe (semantic-region--prev-position region))
+          prev)
+      (while (and probe (not prev))
+        (let ((candidate (semantic-region-parse-at unit probe)))
+          (cond
+           ((or (null candidate)
+                (> (semantic-region-end candidate) upper-bound))
+            (setq probe (when (> probe (point-min)) (1- probe))))
+           ((semantic-region--separator-p candidate)
+            (let ((prev-probe (semantic-region--prev-position candidate)))
+              (setq probe
+                    (if (and prev-probe (< prev-probe probe))
+                        prev-probe
+                      (when (> probe (point-min)) (1- probe))))))
+           (t
+            (setq prev candidate)))))
+      prev)))
 
 (defun semantic-region-extend-next (region)
   "Return REGION extended through its next unit.
@@ -222,7 +348,7 @@ Return REGION unchanged when it has no previous unit."
     region))
 
 (defun semantic-region-change-unit (region unit)
-  "Reparse REGION's first position as LINE or CHAR UNIT."
+  "Reparse REGION's first position as UNIT."
   (semantic-region--require-live region)
   (with-current-buffer (semantic-region-buffer region)
     (semantic-region-parse-at unit (semantic-region-beg region))))
@@ -260,64 +386,10 @@ Return REGION unchanged when it has no previous unit."
 
 ;; ── Unit bounds ──────────────────────────────────────────────────────────
 
-(defun sr--subword-bounds-at (pos)
-  "Return (START . END) of the subword at POS."
-  (save-excursion
-    (goto-char pos)
-    (let ((bounds (bounds-of-thing-at-point 'word)))
-      (if bounds
-          bounds
-        (let ((end (progn (subword-forward 1) (point))))
-          (subword-backward 1)
-          (cons (point) end))))))
 
 (defun sr--unit-bounds-at (pos submode)
   "Return (START . END) of the unit at POS under SUBMODE."
-  (save-excursion
-    (goto-char pos)
-    (pcase submode
-      ((or 'line 'char)
-       (semantic-region--bounds-at submode pos))
-      ('line-star
-       (cons (line-beginning-position) (line-end-position)))
-      ((or 'word 'word-plus)
-       (save-excursion
-         (let ((char (char-after)))
-           (cond
-            ((eobp) nil)
-            ((and char (string-match-p sr-word-chars (string char)))
-             (skip-chars-backward "[:alnum:]_-")
-             (let ((s (point)))
-               (skip-chars-forward "[:alnum:]_-")
-               (cons s (point))))
-            ((memq char '(?\s ?\t))
-             (skip-chars-backward " \t")
-             (let ((s (point)))
-               (skip-chars-forward " \t")
-               (cons s (point))))
-            ((eq char ?\n)
-             (cons (point) (1+ (point))))
-            (t
-             (cons (point) (1+ (point))))))))
-      ('word-star
-       (save-excursion
-         (let ((char (char-after)))
-           (cond
-            ((eobp) nil)
-            ((eq char ?\n)
-             (cons (point) (1+ (point))))
-            ((memq char '(?\s ?\t))
-             (skip-chars-backward " \t")
-             (let ((s (point)))
-               (skip-chars-forward " \t")
-               (cons s (point))))
-            (t
-             (skip-chars-backward "^ \t\n")
-             (let ((s (point)))
-               (skip-chars-forward "^ \t\n")
-               (cons s (point))))))))
-      ('subword
-       (sr--subword-bounds-at pos)))))
+  (semantic-region--bounds-at submode pos))
 
 (defun sr--get-current-unit-bounds ()
   "Return (START . END) of the current unit based on `sr-submode' and point."

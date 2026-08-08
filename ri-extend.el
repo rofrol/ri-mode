@@ -47,36 +47,27 @@
 (defun ri--unit-bounds-at-edge (pos edge submode)
   (sr--unit-bounds-at (if (eq edge 'end) (max (point-min) (1- pos)) pos) submode))
 
-(defun ri--whitespace-bounds-p (bounds)
-  (save-excursion (goto-char (car bounds))
-    (skip-chars-forward " \t\n" (cdr bounds)) (= (point) (cdr bounds))))
-
-(defun ri--separator-unit-p (bounds submode)
-  (when bounds
-    (pcase submode
-      ('char nil) ('line-star nil) ('line (= (car bounds) (cdr bounds)))
-      ('word (or (ri--whitespace-bounds-p bounds)
-                 (and (= (1+ (car bounds)) (cdr bounds))
-                      (not (string-match-p sr-word-chars (string (char-after (car bounds))))))))
-      ('word-plus (ri--whitespace-bounds-p bounds))
-      (_ (ri--whitespace-bounds-p bounds)))))
-
 (defun ri--next-unit-bounds (pos submode)
-  (when-let* ((cur (sr--unit-bounds-at pos submode)))
-    (let ((b (unless (>= (cdr cur) (point-max)) (sr--unit-bounds-at (cdr cur) submode))))
-      (while (and b (ri--separator-unit-p b submode) (< (cdr b) (point-max)))
-        (setq b (sr--unit-bounds-at (cdr b) submode)))
-      (when (and b (ri--separator-unit-p b submode) (>= (cdr b) (point-max))) (setq b nil)) b)))
+  "Return bounds of the unit after SUBMODE's unit at POS."
+  (when-let* ((current (semantic-region-parse-at submode pos)))
+    (let ((next (semantic-region-next current)))
+      (while (and next
+                  (eq submode 'line)
+                  (semantic-region-empty-p next))
+        (setq next (semantic-region-next next)))
+      (when next
+        (cons (semantic-region-beg next) (semantic-region-end next))))))
 
 (defun ri--prev-unit-bounds (pos submode)
-  (when-let* ((cur (sr--unit-bounds-at pos submode)))
-    (let ((cur-start (car cur)) (probe (1- (car cur))) b)
-      (while (and (>= probe (point-min))
-                  (or (null (setq b (sr--unit-bounds-at probe submode))) (>= (car b) cur-start)))
-        (setq probe (1- (if b (min probe (car b)) probe))))
-      (while (and b (ri--separator-unit-p b submode) (> (car b) (point-min)))
-        (setq b (sr--unit-bounds-at (1- (car b)) submode)))
-      (when (and b (ri--separator-unit-p b submode) (<= (car b) (point-min))) (setq b nil)) b)))
+  "Return bounds of the unit before SUBMODE's unit at POS."
+  (when-let* ((current (semantic-region-parse-at submode pos)))
+    (let ((prev (semantic-region-prev current)))
+      (while (and prev
+                  (eq submode 'line)
+                  (semantic-region-empty-p prev))
+        (setq prev (semantic-region-prev prev)))
+      (when prev
+        (cons (semantic-region-beg prev) (semantic-region-end prev))))))
 
 (defun ri--extend-point-boundary ()
   "Return the exact selection boundary represented by point."

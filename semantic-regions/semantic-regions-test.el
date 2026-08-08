@@ -1,12 +1,12 @@
 ;;; semantic-regions-test.el --- Tests for semantic-regions.el -*- lexical-binding: t; -*-
 
-;; The first battery exercises the shared LINE/CHAR region API:
-;; parsing, navigation, extension, unit changes, and buffer interaction.
+;; The first battery exercises the shared semantic-region API for every
+;; supported unit: parsing, navigation, extension, unit changes, and
+;; buffer interaction.
 ;;
-;; The second battery protects the ri-mode integration.  LINE and CHAR
-;; use the shared API; LINE*, WORD, WORD+, WORD*, and SUBWORD retain
-;; their existing bounds behavior.  A frozen copy of the old bounds
-;; implementation remains below as the regression oracle.
+;; The second battery protects the ri-mode integration.  Every submode
+;; uses the shared bounds engine.  A frozen copy of the old implementation
+;; remains below as the regression oracle.
 
 (require 'ert)
 (require 'subword)
@@ -19,6 +19,10 @@
      (insert ,text)
      (goto-char (point-min))
      ,@body))
+
+(defconst semantic-region-test--units
+  '(line line-star char word word-plus word-star subword)
+  "Units supported by the shared semantic-region API.")
 
 ;;; parse-at: construction is always valid --------------------------------
 
@@ -36,6 +40,24 @@
       (should (equal (semantic-region-string r) "b"))
       (should (= (semantic-region-length r) 1)))))
 
+(ert-deftest semantic-region-test-parse-other-units ()
+  (semantic-region-test--with-buffer "  alpha beta  \n"
+    (dolist (case '((line-star 1 "  alpha beta  ")
+                    (word 3 "alpha")
+                    (word-plus 3 "alpha")
+                    (word-star 3 "alpha")
+                    (subword 3 "alpha")))
+      (pcase-let ((`(,unit ,pos ,expected) case))
+        (let ((region (semantic-region-parse-at unit pos)))
+          (should region)
+          (should (eq (semantic-region-unit region) unit))
+          (should (equal (semantic-region-string region) expected)))))))
+
+(ert-deftest semantic-region-test-parse-empty-word-units-return-nil ()
+  (semantic-region-test--with-buffer ""
+    (dolist (unit '(word word-plus word-star))
+      (should-not (semantic-region-parse-at unit (point-min))))))
+
 (ert-deftest semantic-region-test-parse-empty-char-is-zero-width ()
   (semantic-region-test--with-buffer ""
     (let ((r (semantic-region-parse-at 'char 1)))
@@ -46,8 +68,6 @@
 
 (ert-deftest semantic-region-test-parse-unknown-unit-errors ()
   (semantic-region-test--with-buffer "foo"
-    (should-error (semantic-region-parse-at 'word 1))
-    (should-error (semantic-region-parse-at 'line-star 1))
     (should-error (semantic-region-parse-at 'not-a-real-unit 1))))
 
 ;; Every region ever produced must satisfy beg <= end and buffer bounds;
@@ -55,12 +75,13 @@
 ;; `semantic-region--build' is the only path and that path is sound.
 (ert-deftest semantic-region-test-always-well-formed ()
   (semantic-region-test--with-buffer "foo bar\nbaz qux\n"
-    (dolist (unit '(line char))
+    (dolist (unit semantic-region-test--units)
       (dolist (pos (list (point-min) 5 (point-max)))
-        (let ((r (semantic-region-parse-at unit pos)))
-          (should (<= (semantic-region-beg r) (semantic-region-end r)))
-          (should (<= (point-min) (semantic-region-beg r)))
-          (should (<= (semantic-region-end r) (point-max))))))))
+        (when-let* ((region (semantic-region-parse-at unit pos)))
+          (should (<= (semantic-region-beg region)
+                      (semantic-region-end region)))
+          (should (<= (point-min) (semantic-region-beg region)))
+          (should (<= (semantic-region-end region) (point-max))))))))
 
 ;;; next / prev -------------------------------------------------------------
 
@@ -104,7 +125,47 @@
       (should (equal (semantic-region-string c1) "a"))
       (should (null (semantic-region-prev c1))))))
 
-;;; extend-next / extend-prev: shared by LINE and CHAR ----------------------
+(ert-deftest semantic-region-test-next-prev-line-units-include-blank-line ()
+  (semantic-region-test--with-buffer "one\n   \ntwo"
+    (dolist (case '((line "") (line-star "   ")))
+      (pcase-let ((`(,unit ,blank-text) case))
+        (let* ((one (semantic-region-parse-at unit 1))
+               (blank (semantic-region-next one))
+               (two (semantic-region-next blank)))
+          (should (equal (semantic-region-string blank) blank-text))
+          (should (equal (semantic-region-string two) "two"))
+          (should (equal
+                   (semantic-region-string (semantic-region-prev two))
+                   blank-text)))))))
+
+(ert-deftest semantic-region-test-next-prev-wordish-units ()
+  (semantic-region-test--with-buffer "foo + bar"
+    (dolist (case '((word "bar")
+                    (word-plus "+")
+                    (word-star "+")
+                    (subword "bar")))
+      (pcase-let ((`(,unit ,next-text) case))
+        (let* ((current (semantic-region-parse-at unit 1))
+               (next (semantic-region-next current))
+               (prev (semantic-region-prev next)))
+          (should (eq (semantic-region-unit next) unit))
+          (should (equal (semantic-region-string next) next-text))
+          (should (equal (semantic-region-string prev) "foo")))))))
+
+(ert-deftest semantic-region-test-next-prev-subword-camel-case ()
+  (semantic-region-test--with-buffer "camelCase tail"
+    (subword-mode 1)
+    (let* ((camel (semantic-region-parse-at 'subword 1))
+           (case (semantic-region-next camel))
+           (tail (semantic-region-next case)))
+      (should (equal (semantic-region-string camel) "camel"))
+      (should (equal (semantic-region-string case) "Case"))
+      (should (equal (semantic-region-string tail) "tail"))
+      (should (equal
+               (semantic-region-string (semantic-region-prev case))
+               "camel")))))
+
+;;; extend-next / extend-prev: shared by every unit -------------------------
 
 (ert-deftest semantic-region-test-extend-next-line ()
   (semantic-region-test--with-buffer "one\ntwo\nthree\n"
@@ -127,7 +188,18 @@
       (should (equal (semantic-region-string (semantic-region-extend-prev char))
                      "bc")))))
 
-;;; change-unit: the shared LINE <-> CHAR operation -------------------------
+(ert-deftest semantic-region-test-extend-next-wordish-units ()
+  (semantic-region-test--with-buffer "foo + bar"
+    (dolist (case '((word "foo + bar")
+                    (word-plus "foo +")
+                    (word-star "foo +")
+                    (subword "foo + bar")))
+      (pcase-let ((`(,unit ,expected) case))
+        (let* ((region (semantic-region-parse-at unit 1))
+               (extended (semantic-region-extend-next region)))
+          (should (equal (semantic-region-string extended) expected)))))))
+
+;;; change-unit: shared by every unit ---------------------------------------
 
 (ert-deftest semantic-region-test-change-unit-line-to-char ()
   (semantic-region-test--with-buffer "foo bar\nbaz qux\n"
@@ -158,6 +230,21 @@
       (should (equal (semantic-region-string (semantic-region-extend-next char))
                      "aa")))))
 
+(ert-deftest semantic-region-test-change-unit-supports-every-unit ()
+  (semantic-region-test--with-buffer "  foo bar  \n"
+    (let ((source (semantic-region-parse-at 'char 3)))
+      (dolist (case '((line "foo bar")
+                      (line-star "  foo bar  ")
+                      (char "f")
+                      (word "foo")
+                      (word-plus "foo")
+                      (word-star "foo")
+                      (subword "foo")))
+        (pcase-let ((`(,unit ,expected) case))
+          (let ((changed (semantic-region-change-unit source unit)))
+            (should (eq (semantic-region-unit changed) unit))
+            (should (equal (semantic-region-string changed) expected))))))))
+
 ;;; select / string / length / empty-p / delete -----------------------------
 
 (ert-deftest semantic-region-test-select-sets-point-and-mark ()
@@ -180,7 +267,7 @@
       (should (equal (buffer-string) "foo ar baz")))))
 
 ;;; Integration regression tests --------------------------------------------
-;; The shared engine is intentionally limited to LINE and CHAR.
+;; Every semantic submode now uses the shared engine.
 
 ;;; Frozen oracle: verbatim copy of the pre-integration implementation ----
 
