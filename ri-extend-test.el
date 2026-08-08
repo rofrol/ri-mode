@@ -16,12 +16,12 @@
   (ri-extend-test--with-buffer "foo bar baz"
     (dolist (case '((nil end 1 4 "foo")
                     (t start 1 2 "f")))
-      (pcase-let ((`(,flip ,edge ,beg ,end ,text) case))
+      (pcase-let ((`(,swap ,edge ,beg ,end ,text) case))
         (goto-char (point-min))
         (setq sr-submode 'char)
         (should (ri--enter-extend))
-        (when flip
-          (ri-flip-selection))
+        (when swap
+          (ri-swap-cursor))
         (ri-extend-set-word-mode)
         (should (eq sr-submode 'word))
         (should (ri--selection-active-p))
@@ -55,12 +55,12 @@
         (should-not (funcall highlighted-p pos))))
     (ri--exit-extend)))
 
-(ert-deftest ri-extend-test-flips-normal-unit-cursor ()
+(ert-deftest ri-extend-test-swaps-normal-unit-cursor ()
   (ri-extend-test--with-buffer "foo bar"
     (setq sr-submode 'word)
-    (ri-flip-selection)
+    (ri-swap-cursor)
     (should (= (point) 3))
-    (ri-flip-selection)
+    (ri-swap-cursor)
     (should (= (point) 1))))
 
 (ert-deftest ri-extend-test-registers-swap-cursor-binding ()
@@ -78,9 +78,9 @@
               ((symbol-function 'buffer-list) (lambda () nil)))
       (ri-enable)
       (should (eq (lookup-key mini-modal-map "/")
-                  #'ri-flip-selection))
+                  #'ri-swap-cursor))
       (should (eq (lookup-key ri--normal-help-map "/")
-                  #'ri-flip-selection)))))
+                  #'ri-swap-cursor)))))
 
 (provide 'ri-extend-test)
 ;;; ri-extend-test.el ends here
