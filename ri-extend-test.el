@@ -144,6 +144,71 @@
         (should-not (ri-extend-test--highlighted-p pos))))
     (ri--exit-extend)))
 
+(ert-deftest ri-extend-test-parent-line-matches-ki-and-extend-edges ()
+  (ri-extend-test--with-buffer "outer\n  inner\n    leaf\n"
+    (let* ((outer (point-min))
+           (outer-line (line-beginning-position))
+           (inner
+            (save-excursion
+              (forward-line 1)
+              (back-to-indentation)
+              (point)))
+           (inner-line
+            (save-excursion
+              (forward-line 1)
+              (line-beginning-position)))
+           (leaf
+            (save-excursion
+              (forward-line 2)
+              (back-to-indentation)
+              (point)))
+           (leaf-line
+            (save-excursion
+              (forward-line 2)
+              (line-beginning-position)))
+           (leaf-end
+            (save-excursion
+              (forward-line 2)
+              (line-end-position))))
+      (cl-letf
+          (((symbol-function 'sr--require-node-parser)
+            (lambda (&optional _feature) 'fake))
+           ((symbol-function 'sr--parent-line-position)
+            (lambda ()
+              (cond
+               ((= (line-beginning-position) leaf-line) inner)
+               ((= (line-beginning-position) inner-line) outer)
+               ((= (line-beginning-position) outer-line) nil)))))
+        (setq sr-submode 'line)
+        (goto-char leaf)
+        (ri-parent-line)
+        (should (= (point) inner))
+        (ri-parent-line)
+        (should (= (point) outer))
+
+        (goto-char leaf)
+        (should (ri--enter-extend))
+        (let ((before (ri--selection-bounds)))
+          ;; Parent Line cannot move an end edge backward without putting
+          ;; point inside the selection; an explicit cursor swap is required.
+          (ri-parent-line)
+          (should (equal (ri--selection-bounds) before))
+          (should (= (point) (1- (cdr before)))))
+
+        (ri-swap-cursor)
+        (should
+         (eq (ri--selection-state-active-edge ri--selection) 'start))
+        (ri-parent-line)
+        (should (equal (ri--selection-bounds) (cons inner leaf-end)))
+        (should (= (point) inner))
+        (ri-parent-line)
+        (should (equal (ri--selection-bounds) (cons outer leaf-end)))
+        (should (= (point) outer))
+        (should
+         (eq (ri--selection-state-active-edge ri--selection) 'start))
+        (ri--exit-extend)))))
+
+
 (ert-deftest ri-extend-test-line-to-word-keeps-newlines-unpainted ()
   (ri-extend-test--with-buffer "foo\nbar\nbaz\n"
     (setq sr-submode 'line)
@@ -197,7 +262,7 @@
         (should (equal restored expected))
         (should-not ri--restore-message-after-release)))))
 
-(ert-deftest ri-extend-test-registers-swap-cursor-binding ()
+(ert-deftest ri-extend-test-registers-normal-navigation-bindings ()
   (let ((mini-modal-map (make-sparse-keymap))
         (minor-mode-alist nil)
         (find-file-hook nil)
@@ -219,6 +284,10 @@
                   #'ri-set-node-mode))
       (should (eq (lookup-key ri--normal-help-map "d")
                   #'ri-set-node-mode))
+      (should (eq (lookup-key mini-modal-map ".")
+                  #'ri-parent-line))
+      (should (eq (lookup-key ri--normal-help-map ".")
+                  #'ri-parent-line))
       (let ((sr-submode 'node))
         (should (equal (ri--submode-name) "NODE"))))))
 

@@ -403,6 +403,93 @@
                     (semantic-region-parse-at 'node (point)))
                    "{\"x\": 123}"))))
 
+(ert-deftest semantic-region-test-parent-line-requires-tree-sitter ()
+  (semantic-region-test--with-buffer "plain text"
+    (let ((sr-node-language-alist nil))
+      (let ((error-data
+             (should-error (sr-nav-parent-line) :type 'user-error)))
+        (should
+         (string-match-p
+          "\\`Parent Line requires"
+          (error-message-string error-data)))))))
+
+(ert-deftest semantic-region-test-parent-line-matches-ki-hierarchy ()
+  (semantic-region-test--with-buffer
+      "fn outer() {\n  fn inner() {\n    same-column\n    call();\n  }\n}\n"
+    (let* ((outer (point-min))
+           (inner
+            (save-excursion
+              (forward-line 1)
+              (back-to-indentation)
+              (point)))
+           (same-column
+            (save-excursion
+              (forward-line 2)
+              (back-to-indentation)
+              (point)))
+           (call
+            (save-excursion
+              (forward-line 3)
+              (back-to-indentation)
+              (point)))
+           (nodes
+            `((call-leaf ,call ,(1+ call) call-wrapper)
+              (call-wrapper ,call ,(1+ call) same-column-node)
+              (same-column-node ,same-column ,call inner-node)
+              (inner-leaf ,inner ,(1+ inner) inner-wrapper)
+              (inner-wrapper ,inner ,(1+ inner) inner-node)
+              (inner-node ,inner ,same-column outer-node)
+              (outer-leaf ,outer ,(1+ outer) outer-wrapper)
+              (outer-wrapper ,outer ,(1+ outer) outer-node)
+              (outer-node ,outer ,(1- (point-max)) root)
+              (root ,outer ,(point-max) nil))))
+      (cl-letf
+          (((symbol-function 'sr--require-node-parser)
+            (lambda (&optional _feature) 'fake))
+           ((symbol-function 'sr--ensure-node-parser)
+            (lambda (_position) 'fake))
+           ((symbol-function 'treesit-node-at)
+            (lambda (position &optional _parser-or-language _named)
+              (cond
+               ((= position call) 'call-leaf)
+               ((= position inner) 'inner-leaf)
+               (t 'outer-leaf))))
+           ((symbol-function 'treesit-node-parser)
+            (lambda (_node) 'fake-parser))
+           ((symbol-function 'treesit-parser-root-node)
+            (lambda (_parser) 'root))
+           ((symbol-function 'treesit-node-descendant-for-range)
+            (lambda (_root beginning _end &optional _named)
+              (cond
+               ((= beginning call) 'call-leaf)
+               ((= beginning inner) 'inner-leaf)
+               (t 'outer-leaf))))
+           ((symbol-function 'treesit-node-start)
+            (lambda (node) (nth 1 (assq node nodes))))
+           ((symbol-function 'treesit-node-end)
+            (lambda (node) (nth 2 (assq node nodes))))
+           ((symbol-function 'treesit-node-parent)
+            (lambda (node) (nth 3 (assq node nodes)))))
+        (setq sr-submode 'line)
+        (goto-char call)
+        (sr-nav-parent-line)
+        (should (= (point) inner))
+        (should
+         (equal
+          (semantic-region-string
+           (semantic-region-parse-at 'line (point)))
+          "fn inner() {"))
+        (sr-nav-parent-line)
+        (should (= (point) outer))
+        (should
+         (equal
+          (semantic-region-string
+           (semantic-region-parse-at 'line (point)))
+          "fn outer() {"))
+        (sr-nav-parent-line)
+        (should (= (point) outer))))))
+
+
 (ert-deftest semantic-region-test-node-api-traverses-named-siblings ()
   (semantic-region-test--with-json-buffer
       "[{\"x\": 123}, true]"
