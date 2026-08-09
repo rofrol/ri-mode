@@ -94,6 +94,9 @@ including Eglot's project label."
 (defvar ri--menu-state nil
   "Current RI menu, or nil when no menu is active.")
 
+(defvar-local ri--help-prefix-active nil
+  "Non-nil while RI's default `C-h' help prefix is active.")
+
 (defvar ri--restore-message-after-release nil
   "Echo-area message to restore once after the next Kitty key release.")
 
@@ -478,6 +481,7 @@ Active only in NORM mode, when no transient menu is open, and when
 Emacs is not reading a prefix key sequence."
   (and (bound-and-true-p mini-modal-mode)
        (null ri--menu-state)
+       (null ri--help-prefix-active)
        ;; Let Emacs' prefix maps, including `C-h', own the following key.
        ;; KKP calls this predicate before the current event is added to
        ;; `this-command-keys-vector', so an empty vector means a standalone
@@ -569,6 +573,8 @@ Emacs is not reading a prefix key sequence."
     (define-key map (kbd "<return>") '(menu-item "Save" save-buffer))
     (define-key map "/" '(menu-item "⇋ Curs" ri-swap-cursor))
     (define-key map "?" '(menu-item "Help" ignore))
+    (define-key map (kbd "C-h") '(menu-item "Help" help-command))
+
     (define-key map (kbd "<escape>") '(menu-item "Close" ignore))
     map)
   "Keymap documenting NORM mode bindings for the help legend.")
@@ -578,6 +584,27 @@ Emacs is not reading a prefix key sequence."
   (interactive)
   (keymap-legend-show "NORM" ri--normal-help-map '(:title "Normal Mode"))
   (set-transient-map (make-sparse-keymap) nil #'keymap-legend-hide))
+(defun ri--exit-help-prefix ()
+  "Hide the C-h help legend after its next command."
+  (remove-hook 'post-command-hook #'ri--exit-help-prefix t)
+  (setq ri--help-prefix-active nil)
+  (keymap-legend-hide))
+
+(defun ri--show-help-prefix ()
+  "Show the keymap legend for Emacs' default C-h help map."
+  (keymap-legend-show
+   "C-h Help" 'help-command '(:title "C-h Help")))
+
+(defun ri--help-prefix-filter (binding)
+  "Show the C-h legend while returning BINDING unchanged.
+The non-empty key vector distinguishes real input from static
+keymap inspection such as `key-binding'."
+  (when (and (not ri--help-prefix-active)
+             (not (zerop (length (this-command-keys-vector)))))
+    (ri--show-help-prefix)
+    (setq ri--help-prefix-active t)
+    (add-hook 'post-command-hook #'ri--exit-help-prefix nil t))
+  binding)
 
 ;;;; Semantic regions auto-enable
 
@@ -593,7 +620,6 @@ Emacs is not reading a prefix key sequence."
 
 ;;;###autoload
 (defun ri-enable ()
-  "Enable `ri' globally."
   (interactive)
   (setq status-frame-height 6)
   (modal-cursor-mode 1)
@@ -602,6 +628,9 @@ Emacs is not reading a prefix key sequence."
   (global-kkp-mode 1)
   (add-hook 'kkp-chord-after-release-hook #'ri--restore-message-after-release)
   (ri-chord-setup)
+  (define-key mini-modal-map
+              (kbd "C-h")
+              '(menu-item "Help" help-command :filter ri--help-prefix-filter))
   (define-key mini-modal-map "h" #'ri-enter-insert-left)
   (define-key mini-modal-map ";" #'ri-enter-insert-right)
   (define-key mini-modal-map "c" #'ri-copy-unit)

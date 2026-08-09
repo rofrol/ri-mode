@@ -77,6 +77,7 @@ main bindings are:
 | `z` / `Z`            | Undo / redo                                                  |
 | `RET`                | Save the buffer                                              |
 | `SPC`                | Open the command menu                                        |
+| `C-h`                | Show the default Emacs help keymap and read one help key |
 
 The `c`, `r`, `g`, `t`, `v`, and `x` keys also act as momentary layers.
 Hold one of them to display its available actions, press the shown
