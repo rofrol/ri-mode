@@ -585,8 +585,14 @@ Emacs is not reading a prefix key sequence."
   (keymap-legend-show "NORM" ri--normal-help-map '(:title "Normal Mode"))
   (set-transient-map (make-sparse-keymap) nil #'keymap-legend-hide))
 (defun ri--exit-help-prefix ()
-  "Hide the C-h help legend after its next command."
-  (remove-hook 'post-command-hook #'ri--exit-help-prefix t)
+  "Hide the C-h help legend before its next command.
+Preserve the prompt used by `Info-goto-emacs-key-command-node' across
+the physical release of the key that invoked it."
+  (when (eq this-command #'Info-goto-emacs-key-command-node)
+    (setq ri--restore-message-after-release
+          (propertize "Find documentation for key: "
+                      'face 'minibuffer-prompt)))
+  (remove-hook 'pre-command-hook #'ri--exit-help-prefix t)
   (setq ri--help-prefix-active nil)
   (keymap-legend-hide))
 
@@ -603,7 +609,7 @@ keymap inspection such as `key-binding'."
              (not (zerop (length (this-command-keys-vector)))))
     (ri--show-help-prefix)
     (setq ri--help-prefix-active t)
-    (add-hook 'post-command-hook #'ri--exit-help-prefix nil t))
+    (add-hook 'pre-command-hook #'ri--exit-help-prefix nil t))
   binding)
 
 ;;;; Semantic regions auto-enable

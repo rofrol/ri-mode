@@ -54,11 +54,11 @@
           (should (equal shown
                          '("C-h Help" help-command (:title "C-h Help"))))
           (should ri--help-prefix-active)
-          (should (memq #'ri--exit-help-prefix post-command-hook))
+          (should (memq #'ri--exit-help-prefix pre-command-hook))
           (ri--exit-help-prefix)
           (should hidden)
           (should-not ri--help-prefix-active)
-          (should-not (memq #'ri--exit-help-prefix post-command-hook)))))))
+          (should-not (memq #'ri--exit-help-prefix pre-command-hook)))))))
 
 (ert-deftest ri-chord-test-help-prefix-disables-v-chord ()
   (ri-chord-test--with-fresh-chords
@@ -87,7 +87,10 @@
                 '(menu-item "Help" help-command :filter ri--help-prefix-filter))
     (define-key help-map
                 "v"
-                (lambda () (interactive) (setq called t)))
+                (lambda () (interactive)
+                  (should hidden)
+                  (should-not ri--help-prefix-active)
+                  (setq called t)))
     (with-temp-buffer
       (let ((ri--help-prefix-active nil)
             (overriding-terminal-local-map mini-modal-map))
@@ -119,6 +122,38 @@
                     (string-to-list "118;:1u"))
                    [])))
         (should (equal kkp-chord--held '((118))))))))
+
+(ert-deftest ri-chord-test-help-key-prompt-survives-key-release ()
+  (let ((ri--help-prefix-active t)
+        (ri--restore-message-after-release nil)
+        (pre-command-hook nil)
+        (kkp-chord-after-release-hook
+         '(ri--restore-message-after-release))
+        (this-command #'Info-goto-emacs-key-command-node)
+        (echo-message nil)
+        restored)
+    (cl-letf (((symbol-function 'keymap-legend-hide) #'ignore)
+              ((symbol-function 'kkp-chord--parse)
+               (lambda (_input)
+                 (list :keycode ?j
+                       :event-type kkp-chord--event-release
+                       :modifier-num 0)))
+              ((symbol-function 'kkp-chord--on-release) #'ignore)
+              ((symbol-function 'current-message)
+               (lambda () echo-message))
+              ((symbol-function 'message)
+               (lambda (format-string &rest args)
+                 (setq restored (apply #'format format-string args))
+                 (setq echo-message restored))))
+      (ri--exit-help-prefix)
+      (setq echo-message "Find documentation for key: ")
+      (should (equal
+               (kkp-chord--translate-advice #'ignore "release")
+               [])))
+    (should (equal
+             (substring-no-properties restored)
+             "Find documentation for key: "))
+    (should-not ri--restore-message-after-release)))
 
 (provide 'ri-chord-test)
 ;;; ri-chord-test.el ends here
