@@ -635,10 +635,10 @@ the physical release of the key that invoked it."
 
 (defun ri--help-prefix-filter (binding)
   "Show the C-h legend while returning BINDING unchanged.
-The non-empty key vector distinguishes real input from static
-keymap inspection such as `key-binding'."
+Only the initial one-event `C-h' lookup is real prefix input; later
+keymap lookups during that command must not reopen the legend."
   (when (and (not ri--help-prefix-active)
-             (not (zerop (length (this-command-keys-vector)))))
+             (= (length (this-command-keys-vector)) 1))
     (ri--show-help-prefix)
     (setq ri--help-prefix-active t)
     (add-hook 'pre-command-hook #'ri--exit-help-prefix nil t))

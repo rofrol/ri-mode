@@ -66,6 +66,20 @@
           (should-not ri--help-prefix-active)
           (should-not (memq #'ri--exit-help-prefix pre-command-hook)))))))
 
+(ert-deftest ri-chord-test-help-prefix-does-not-reopen-during-command ()
+  (with-temp-buffer
+    (let (shown)
+      (cl-letf (((symbol-function 'keymap-legend-show)
+                 (lambda (&rest _) (setq shown t)))
+                ((symbol-function 'this-command-keys-vector)
+                 (lambda () (vector ?\C-h ?h))))
+        (let ((ri--help-prefix-active nil))
+          (should (eq (ri--help-prefix-filter 'view-hello-file)
+                      'view-hello-file))
+          (should-not shown)
+          (should-not ri--help-prefix-active)
+          (should-not (memq #'ri--exit-help-prefix pre-command-hook)))))))
+
 (ert-deftest ri-chord-test-help-prefix-disables-v-chord ()
   (ri-chord-test--with-fresh-chords
     (with-temp-buffer
