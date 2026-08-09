@@ -474,9 +474,15 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
 
 (defun ri--chord-when-p ()
   "Return non-nil when a KKP chord should be active.
-Active only in NORM mode and when no transient menu is open."
+Active only in NORM mode, when no transient menu is open, and when
+Emacs is not reading a prefix key sequence."
   (and (bound-and-true-p mini-modal-mode)
-       (null ri--menu-state)))
+       (null ri--menu-state)
+       ;; Let Emacs' prefix maps, including `C-h', own the following key.
+       ;; KKP calls this predicate before the current event is added to
+       ;; `this-command-keys-vector', so an empty vector means a standalone
+       ;; key and a non-empty vector means that a prefix is in progress.
+       (zerop (length (this-command-keys-vector)))))
 
 (defun ri-chord-setup ()
   "Register KKP chords for momentary layers from `ri--layer-specs'."
