@@ -98,21 +98,32 @@ including Eglot's project label."
   "Non-nil while RI's default `C-h' help prefix is active.")
 
 (defvar ri--restore-message-after-release nil
-  "Echo-area message to restore once after the next Kitty key release.")
+  "Echo-area message to restore after a swallowed Kitty key release.")
+
+(defvar ri--restore-message-until-command-end nil
+  "Non-nil means restore the pending message after every key release.")
 
 (defun ri--restore-message-after-release ()
   "Restore a pending RI message after a swallowed Kitty key release."
   (when ri--restore-message-after-release
     (let ((text ri--restore-message-after-release))
-      (setq ri--restore-message-after-release nil)
+      (unless ri--restore-message-until-command-end
+        (setq ri--restore-message-after-release nil))
       (message "%s" text))))
+
+(defun ri--clear-message-restoration ()
+  "Stop restoring a message after the current command finishes."
+  (setq ri--restore-message-after-release nil
+        ri--restore-message-until-command-end nil)
+  (remove-hook 'post-command-hook #'ri--clear-message-restoration))
 
 (defun ri--call-preserving-user-error (function)
   "Call FUNCTION and preserve its user error across the next key release."
   (condition-case err
       (funcall function)
     (user-error
-     (setq ri--restore-message-after-release (error-message-string err))
+     (setq ri--restore-message-after-release (error-message-string err)
+           ri--restore-message-until-command-end nil)
      (signal (car err) (cdr err)))))
 
 (defun ri-set-node-mode ()
@@ -243,7 +254,8 @@ Unsaved files are reported in the echo area and the menu is dismissed."
             ;; clear the echo area when that event arrives even though
             ;; kkp-chord swallows it.  Remember this message and replay it
             ;; from `kkp-chord-after-release-hook'.
-            (setq ri--restore-message-after-release text)
+            (setq ri--restore-message-after-release text
+                  ri--restore-message-until-command-end nil)
             (message "%s" text)))
       (set-transient-map nil)
       (ri--close-menu)
@@ -591,7 +603,9 @@ the physical release of the key that invoked it."
   (when (eq this-command #'Info-goto-emacs-key-command-node)
     (setq ri--restore-message-after-release
           (propertize "Find documentation for key: "
-                      'face 'minibuffer-prompt)))
+                      'face 'minibuffer-prompt)
+          ri--restore-message-until-command-end t)
+    (add-hook 'post-command-hook #'ri--clear-message-restoration))
   (remove-hook 'pre-command-hook #'ri--exit-help-prefix t)
   (setq ri--help-prefix-active nil)
   (keymap-legend-hide))

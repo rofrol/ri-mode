@@ -298,20 +298,20 @@ ordinary command loop does not update `this-command' or `last-command'."
          (event-type (plist-get parsed :event-type))
          (modifier-num (plist-get parsed :modifier-num)))
     (cond
-     ;; `report-all-keys-as-escape-codes' reports modifier presses.  KKP
-     ;; encodes their state on the next key event, so never dispatch them
-     ;; as standalone Emacs events.
-     ((kkp-chord--modifier-key-p keycode)
-      (when (= event-type kkp-chord--event-press)
-        (kkp-chord--mark-held-intervening))
-      [])
-
      ;; Release event → swallow.  Run the hook after chord release actions
      ;; so clients can restore transient UI (for example an echo-area
      ;; message) that the raw key-up event would otherwise erase.
      ((= event-type kkp-chord--event-release)
       (kkp-chord--on-release keycode)
       (run-hooks 'kkp-chord-after-release-hook)
+      [])
+
+     ;; `report-all-keys-as-escape-codes' reports physical modifier events.
+     ;; KKP encodes their state on the next key event, so never dispatch
+     ;; their remaining press/repeat events as standalone Emacs events.
+     ((kkp-chord--modifier-key-p keycode)
+      (when (= event-type kkp-chord--event-press)
+        (kkp-chord--mark-held-intervening))
       [])
 
      ;; Repeat of a held chord modifier → swallow.
