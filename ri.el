@@ -610,10 +610,28 @@ the physical release of the key that invoked it."
   (setq ri--help-prefix-active nil)
   (keymap-legend-hide))
 
+(defun ri--help-prefix-legend-map ()
+  "Return printable bindings from Emacs' `C-h' prefix map."
+  (let ((map (make-sparse-keymap)))
+    (map-keymap
+     (lambda (event binding)
+       (let ((modifiers (event-modifiers event))
+             (basic (event-basic-type event)))
+         (when (and (characterp event)
+                    (characterp basic)
+                    (<= ?\s basic)
+                    (<= basic ?~)
+                    (or (null modifiers)
+                        (equal modifiers '(shift)))
+                    (not (keymapp binding)))
+           (define-key map (vector event) binding))))
+     (symbol-function 'help-command))
+    map))
+
 (defun ri--show-help-prefix ()
-  "Show the keymap legend for Emacs' default C-h help map."
+  "Show printable bindings from Emacs' default C-h help map."
   (keymap-legend-show
-   "C-h Help" 'help-command '(:title "C-h Help")))
+   "C-h Help" (ri--help-prefix-legend-map) '(:title "C-h Help")))
 
 (defun ri--help-prefix-filter (binding)
   "Show the C-h legend while returning BINDING unchanged.
