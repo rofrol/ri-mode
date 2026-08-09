@@ -423,6 +423,17 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
     (define-key map "k" '(menu-item "Paste v" ri-paste-below))
     map)
   "Keymap for the paste momentary layer (v held).")
+(defvar ri--cut-layer-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "j" '(menu-item "<< Cut" ri-cut-left))
+    (define-key map "l" '(menu-item "Cut >>" ri-cut-right))
+    (define-key map "u" '(menu-item "< Cut" ri-cut-prev))
+    (define-key map "o" '(menu-item "Cut >" ri-cut-next))
+    (define-key map "y" '(menu-item "|< Cut" ri-cut-first))
+    (define-key map "p" '(menu-item "Cut >|" ri-cut-last))
+    map)
+  "Keymap for the Cut momentary layer (x held).")
+
 
 ;;;; Layer specs (single source of truth for labels and icons)
 
@@ -440,7 +451,12 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
          :label "≡ Paste"
          :tap #'ri-paste-selection
          :map ri--paste-layer-map
-         :release "Paste"))
+         :release "Paste")
+   (list :key ?x
+         :label "≡ Cut"
+         :tap #'ri-cut-selection
+         :map ri--cut-layer-map
+         :release "Cut"))
   "Momentary layer specifications.
 :key     -- KKP keycode for the chord modifier.
 :label   -- Display label with icon (used in menus and legend titles).
@@ -537,6 +553,7 @@ Active only in NORM mode and when no transient menu is open."
     (define-key map "t" '(menu-item "≡ Swap" ignore))
     (define-key map "F" '(menu-item "… Transform" ri-transform-menu))
     (define-key map "v" '(menu-item "≡ Paste" ri-paste-selection))
+    (define-key map "x" '(menu-item "≡ Cut" ri-cut-selection))
     (define-key map "f" '(menu-item "Extend" ri-toggle-extend))
     (define-key map "z" '(menu-item "≡ Undo/Redo" ri-smart-undo))
     (define-key map "Z" '(menu-item "Coarse Redo" undo-redo))
@@ -585,6 +602,7 @@ Active only in NORM mode and when no transient menu is open."
   (define-key mini-modal-map "t" #'ignore)
   (define-key mini-modal-map "F" #'ri-transform-menu)
   (define-key mini-modal-map "v" #'ri-paste-selection)
+  (define-key mini-modal-map "x" #'ri-cut-selection)
   (define-key mini-modal-map (kbd "SPC") #'ri-space-menu)
   (let (to-remove)
     (dolist (entry minor-mode-alist)
