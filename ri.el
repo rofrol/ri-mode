@@ -66,12 +66,14 @@
   "Face remapping cookies for the `ri' status line.")
 
 (defun ri--mode-line-enable ()
-  "Apply the classic blue RI styling to the current buffer mode line."
+  "Apply the classic blue RI styling to the current buffer's mode line,
+including Eglot's project label."
   (unless ri--mode-line-face-remappings
     (setq ri--mode-line-face-remappings
           (mapcar (lambda (face)
                     (face-remap-add-relative face 'ri-mode-line))
-                  '(mode-line-active mode-line-inactive mode-line)))))
+                  '(mode-line-active mode-line-inactive mode-line
+                    eglot-mode-line)))))
 
 ;;;; Status frame
 

@@ -328,5 +328,16 @@
       (should-not (ri--selection-active-p)))))
 
 
+(ert-deftest ri-extend-test-mode-line-remaps-eglot-label ()
+  (with-temp-buffer
+    (ri--mode-line-enable)
+    (let ((eglot-remap (assq 'eglot-mode-line face-remapping-alist)))
+      (should eglot-remap)
+      (should (memq 'ri-mode-line eglot-remap)))
+    (should (equal (face-attribute 'ri-mode-line :foreground nil t)
+                   "#ffffff"))
+    (should (equal (face-attribute 'ri-mode-line :background nil t)
+                   "#3478c6"))))
+
 (provide 'ri-extend-test)
 ;;; ri-extend-test.el ends here
