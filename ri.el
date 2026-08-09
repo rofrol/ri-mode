@@ -99,6 +99,12 @@
   (interactive)
   (ri--call-preserving-user-error #'ri-extend-set-node-mode))
 
+(defun ri-parent-line ()
+  "Move to the nearest tree-sitter parent line above point."
+  (interactive)
+  (ri--call-preserving-user-error #'ri-extend-nav-parent-line))
+
+
 (defun ri--close-menu ()
   "Hide any active menu and restore the status frame."
   (setq ri--menu-state nil)
@@ -500,6 +506,7 @@ Active only in NORM mode and when no transient menu is open."
     (define-key map "o" '(menu-item ">" ri-extend-nav-next))
     (define-key map "y" '(menu-item "|<" ri-extend-nav-first))
     (define-key map "p" '(menu-item ">|" ri-extend-nav-last))
+    (define-key map "." '(menu-item "Parent Line" ri-parent-line))
     (define-key map "a" '(menu-item "LINE" ri-extend-set-line-mode))
     (define-key map "A" '(menu-item "LINE*" ri-extend-set-line-star-mode))
     (define-key map "W" '(menu-item "CHAR" ri-extend-set-character-mode))
@@ -588,6 +595,7 @@ Active only in NORM mode and when no transient menu is open."
   (define-key mini-modal-map "o" #'ri-extend-nav-next)
   (define-key mini-modal-map "y" #'ri-extend-nav-first)
   (define-key mini-modal-map "p" #'ri-extend-nav-last)
+  (define-key mini-modal-map "." #'ri-parent-line)
   (define-key mini-modal-map "a" #'ri-extend-set-line-mode)
   (define-key mini-modal-map "A" #'ri-extend-set-line-star-mode)
   (define-key mini-modal-map "W" #'ri-extend-set-character-mode)

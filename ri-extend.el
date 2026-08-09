@@ -489,6 +489,41 @@ in CHAR mode, it selects the current line.  In SUBWORD mode, repeated
 (defun ri-extend-nav-first () (interactive) (ri--run-extend-navigation #'sr-nav-first))
 (defun ri-extend-nav-last () (interactive) (ri--run-extend-navigation #'sr-nav-last))
 
+(defun ri--parent-line-target-bounds (position)
+  "Return current submode bounds at parent-line POSITION without moving."
+  ;; NODE probing updates `sr--node-current'; keep that speculative state
+  ;; local until the movement is known to preserve the active Extend edge.
+  (let ((sr--node-current sr--node-current))
+    (save-excursion
+      (goto-char position)
+      (sr--meaningful-unit-bounds-at position sr-submode))))
+
+(defun ri--parent-line-target-allowed-p (target-bounds)
+  "Return non-nil when TARGET-BOUNDS preserves the active Extend edge."
+  (if (not (ri--selection-active-p))
+      t
+    (when-let* ((bounds (ri--selection-bounds)))
+      (pcase (ri--selection-state-active-edge ri--selection)
+        ('start (<= (car target-bounds) (car bounds)))
+        ('end (>= (cdr target-bounds) (cdr bounds)))))))
+
+(defun ri--move-to-parent-line ()
+  "Move to a parent line without detaching point from its Extend edge."
+  (when-let* ((position (sr--parent-line-position)))
+    (when (or (not (ri--selection-active-p))
+              (when-let* ((target-bounds
+                           (ri--parent-line-target-bounds position)))
+                (ri--parent-line-target-allowed-p target-bounds)))
+      (goto-char position)
+      (sr--snap-to-unit-start))))
+
+(defun ri-extend-nav-parent-line ()
+  "Move to the nearest parent line while preserving Extend invariants."
+  (interactive)
+  (sr--require-node-parser "Parent Line")
+  (ri--run-extend-navigation #'ri--move-to-parent-line))
+
+
 (defun ri--set-submode-with-extend (setter)
   "Switch submodes with SETTER without changing an active selection.
 Outside Extend, place point at the start of the first traversable unit

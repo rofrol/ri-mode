@@ -144,30 +144,35 @@ Supported values are `line', `line-star', `char', `word', `word-plus',
                   language)
               (error nil)))))))
 
-(defun sr--require-node-parser ()
-  "Return NODE's parser language or signal an actionable user error."
-  (or (sr--ensure-node-parser (point))
-      (cond
-       ((not (treesit-available-p))
-        (user-error "NODE requires an Emacs build with tree-sitter support"))
-       ((not (sr--node-mapped-language))
-        (user-error
-         "NODE requires an active tree-sitter parser in %s"
-         major-mode))
-       ((not (treesit-language-available-p (sr--node-mapped-language)))
-        (user-error
-         "NODE requires the tree-sitter grammar `%s'"
-         (sr--node-mapped-language)))
-       (t
-        (condition-case err
-            (progn
-              (treesit-parser-create (sr--node-mapped-language))
-              (sr--node-mapped-language))
-          (error
-           (user-error
-            "Cannot create NODE parser for `%s': %s"
-            (sr--node-mapped-language)
-            (error-message-string err))))))))
+(defun sr--require-node-parser (&optional feature)
+  "Return a parser language or signal an actionable user error.
+FEATURE names the tree-sitter-backed feature and defaults to NODE."
+  (let ((feature (or feature "NODE")))
+    (or (sr--ensure-node-parser (point))
+        (cond
+         ((not (treesit-available-p))
+          (user-error
+           "%s requires an Emacs build with tree-sitter support"
+           feature))
+         ((not (sr--node-mapped-language))
+          (user-error
+           "%s requires an active tree-sitter parser in %s"
+           feature major-mode))
+         ((not (treesit-language-available-p (sr--node-mapped-language)))
+          (user-error
+           "%s requires the tree-sitter grammar `%s'"
+           feature (sr--node-mapped-language)))
+         (t
+          (condition-case err
+              (progn
+                (treesit-parser-create (sr--node-mapped-language))
+                (sr--node-mapped-language))
+            (error
+             (user-error
+              "Cannot create %s parser for `%s': %s"
+              feature
+              (sr--node-mapped-language)
+              (error-message-string err)))))))))
 
 (defun sr--node-live-p (node)
   "Return non-nil when NODE can still be queried safely."
@@ -311,6 +316,79 @@ When NAMED is non-nil, skip anonymous punctuation nodes."
         (goto-char (car bounds))
         t)
     (error nil)))
+
+(defun sr--parent-line-position ()
+  "Return the first non-whitespace position of the nearest parent line.
+Match Ki's tree-sitter hierarchy: start from the syntax node covering
+the first non-whitespace character of the current line, then walk its
+ancestors.  Ignore non-alphanumeric lines and repeated start columns or
+line contents before choosing the nearest remaining line above point."
+  (save-excursion
+    (condition-case nil
+        (let* ((origin-line-start (line-beginning-position))
+               (origin-line-end (line-end-position))
+               (probe
+                (progn
+                  (goto-char origin-line-start)
+                  (skip-chars-forward "[:space:]" origin-line-end)
+                  (point))))
+          (when (< probe (point-max))
+            (when-let* ((language (sr--ensure-node-parser probe))
+                        (leaf (treesit-node-at probe language))
+                        (parser (treesit-node-parser leaf))
+                        (root (treesit-parser-root-node parser))
+                        (node
+                         (or (treesit-node-descendant-for-range
+                              root probe (1+ probe))
+                             root)))
+              ;; Ki starts from the most ancestral non-root node having
+              ;; exactly the range that covers the probe character.
+              (let ((start (treesit-node-start node))
+                    (end (treesit-node-end node))
+                    (parent (treesit-node-parent node)))
+                (while (and parent
+                            (treesit-node-parent parent)
+                            (= start (treesit-node-start parent))
+                            (= end (treesit-node-end parent)))
+                  (setq node parent
+                        parent (treesit-node-parent node))))
+              (let ((seen-columns (make-hash-table :test #'eql))
+                    (seen-contents (make-hash-table :test #'equal))
+                    candidate)
+                (while (and node (not candidate))
+                  (let ((start (treesit-node-start node)))
+                    (when (and (integerp start)
+                               (<= (point-min) start (point-max)))
+                      (goto-char start)
+                      (let* ((line-start (line-beginning-position))
+                             (line-end (line-end-position))
+                             (column (- start line-start))
+                             (content-end
+                              (save-excursion
+                                (goto-char line-end)
+                                (skip-chars-backward
+                                 "[:space:]" line-start)
+                                (point)))
+                             (content
+                              (buffer-substring-no-properties
+                               line-start content-end)))
+                        (when (string-match-p "[[:alnum:]]" content)
+                          ;; These are two sequential uniqueness filters in
+                          ;; Ki: a content rejected by the second still
+                          ;; consumes its start column in the first.
+                          (unless (gethash column seen-columns)
+                            (puthash column t seen-columns)
+                            (unless (gethash content seen-contents)
+                              (puthash content t seen-contents)
+                              (when (< line-start origin-line-start)
+                                (goto-char line-start)
+                                (skip-chars-forward
+                                 "[:space:]" line-end)
+                                (setq candidate (point)))))))))
+                  (setq node (treesit-node-parent node)))
+                candidate))))
+      (error nil))))
+
 
 ;; ── Shared semantic-region API ──────────────────────────────────────────
 
@@ -914,6 +992,16 @@ units in word-based modes."
      (forward-line 1)))
   (sr--snap-to-unit-start)
   (sr--update-highlight))
+
+(defun sr-nav-parent-line ()
+  "Move the current semantic unit to the nearest parent line above."
+  (interactive)
+  (sr--require-node-parser "Parent Line")
+  (when-let* ((position (sr--parent-line-position)))
+    (goto-char position)
+    (sr--snap-to-unit-start))
+  (sr--update-highlight))
+
 
 (defun sr--nav-prev-blank-line ()
   "Move to the previous blank line and skip leading whitespace."
