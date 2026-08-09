@@ -5,7 +5,7 @@
 ;; Author: Roman Frołow
 ;; Maintainer: Roman Frołow
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (mini-modal "0.1") (kkp-chord "0.1") (keymap-legend "0.1") (status-frame "0.1") (semantic-regions "0.1") (modal-cursor "0.1"))
+;; Package-Requires: ((emacs "31.1") (kkp "0.1"))
 ;; Keywords: convenience, editing, terminals
 ;; URL: https://github.com/rofrol/ri-mode
 ;; SPDX-License-Identifier: Apache-2.0
@@ -14,17 +14,33 @@
 
 ;; Ri-mode provides modal editing for terminals supporting the Kitty Keyboard Protocol (Kitty, Ghostty, WezTerm).
 ;;
-;; For local development with vendored dependencies, load via dev.el:
+;; For local development from the repository checkout:
 ;;
-;;     emacs -Q -l ./dev.el
+;;     emacs -Q -l ./ri.el
 ;;
 ;; Or from your Emacs config:
 ;;
-;;     (load "~/personal_projects/emacs/ri-mode/dev.el")
+;;     (load "~/personal_projects/emacs/ri-mode/ri.el")
 
 ;;; Code:
 
 ;;;; Dependencies
+
+;; The Ri-specific libraries are bundled in sibling directories when the
+;; package is built.  `package.el' adds only the package root to `load-path',
+;; so expose those directories before requiring the bundled libraries.
+(let ((ri-root (file-name-directory (or load-file-name buffer-file-name))))
+  (when ri-root
+    (add-to-list 'load-path ri-root)
+    (dolist (dir '("mini-modal"
+                   "kkp-chord"
+                   "keymap-legend"
+                   "status-frame"
+                   "semantic-regions"
+                   "modal-cursor"))
+      (let ((path (expand-file-name dir ri-root)))
+        (when (file-directory-p path)
+          (add-to-list 'load-path path))))))
 
 (require 'mini-modal)
 (require 'kkp-chord)
