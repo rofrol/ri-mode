@@ -76,6 +76,72 @@
   (interactive)
   (when-let* ((b (ri--selection-bounds))) (ri--delete-range (car b) (cdr b) (car b)))
   (ri--exit-extend) (ri--update-highlight) (mini-modal-insert))
+(defun ri--cut-bounds ()
+  "Return non-empty bounds for the current selection or unit."
+  (when-let* ((bounds (ri--selection-bounds)))
+    (let ((start (car bounds))
+          (end (cdr bounds)))
+      (when (= start end)
+        (setq end (min (1+ start) (point-max))))
+      (when (< start end)
+        (cons start end)))))
+
+(defun ri--cut-range (start end point-after)
+  "Cut START through END and leave point at POINT-AFTER."
+  (when (< start end)
+    (ri--with-buffer-edit
+      (kill-new (buffer-substring-no-properties start end))
+      (goto-char start)
+      (delete-region start end)
+      (goto-char (min point-after (point-max))))))
+
+(defun ri-cut-selection ()
+  "Cut the current selection or unit to the kill ring and leave Extend."
+  (interactive)
+  (when-let* ((bounds (ri--cut-bounds)))
+    (ri--cut-range (car bounds) (cdr bounds) (car bounds)))
+  (ri--finish-selection-edit))
+
+(defun ri--cut-with-movement (movement)
+  "Cut toward MOVEMENT while preserving the reached unit."
+  (let* ((current (ri--cut-bounds))
+         (target (and current
+                      (ri--target-unit-bounds movement current)))
+         (range (or (ri--range-toward current target) current)))
+    (when range
+      (ri--cut-range (car range) (cdr range) (car range)))
+    (ri--finish-selection-edit)))
+
+(defun ri-cut-left ()
+  "Cut toward the unit on the left."
+  (interactive)
+  (ri--cut-with-movement :left))
+
+(defun ri-cut-right ()
+  "Cut toward the unit on the right."
+  (interactive)
+  (ri--cut-with-movement :right))
+
+(defun ri-cut-prev ()
+  "Cut toward the previous significant unit."
+  (interactive)
+  (ri--cut-with-movement :prev))
+
+(defun ri-cut-next ()
+  "Cut toward the next significant unit."
+  (interactive)
+  (ri--cut-with-movement :next))
+
+(defun ri-cut-first ()
+  "Cut toward the first unit."
+  (interactive)
+  (ri--cut-with-movement :first))
+
+(defun ri-cut-last ()
+  "Cut toward the last unit."
+  (interactive)
+  (ri--cut-with-movement :last))
+
 
 (defun ri--enter-open-insert ()
   (ri--exit-extend) (ri--update-highlight) (mini-modal-insert))

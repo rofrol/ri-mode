@@ -72,17 +72,17 @@ main bindings are:
 | `d`                  | Use a tree-sitter `NODE` unit                                |
 | `f`                  | Start Extend; navigation then grows or shrinks the selection |
 | `/`                  | Move the cursor to the other edge of the unit or selection   |
-| `c`, `r`, `g`, `v`   | Copy, delete, change, or paste the unit/selection            |
+| `c`, `r`, `g`, `v`, `x` | Copy, delete, change, paste, or cut the unit/selection |
 | `F`                  | Open the Transform menu                                      |
 | `z` / `Z`            | Undo / redo                                                  |
 | `RET`                | Save the buffer                                              |
 | `SPC`                | Open the command menu                                        |
 
-The `c`, `r`, `g`, `t`, and `v` keys also act as momentary layers.
+The `c`, `r`, `g`, `t`, `v`, and `x` keys also act as momentary layers.
 Hold one of them to display its available actions, press the shown
 direction key while still holding it, then release. These layers
-provide directional duplicate, eat, open, swap, and paste operations.
-A quick tap of `c`, `r`, `g`, or `v` performs the primary action shown
+provide directional duplicate, eat, open, swap, paste, and cut operations.
+A quick tap of `c`, `r`, `g`, `v`, or `x` performs the primary action shown
 in the table.
 
 `NODE` mode requires a tree-sitter grammar for the current major mode;
