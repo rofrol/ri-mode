@@ -123,36 +123,39 @@
                    [])))
         (should (equal kkp-chord--held '((118))))))))
 
-(ert-deftest ri-chord-test-help-key-prompt-survives-key-release ()
+(ert-deftest ri-chord-test-help-key-prompt-survives-shift-release ()
   (let ((ri--help-prefix-active t)
         (ri--restore-message-after-release nil)
         (pre-command-hook nil)
+        (post-command-hook nil)
         (kkp-chord-after-release-hook
          '(ri--restore-message-after-release))
         (this-command #'Info-goto-emacs-key-command-node)
         (echo-message nil)
-        restored)
+        (restore-count 0))
     (cl-letf (((symbol-function 'keymap-legend-hide) #'ignore)
-              ((symbol-function 'kkp-chord--parse)
-               (lambda (_input)
-                 (list :keycode ?j
-                       :event-type kkp-chord--event-release
-                       :modifier-num 0)))
-              ((symbol-function 'kkp-chord--on-release) #'ignore)
-              ((symbol-function 'current-message)
-               (lambda () echo-message))
               ((symbol-function 'message)
                (lambda (format-string &rest args)
-                 (setq restored (apply #'format format-string args))
-                 (setq echo-message restored))))
+                 (setq echo-message
+                       (apply #'format format-string args))
+                 (cl-incf restore-count))))
       (ri--exit-help-prefix)
-      (setq echo-message "Find documentation for key: ")
-      (should (equal
-               (kkp-chord--translate-advice #'ignore "release")
-               [])))
-    (should (equal
-             (substring-no-properties restored)
-             "Find documentation for key: "))
+      ;; Kitty emits separate releases for shifted K and physical Shift.
+      ;; Both can clear the echo area, so restore the prompt after each.
+      (dolist (input '("107:75;2:3u" "57441;1:3u"))
+        (setq echo-message nil)
+        (should
+         (equal
+          (kkp-chord--translate-advice
+           #'ignore (string-to-list input))
+          []))
+        (should
+         (equal
+          (and echo-message
+               (substring-no-properties echo-message))
+          "Find documentation for key: "))))
+    (should (= restore-count 2))
+    (run-hooks 'post-command-hook)
     (should-not ri--restore-message-after-release)))
 
 (provide 'ri-chord-test)
