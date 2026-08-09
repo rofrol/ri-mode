@@ -33,7 +33,7 @@
             (should (eq translated 'normal))
             (should-not kkp-chord--held)))))))
 
-(ert-deftest ri-chord-test-help-prefix-shows-default-legend ()
+(ert-deftest ri-chord-test-help-prefix-shows-filtered-default-legend ()
   (with-temp-buffer
     (let (shown hidden)
       (cl-letf (((symbol-function 'keymap-legend-show)
@@ -51,8 +51,14 @@
                      (lambda () (vector ?\C-h))))
             (should (eq (ri--help-prefix-filter 'help-command)
                         'help-command)))
-          (should (equal shown
-                         '("C-h Help" help-command (:title "C-h Help"))))
+          (should (equal (list (nth 0 shown) (nth 2 shown))
+                         '("C-h Help" (:title "C-h Help"))))
+          (let ((map (nth 1 shown)))
+            (should (keymapp map))
+            (should (eq (lookup-key map "v") #'describe-variable))
+            (should-not (lookup-key map [f1]))
+            (should-not (lookup-key map [backspace]))
+            (should-not (lookup-key map (kbd "C-\\"))))
           (should ri--help-prefix-active)
           (should (memq #'ri--exit-help-prefix pre-command-hook))
           (ri--exit-help-prefix)
