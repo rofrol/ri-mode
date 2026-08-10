@@ -596,6 +596,34 @@ Emacs is not reading a prefix key sequence."
   (interactive)
   (keymap-legend-show "NORM" ri--normal-help-map '(:title "Normal Mode"))
   (set-transient-map (make-sparse-keymap) nil #'keymap-legend-hide))
+
+(defvar ri--help-prefix-map
+  (let ((map (make-sparse-keymap)))
+    ;; `help-for-help' rejects an otherwise unbound ESC before KKP's
+    ;; input decoder can finish reading a Kitty CSI-u release sequence.
+    (define-key map (kbd "ESC") (make-sparse-keymap))
+    (define-key map "?" #'ri--help-for-help)
+    map)
+  "RI overlay on Emacs' default `C-h' prefix map.")
+
+(defun ri--help-prefix-map-for (binding)
+  "Return RI's help overlay inheriting from prefix BINDING."
+  (let ((parent (if (keymapp binding)
+                    binding
+                  (symbol-function binding))))
+    (unless (keymapp parent)
+      (error "Not a prefix keymap: %S" binding))
+    (set-keymap-parent ri--help-prefix-map parent)
+    ri--help-prefix-map))
+
+(defun ri--help-for-help ()
+  "Show Emacs' help screen without mistaking KKP releases for input.
+`help-for-help' installs a catch-all map while it reads its next key.
+Keeping ESC as a prefix lets `input-decode-map' finish each Kitty CSI-u
+release sequence, which `kkp-chord' then swallows."
+  (interactive)
+  (let ((help-map (ri--help-prefix-map-for 'help-command)))
+    (help-for-help)))
 (defun ri--exit-help-prefix ()
   "Hide the C-h help legend before its next command.
 Preserve the prompt used by `Info-goto-emacs-key-command-node' across
@@ -625,7 +653,7 @@ the physical release of the key that invoked it."
                         (equal modifiers '(shift)))
                     (not (keymapp binding)))
            (define-key map (vector event) binding))))
-     (symbol-function 'help-command))
+     (ri--help-prefix-map-for 'help-command))
     map))
 
 (defun ri--show-help-prefix ()
@@ -634,15 +662,19 @@ the physical release of the key that invoked it."
    "C-h Help" (ri--help-prefix-legend-map) '(:title "C-h Help")))
 
 (defun ri--help-prefix-filter (binding)
-  "Show the C-h legend while returning BINDING unchanged.
+  "Show the C-h legend and overlay the initial prefix BINDING.
 Only the initial one-event `C-h' lookup is real prefix input; later
-keymap lookups during that command must not reopen the legend."
-  (when (and (not ri--help-prefix-active)
-             (= (length (this-command-keys-vector)) 1))
-    (ri--show-help-prefix)
-    (setq ri--help-prefix-active t)
-    (add-hook 'pre-command-hook #'ri--exit-help-prefix nil t))
-  binding)
+keymap lookups during that command must keep their resolved binding."
+  (if (or (eq binding 'help-command)
+          (eq binding (symbol-function 'help-command)))
+      (let ((map (ri--help-prefix-map-for binding)))
+        (when (and (not ri--help-prefix-active)
+                   (= (length (this-command-keys-vector)) 1))
+          (ri--show-help-prefix)
+          (setq ri--help-prefix-active t)
+          (add-hook 'pre-command-hook #'ri--exit-help-prefix nil t))
+        map)
+    binding))
 
 ;;;; Semantic regions auto-enable
 

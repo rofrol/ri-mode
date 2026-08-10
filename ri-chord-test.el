@@ -3,6 +3,7 @@
 (require 'cl-lib)
 (require 'ert)
 (require 'ri)
+(require 'help)
 
 (defmacro ri-chord-test--with-fresh-chords (&rest body)
   "Run BODY with isolated chord registrations and held state."
@@ -45,12 +46,12 @@
                  (lambda () [])))
         (let ((ri--help-prefix-active nil))
           (should (eq (ri--help-prefix-filter 'help-command)
-                      'help-command))
+                      ri--help-prefix-map))
           (should-not shown)
           (cl-letf (((symbol-function 'this-command-keys-vector)
                      (lambda () (vector ?\C-h))))
             (should (eq (ri--help-prefix-filter 'help-command)
-                        'help-command)))
+                        ri--help-prefix-map)))
           (should (equal (list (nth 0 shown) (nth 2 shown))
                          '("C-h Help" (:title "C-h Help"))))
           (let ((map (nth 1 shown)))
@@ -59,6 +60,11 @@
             (should-not (lookup-key map [f1]))
             (should-not (lookup-key map [backspace]))
             (should-not (lookup-key map (kbd "C-\\"))))
+          (should (eq (lookup-key ri--help-prefix-map "?")
+                      #'ri--help-for-help))
+          (should (keymapp (lookup-key ri--help-prefix-map (kbd "ESC"))))
+          (should (eq (keymap-parent ri--help-prefix-map)
+                      (symbol-function 'help-command)))
           (should ri--help-prefix-active)
           (should (memq #'ri--exit-help-prefix pre-command-hook))
           (ri--exit-help-prefix)
@@ -124,6 +130,30 @@
         (should shown)
         (should hidden)
         (should-not ri--help-prefix-active)))))
+
+(ert-deftest ri-chord-test-help-for-help-survives-shift-slash-release ()
+  (let ((unread-command-events
+         (append (string-to-list
+                  "\e[47:63;2:3u\e[57441;1:3u")
+                 (list ?q)))
+        (input-decode-map (copy-keymap input-decode-map))
+        (kkp-chord-after-release-hook nil))
+    (define-key
+     input-decode-map "\e[4"
+     (lambda (&optional _prompt)
+       (kkp-chord--translate-advice
+        #'ignore (kkp--read-terminal-events ?4))))
+    (define-key
+     input-decode-map "\e[5"
+     (lambda (&optional _prompt)
+       (kkp-chord--translate-advice
+        #'ignore (kkp--read-terminal-events ?5))))
+    (unwind-protect
+        (save-window-excursion
+          (ri--help-for-help)
+          (should-not unread-command-events))
+      (when-let* ((buffer (get-buffer help-for-help-buffer-name)))
+        (kill-buffer buffer)))))
 
 (ert-deftest ri-chord-test-standalone-v-remains-a-momentary-chord ()
   (ri-chord-test--with-fresh-chords
