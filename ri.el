@@ -531,6 +531,7 @@ Emacs is not reading a prefix key sequence."
       (pcase sr-submode
         ('line "LINE")
         ('line-star "LINE*")
+        ('paragraph "PARAGRAPH")
         ('char "CHAR")
         ('word "WORD")
         ('word-plus "WORD+")
@@ -567,6 +568,7 @@ Emacs is not reading a prefix key sequence."
     (define-key map "a" '(menu-item "LINE" ri-extend-set-line-mode))
     (define-key map "A" '(menu-item "LINE*" ri-extend-set-line-star-mode))
     (define-key map "W" '(menu-item "CHAR" ri-extend-set-character-mode))
+    (define-key map "E" '(menu-item "PARAGRAPH" ri-extend-set-paragraph-mode))
     (define-key map "s" '(menu-item "WORD" ri-extend-set-word-mode))
     (define-key map "S" '(menu-item "WORD*" ri-extend-set-word-star-mode))
     (define-key map (kbd "M-s") '(menu-item "WORD+" ri-extend-set-word-plus-mode))
@@ -799,6 +801,7 @@ keymap lookups during that command must keep their resolved binding."
   (define-key mini-modal-map "a" #'ri-extend-set-line-mode)
   (define-key mini-modal-map "A" #'ri-extend-set-line-star-mode)
   (define-key mini-modal-map "W" #'ri-extend-set-character-mode)
+  (define-key mini-modal-map "E" #'ri-extend-set-paragraph-mode)
   (define-key mini-modal-map "s" #'ri-extend-set-word-mode)
   (define-key mini-modal-map "S" #'ri-extend-set-word-star-mode)
   (define-key mini-modal-map (kbd "M-s") #'ri-extend-set-word-plus-mode)

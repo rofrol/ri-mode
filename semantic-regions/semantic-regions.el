@@ -9,10 +9,10 @@
 ;;
 ;;; Commentary:
 ;;
-;; Unit-based navigation with semantic submodes: LINE, LINE*, CHAR, WORD,
-;; WORD+, WORD*, SUBWORD, and NODE.  Each submode defines how the "current
-;; unit" is computed, and navigation commands move point by those units while
-;; keeping a highlight overlay on the active unit.
+;; Unit-based navigation with semantic submodes: LINE, LINE*, PARAGRAPH,
+;; CHAR, WORD, WORD+, WORD*, SUBWORD, and NODE.  Each submode defines how
+;; the "current unit" is computed, and navigation commands move point by
+;; those units while keeping a highlight overlay on the active unit.
 ;;
 ;; Every submode shares the `semantic-region-*' API for parsing,
 ;; traversing, extending, changing units, selecting, inspecting, and
@@ -63,12 +63,13 @@ consumer provide selection bounds without taking ownership of overlays.")
 
 (defvar-local sr-submode 'line
   "Submode within semantic-regions.
-Supported values are `line', `line-star', `char', `word', `word-plus',
-`word-star', `subword', and `node'.")
+Supported values are `line', `line-star', `paragraph', `char', `word',
+`word-plus', `word-star', `subword', and `node'.")
 
 (defconst sr--submode-properties
   '((line      :line t)
     (line-star :line t)
+    (paragraph         :horizontal t)
     (char              :horizontal t)
     (word      :wordish t :horizontal t)
     (word-plus :wordish t :horizontal t)
@@ -451,6 +452,46 @@ line contents before choosing the nearest remaining line above point."
     (goto-char pos)
     (cons (line-beginning-position) (line-end-position))))
 
+(defun semantic-region--blank-line-p ()
+  "Return non-nil when the current line contains only whitespace."
+  (save-excursion
+    (let ((end (line-end-position)))
+      (goto-char (line-beginning-position))
+      (skip-chars-forward "[:space:]" end)
+      (= (point) end))))
+
+(defun semantic-region--paragraph-bounds-at (pos)
+  "Return Ki-style paragraph bounds at POS in the current buffer.
+A paragraph is a contiguous run of non-empty lines and includes the
+trailing newline of its last line when present.  A whitespace-only line
+is represented by a zero-width region at its beginning."
+  (unless (= (point-min) (point-max))
+    (save-excursion
+      (goto-char pos)
+      (if (semantic-region--blank-line-p)
+          (let ((beg (line-beginning-position)))
+            (cons beg beg))
+        (let (beg end)
+          (beginning-of-line)
+          (while
+              (and (not (bobp))
+                   (save-excursion
+                     (forward-line -1)
+                     (not (semantic-region--blank-line-p))))
+            (forward-line -1))
+          (setq beg (point))
+          (goto-char pos)
+          (beginning-of-line)
+          (while
+              (and (< (line-end-position) (point-max))
+                   (save-excursion
+                     (forward-line 1)
+                     (not (semantic-region--blank-line-p))))
+            (forward-line 1))
+          (forward-line 1)
+          (setq end (point))
+          (cons beg end))))))
+
 (defun semantic-region--char-bounds-at (pos)
   "Return single-character bounds at POS in the current buffer."
   (save-excursion
@@ -505,6 +546,7 @@ line contents before choosing the nearest remaining line above point."
   (pcase unit
     ('line (semantic-region--line-bounds-at pos))
     ('line-star (semantic-region--line-star-bounds-at pos))
+    ('paragraph (semantic-region--paragraph-bounds-at pos))
     ('char (semantic-region--char-bounds-at pos))
     ((or 'word 'word-plus) (semantic-region--word-bounds-at pos))
     ('word-star (semantic-region--word-star-bounds-at pos))
@@ -526,6 +568,14 @@ line contents before choosing the nearest remaining line above point."
        (forward-line 1)
        (when (< (point) (point-max))
          (point))))
+    ('paragraph
+     (if (semantic-region-empty-p region)
+         (save-excursion
+           (goto-char (semantic-region-beg region))
+           (when (zerop (forward-line 1))
+             (point)))
+       (when (< (semantic-region-end region) (point-max))
+         (semantic-region-end region))))
     (_
      (when (< (semantic-region-end region) (point-max))
        (semantic-region-end region)))))
@@ -566,13 +616,15 @@ line contents before choosing the nearest remaining line above point."
                              (string char)))))))))
     ((or 'word-plus 'word-star 'subword)
      (semantic-region--whitespace-p region))
+    ('paragraph
+     (semantic-region-empty-p region))
     (_ nil)))
 
 (defun semantic-region-next (region)
   "Return the next region for REGION's unit, or nil at buffer end.
-WORD skips whitespace and symbols.  WORD+, WORD*, and SUBWORD skip
-whitespace.  NODE traverses named sibling nodes.  LINE, LINE*, and CHAR
-traverse adjacent units."
+WORD skips whitespace and symbols.  WORD+, WORD*, SUBWORD, and
+PARAGRAPH skip their insignificant separators.  NODE traverses named
+sibling nodes.  LINE, LINE*, and CHAR traverse adjacent units."
   (semantic-region--require-live region)
   (if (eq (semantic-region-unit region) 'node)
       (semantic-region--node-sibling-region region 'next t)
@@ -599,9 +651,9 @@ traverse adjacent units."
 
 (defun semantic-region-prev (region)
   "Return the previous region for REGION's unit, or nil at buffer start.
-WORD skips whitespace and symbols.  WORD+, WORD*, and SUBWORD skip
-whitespace.  NODE traverses named sibling nodes.  LINE, LINE*, and CHAR
-traverse adjacent units."
+WORD skips whitespace and symbols.  WORD+, WORD*, SUBWORD, and
+PARAGRAPH skip their insignificant separators.  NODE traverses named
+sibling nodes.  LINE, LINE*, and CHAR traverse adjacent units."
   (semantic-region--require-live region)
   (if (eq (semantic-region-unit region) 'node)
       (semantic-region--node-sibling-region region 'prev t)
@@ -968,6 +1020,8 @@ units in word-based modes."
      (sr--goto-node-target 'up))
     ((or 'word 'word-plus 'word-star 'subword)
      (sr--nav-wordish-line -1))
+    ('paragraph
+     (message "Up/Down navigation (i/k) is not defined for PARAGRAPH mode."))
     (_
      (forward-line -1)))
   (sr--snap-to-unit-start)
@@ -988,6 +1042,8 @@ units in word-based modes."
      (sr--goto-node-target 'down))
     ((or 'word 'word-plus 'word-star 'subword)
      (sr--nav-wordish-line 1))
+    ('paragraph
+     (message "Up/Down navigation (i/k) is not defined for PARAGRAPH mode."))
     (_
      (forward-line 1)))
   (sr--snap-to-unit-start)
@@ -1049,6 +1105,27 @@ units in word-based modes."
     (unless found
       (goto-char (point-max)))))
 
+(defun sr--goto-paragraph (direction include-empty)
+  "Move to a paragraph item in DIRECTION.
+DIRECTION is `prev' or `next'.  When INCLUDE-EMPTY is non-nil, an
+adjacent empty line is a target; otherwise empty lines are skipped."
+  (when-let* ((current (semantic-region-parse-at 'paragraph (point))))
+    (let
+        ((target
+          (if include-empty
+              (when-let*
+                  ((probe
+                    (pcase direction
+                      ('prev (semantic-region--prev-position current))
+                      ('next (semantic-region--next-position current)))))
+                (semantic-region-parse-at 'paragraph probe))
+            (pcase direction
+              ('prev (semantic-region-prev current))
+              ('next (semantic-region-next current))))))
+      (when target
+        (goto-char (semantic-region-beg target))
+        t))))
+
 (defun sr-nav-prev ()
   "Move to previous significant item."
   (interactive)
@@ -1065,10 +1142,12 @@ units in word-based modes."
      (sr--nav-prev-blank-line))
     ('line-star
      (sr--nav-prev-empty-line))
+    ('paragraph
+     (sr--goto-paragraph 'prev t))
     ('node
      (sr--goto-node-target 'prev))
     (_
-     (message "Prev/Next navigation (u/o) is for NODE, WORD, WORD+, WORD*, Subword, LINE, and LINE* modes.")))
+     (message "Prev/Next navigation (u/o) is for NODE, PARAGRAPH, WORD, WORD+, WORD*, Subword, LINE, and LINE* modes.")))
   (sr--update-highlight))
 
 (defun sr-nav-next ()
@@ -1087,10 +1166,12 @@ units in word-based modes."
      (sr--nav-next-blank-line))
     ('line-star
      (sr--nav-next-empty-line))
+    ('paragraph
+     (sr--goto-paragraph 'next t))
     ('node
      (sr--goto-node-target 'next))
     (_
-     (message "Prev/Next navigation (u/o) is for NODE, WORD, WORD+, WORD*, Subword, LINE, and LINE* modes.")))
+     (message "Prev/Next navigation (u/o) is for NODE, PARAGRAPH, WORD, WORD+, WORD*, Subword, LINE, and LINE* modes.")))
   (sr--update-highlight))
 
 (defun sr-nav-left ()
@@ -1103,7 +1184,8 @@ units in word-based modes."
     ('word-plus (sr-backward-word-all))
     ('word-star (sr-backward-bigword-all))
     ('subword (sr-backward-subword-all))
-    (_ (message "Left/Right navigation (j/l) requires NODE, Character, Word, WORD+, WORD*, or Subword mode.")))
+    ('paragraph (sr--goto-paragraph 'prev nil))
+    (_ (message "Left/Right navigation (j/l) requires NODE, PARAGRAPH, Character, Word, WORD+, WORD*, or Subword mode.")))
   (sr--update-highlight))
 
 (defun sr-nav-right ()
@@ -1116,7 +1198,8 @@ units in word-based modes."
     ('word-plus (sr-forward-word-all))
     ('word-star (sr-forward-bigword-all))
     ('subword (sr-forward-subword-all))
-    (_ (message "Left/Right navigation (j/l) requires NODE, Character, Word, WORD+, WORD*, or Subword mode.")))
+    ('paragraph (sr--goto-paragraph 'next nil))
+    (_ (message "Left/Right navigation (j/l) requires NODE, PARAGRAPH, Character, Word, WORD+, WORD*, or Subword mode.")))
   (sr--update-highlight))
 
 ;; ── First / Last ─────────────────────────────────────────────────────────
@@ -1151,6 +1234,23 @@ units in word-based modes."
   (unless (bobp)
     t))
 
+(defun sr--goto-first-paragraph ()
+  "Move to the first non-empty paragraph in the buffer."
+  (when-let* ((bounds
+               (sr--meaningful-unit-bounds-at (point-min) 'paragraph)))
+    (goto-char (car bounds))
+    t))
+
+(defun sr--goto-last-paragraph ()
+  "Move to the last non-empty paragraph in the buffer."
+  (when-let* ((region
+               (semantic-region-parse-at 'paragraph (point-max))))
+    (when (semantic-region--separator-p region)
+      (setq region (semantic-region-prev region)))
+    (when region
+      (goto-char (semantic-region-beg region))
+      t)))
+
 (defun sr-nav-first ()
   "Move to the first item allowed by the current submode."
   (interactive)
@@ -1163,6 +1263,8 @@ units in word-based modes."
       ((or 'line 'line-star)
        (goto-char (point-min))
        (sr--snap-to-unit-start))
+      ('paragraph
+       (sr--goto-first-paragraph))
       ((or 'word 'word-plus)
        (when (sr--goto-first-word)
          (sr--snap-to-unit-start)))
@@ -1183,6 +1285,8 @@ units in word-based modes."
       ((or 'line 'line-star)
        (goto-char (point-max))
        (sr--snap-to-unit-start))
+      ('paragraph
+       (sr--goto-last-paragraph))
       ((or 'word 'word-plus)
        (when (sr--goto-last-word)
          (sr--snap-to-unit-start)))
@@ -1235,6 +1339,11 @@ units in word-based modes."
   "Switch to WORD+ submode."
   (interactive)
   (sr--set-submode 'word-plus "WORD+ Mode"))
+
+(defun sr-set-paragraph-mode ()
+  "Switch to PARAGRAPH submode."
+  (interactive)
+  (sr--set-submode 'paragraph "PARAGRAPH Mode"))
 
 (defun sr-set-node-mode ()
   "Switch to NODE submode backed exclusively by tree-sitter."
