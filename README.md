@@ -73,6 +73,7 @@ main bindings are:
 | `f`                  | Start Extend; navigation then grows or shrinks the selection |
 | `/`                  | Move the cursor to the other edge of the unit or selection   |
 | `c`, `r`, `g`, `v`, `x` | Copy, delete, change, paste, or cut the unit/selection |
+| `I`                  | Join the current line to the previous line                  |
 | `F`                  | Open the Transform menu                                      |
 | `z` / `Z`            | Undo / redo                                                  |
 | `RET`                | Save the buffer                                              |

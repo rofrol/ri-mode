@@ -1,4 +1,4 @@
-;;; ri-edit.el --- Delete, swap, and open operations for ri -*- lexical-binding: t; -*-
+;;; ri-edit.el --- Delete, join, swap, and open operations for ri -*- lexical-binding: t; -*-
 ;; SPDX-License-Identifier: Apache-2.0
 ;;; Code:
 (require 'cl-lib)
@@ -170,6 +170,66 @@
                                                   (save-excursion (back-to-indentation) (point)))))
     (ri--with-buffer-edit (goto-char le) (insert "\n" indent))
     (ri--enter-open-insert)))
+
+(defun ri-join-lines ()
+  "Join the current line to the previous line, removing its indentation."
+  (interactive)
+  (when-let* ((bounds (ri--selection-bounds)))
+    (let* ((line-start
+            (save-excursion
+              (goto-char (car bounds))
+              (line-beginning-position)))
+           (line-end
+            (save-excursion
+              (goto-char (car bounds))
+              (line-end-position))))
+      (when (> line-start (point-min))
+        (let* ((join-start (1- line-start))
+               (content-start
+                (save-excursion
+                  (goto-char line-start)
+                  (skip-chars-forward "[:space:]" line-end)
+                  (point)))
+               (new-text
+                (buffer-substring-no-properties content-start line-end))
+               (delta (- (length new-text) (- line-end join-start)))
+               (active-state (and (ri--selection-active-p) ri--selection))
+               (point-position (point))
+               (anchor-position nil)
+               (boundary-position nil)
+               (map-position
+                (lambda (position)
+                  (cond
+                   ((< position join-start) position)
+                   ((>= position line-end) (+ position delta))
+                   ((>= position content-start)
+                    (+ join-start (- position content-start)))
+                   (t join-start)))))
+          (when active-state
+            ;; Freeze the exact selection before the edit so line joining
+            ;; cannot reinterpret it through the current semantic submode.
+            (ri--preserve-selection-for-submode-switch)
+            (setq point-position (point)
+                  anchor-position
+                  (marker-position
+                   (ri--selection-state-anchor active-state))
+                  boundary-position
+                  (marker-position
+                   (ri--selection-state-preserved-boundary active-state))))
+          (ri--with-buffer-edit
+            (goto-char join-start)
+            (delete-region join-start line-end)
+            (insert new-text))
+          (when active-state
+            (set-marker
+             (ri--selection-state-anchor active-state)
+             (funcall map-position anchor-position))
+            (set-marker
+             (ri--selection-state-preserved-boundary active-state)
+             (funcall map-position boundary-position)))
+          (goto-char (funcall map-position point-position))
+          (ri--update-highlight)
+          (force-mode-line-update))))))
 
 (defun ri--replace-text (start end text) (goto-char start) (delete-region start end) (insert text))
 (defun ri--swap-with-movement (movement)
