@@ -74,6 +74,7 @@ main bindings are:
 | `/`                  | Move the cursor to the other edge of the unit or selection   |
 | `c`, `r`, `g`, `v`, `x` | Copy, delete, change, paste, or cut the unit/selection |
 | `I`                  | Join the current line to the previous line                  |
+| `J` / `L`            | Dedent / indent nonblank selected lines by four columns      |
 | `F`                  | Open the Transform menu                                      |
 | `z` / `Z`            | Undo / redo                                                  |
 | `RET`                | Save the buffer                                              |

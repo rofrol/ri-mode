@@ -345,6 +345,14 @@
                   #'ri-join-lines))
       (should (eq (lookup-key ri--normal-help-map "I")
                   #'ri-join-lines))
+      (should (eq (lookup-key mini-modal-map "J")
+                  #'ri-dedent))
+      (should (eq (lookup-key ri--normal-help-map "J")
+                  #'ri-dedent))
+      (should (eq (lookup-key mini-modal-map "L")
+                  #'ri-indent))
+      (should (eq (lookup-key ri--normal-help-map "L")
+                  #'ri-indent))
       (should (eq (lookup-key mini-modal-map "x")
                   #'ri-cut-selection))
       (should (eq (lookup-key ri--normal-help-map "x")
@@ -420,6 +428,68 @@
     (ri-join-lines)
     (should (equal (ri--selection-bounds) (cons 9 12)))
     (ri--exit-extend)))
+
+(ert-deftest ri-extend-test-indent-dedent-single-line-matches-ki ()
+  (ri-extend-test--with-buffer "fom"
+    (setq sr-submode 'char)
+    (ri-indent)
+    (should (equal (buffer-string) "    fom"))
+    (should (= (point) 5))
+    (should (equal (ri--selection-bounds) (cons 5 6)))
+    (ri-dedent)
+    (should (equal (buffer-string) "fom"))
+    (should (= (point) 1))
+    (should (equal (ri--selection-bounds) (cons 1 2)))))
+
+(ert-deftest ri-extend-test-indent-dedent-preserves-extend-edges ()
+  (dolist (swap '(nil t))
+    (ri-extend-test--with-buffer
+        "fn main() {\n    foo()\n}\nafter\n"
+      (setq sr-submode 'line-star)
+      (should (ri--enter-extend))
+      (ri-extend-nav-down)
+      (ri-extend-nav-down)
+      (when swap
+        (ri-swap-cursor))
+      (let ((active-edge
+             (ri--selection-state-active-edge ri--selection)))
+        (ri-indent)
+        (should
+         (equal (buffer-string)
+                "    fn main() {\n        foo()\n    }\nafter\n"))
+        (should (ri--selection-active-p))
+        (should (eq (ri--selection-state-active-edge ri--selection)
+                    active-edge))
+        (should (equal (ri--selection-bounds) (cons 5 36)))
+        (should
+         (equal (buffer-substring-no-properties 5 36)
+                "fn main() {\n        foo()\n    }"))
+        (should (= (point) (if (eq active-edge 'end) 35 5)))
+        (ri-dedent)
+        (should
+         (equal (buffer-string)
+                "fn main() {\n    foo()\n}\nafter\n"))
+        (should (equal (ri--selection-bounds) (cons 1 24)))
+        (should (= (point) (if (eq active-edge 'end) 23 1)))))))
+
+(ert-deftest ri-extend-test-dedent-removes-only-available-indentation ()
+  (ri-extend-test--with-buffer
+      "fn main() {\n    foo()\n}\nafter\n"
+    (setq sr-submode 'line-star)
+    (should (ri--enter-extend))
+    (ri-extend-nav-down)
+    (ri-extend-nav-down)
+    (ri-dedent)
+    (should
+     (equal (buffer-string)
+            "fn main() {\nfoo()\n}\nafter\n"))
+    (should
+     (equal
+      (buffer-substring-no-properties
+       (car (ri--selection-bounds))
+       (cdr (ri--selection-bounds)))
+      "fn main() {\nfoo()\n}"))
+    (should (= (point) (1- (cdr (ri--selection-bounds)))))))
 
 (ert-deftest ri-extend-test-mode-line-remaps-eglot-label ()
   (with-temp-buffer
