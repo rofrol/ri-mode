@@ -1,4 +1,4 @@
-;;; ri-edit.el --- Delete, join, swap, and open operations for ri -*- lexical-binding: t; -*-
+;;; ri-edit.el --- Indent, delete, join, swap, and open operations for ri -*- lexical-binding: t; -*-
 ;; SPDX-License-Identifier: Apache-2.0
 ;;; Code:
 (require 'cl-lib)
@@ -170,6 +170,64 @@
                                                   (save-excursion (back-to-indentation) (point)))))
     (ri--with-buffer-edit (goto-char le) (insert "\n" indent))
     (ri--enter-open-insert)))
+
+(defconst ri--indent-width 4
+  "Columns shifted by `ri-indent' and `ri-dedent'.")
+
+(defun ri--edit-selection-indentation (amount)
+  "Shift the current unit or selection by AMOUNT columns."
+  (when-let* ((bounds (ri--selection-bounds)))
+    (let ((active-state
+           (and (ri--selection-active-p) ri--selection)))
+      (when active-state
+        (ri--preserve-selection-for-submode-switch))
+      (let* ((advance-markers (> amount 0))
+             (active-edge
+              (and active-state
+                   (ri--selection-state-active-edge active-state)))
+             (selection-markers
+              (when active-state
+                (list
+                 (ri--selection-state-anchor active-state)
+                 (ri--selection-state-preserved-boundary
+                  active-state))))
+             (point-marker
+              (unless active-state
+                (copy-marker (point) advance-markers)))
+             (line-start
+              (save-excursion
+                (goto-char (car bounds))
+                (line-beginning-position))))
+        (dolist (marker selection-markers)
+          (set-marker-insertion-type marker advance-markers))
+        (unwind-protect
+            (progn
+              (ri--with-buffer-edit
+                (atomic-change-group
+                  (let ((indent-tabs-mode nil))
+                    (indent-rigidly
+                     line-start (cdr bounds) amount))))
+              (if active-state
+                  (goto-char
+                   (ri--point-at-unit-edge
+                    (ri--selection-bounds) active-edge))
+                (goto-char point-marker))
+              (ri--update-highlight)
+              (force-mode-line-update))
+          (dolist (marker selection-markers)
+            (set-marker-insertion-type marker nil))
+          (when point-marker
+            (set-marker point-marker nil)))))))
+
+(defun ri-indent ()
+  "Indent every nonblank selected line by four columns."
+  (interactive)
+  (ri--edit-selection-indentation ri--indent-width))
+
+(defun ri-dedent ()
+  "Dedent every nonblank selected line by up to four columns."
+  (interactive)
+  (ri--edit-selection-indentation (- ri--indent-width)))
 
 (defun ri-join-lines ()
   "Join the current line to the previous line, removing its indentation."
