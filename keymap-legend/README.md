@@ -44,6 +44,7 @@ Bindings are discovered via `map-keymap`. To appear in the legend, bindings shou
 ## Customization
 
 - `keymap-legend-layout` — physical keyboard layout (default: QWERTY)
+- `keymap-legend-max-label-width` — maximum display width of one binding label (default: 10); longer labels are shown with an ellipsis
 
 ## License
 
