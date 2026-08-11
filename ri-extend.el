@@ -87,7 +87,11 @@
 (defun ri--extend-point-boundary ()
   "Return the exact selection boundary represented by point."
   (if (eq (ri--selection-state-active-edge ri--selection) 'end)
-      (min (point-max) (1+ (point)))
+      (if (and (eq sr-submode 'paragraph)
+               (= (point) (line-beginning-position))
+               (semantic-region--blank-line-p))
+          (point)
+        (min (point-max) (1+ (point))))
     (point)))
 
 (defmacro ri--without-selection-context (&rest body)
@@ -228,7 +232,9 @@ When FORCE-START is non-nil, keep point at the unit start even when
 the active extend edge is `end'."
   (unless (eq sr-submode 'char)
     (when-let* ((bounds
-                 (sr--meaningful-unit-bounds-at (point) sr-submode)))
+                 (if (eq sr-submode 'paragraph)
+                     (sr--get-current-unit-bounds)
+                   (sr--meaningful-unit-bounds-at (point) sr-submode))))
       (goto-char
        (if (and (not force-start)
                 (ri--selection-active-p)
@@ -401,15 +407,15 @@ In normal mode: jump to the opposite end of the current unit."
 
 (defun ri--select-all-submode-p ()
   "Return non-nil when repeated Extend has a select-all behavior."
-  (memq sr-submode '(line line-star char word word-plus word-star)))
-
+  (memq sr-submode
+        '(line line-star paragraph char word word-plus word-star)))
 (defun ri--select-all-in-extend ()
   "Select the whole buffer or current line according to `sr-submode`."
   (when-let* ((state ri--selection))
     (let ((active-edge 'end)
           (anchor (ri--selection-state-anchor state)))
       (pcase sr-submode
-        ((or 'word 'word-plus 'word-star 'line 'line-star)
+        ((or 'word 'word-plus 'word-star 'line 'line-star 'paragraph)
          (unless anchor
            (setq anchor (copy-marker (point-min)))
            (setf (ri--selection-state-anchor state) anchor))
@@ -438,10 +444,9 @@ In normal mode: jump to the opposite end of the current unit."
 (defun ri-toggle-extend ()
   "Toggle selection-extend mode, or select all on repeated `f`.
 When entering: select the current unit and put point on its last character.
-In WORD, WORD*, LINE, and LINE* modes, repeated `f` selects the buffer;
-in CHAR mode, it selects the current line.  In SUBWORD mode, repeated
-`f` is a no-op; in NODE mode, it leaves Extend."
-  (interactive)
+In WORD, WORD*, LINE, LINE*, and PARAGRAPH modes, repeated `f` selects
+the buffer; in CHAR mode, it selects the current line.  In SUBWORD mode,
+repeated `f` is a no-op; in NODE mode, it leaves Extend."
   (unless (and (ri--selection-active-p) (eq sr-submode 'subword))
     (if (ri--selection-active-p)
         (if (ri--select-all-submode-p)
@@ -484,8 +489,16 @@ in CHAR mode, it selects the current line.  In SUBWORD mode, repeated
   (ri--run-extend-horizontal-navigation 'right #'sr-nav-right))
 (defun ri-extend-nav-up () (interactive) (ri--run-extend-navigation #'sr-nav-up))
 (defun ri-extend-nav-down () (interactive) (ri--run-extend-navigation #'sr-nav-down))
-(defun ri-extend-nav-prev () (interactive) (ri--run-extend-navigation #'sr-nav-prev))
-(defun ri-extend-nav-next () (interactive) (ri--run-extend-navigation #'sr-nav-next))
+(defun ri-extend-nav-prev ()
+  (interactive)
+  (if (and (ri--selection-active-p) (eq sr-submode 'paragraph))
+      (ri--run-extend-horizontal-navigation 'left #'sr-nav-prev)
+    (ri--run-extend-navigation #'sr-nav-prev)))
+(defun ri-extend-nav-next ()
+  (interactive)
+  (if (and (ri--selection-active-p) (eq sr-submode 'paragraph))
+      (ri--run-extend-horizontal-navigation 'right #'sr-nav-next)
+    (ri--run-extend-navigation #'sr-nav-next)))
 (defun ri-extend-nav-first () (interactive) (ri--run-extend-navigation #'sr-nav-first))
 (defun ri-extend-nav-last () (interactive) (ri--run-extend-navigation #'sr-nav-last))
 
@@ -542,6 +555,7 @@ at or after its old position."
 (defun ri-extend-set-word-star-mode () (interactive) (ri--set-submode-with-extend #'sr-set-word-star-mode))
 (defun ri-extend-set-word-plus-mode () (interactive) (ri--set-submode-with-extend #'sr-set-word-plus-mode))
 (defun ri-extend-set-subword-mode () (interactive) (ri--set-submode-with-extend #'sr-set-subword-mode))
+(defun ri-extend-set-paragraph-mode () (interactive) (ri--set-submode-with-extend #'sr-set-paragraph-mode))
 (defun ri-extend-set-node-mode () (interactive) (ri--set-submode-with-extend #'sr-set-node-mode))
 
 

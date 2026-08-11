@@ -67,7 +67,7 @@ main bindings are:
 | `u` / `o`            | Move to the previous / next unit                             |
 | `y` / `p`            | Move to the first / last unit                                |
 | `.`                  | Move to the parent line                                      |
-| `a`, `A`, `W`        | Use `LINE`, `LINE*`, or `CHAR` units                         |
+| `a`, `A`, `E`, `W`   | Use `LINE`, `LINE*`, `PARAGRAPH`, or `CHAR` units           |
 | `s`, `S`, `M-s`, `w` | Use `WORD`, `WORD*`, `WORD+`, or `SUBWORD` units             |
 | `d`                  | Use a tree-sitter `NODE` unit                                |
 | `f`                  | Start Extend; navigation then grows or shrinks the selection |

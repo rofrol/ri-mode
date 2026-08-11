@@ -38,7 +38,7 @@
    (overlays-at pos)))
 
 (defconst semantic-region-test--units
-  '(line line-star char word word-plus word-star subword node)
+  '(line line-star paragraph char word word-plus word-star subword node)
   "Units supported by the shared semantic-region API.")
 
 ;;; parse-at: construction is always valid --------------------------------
@@ -69,6 +69,26 @@
           (should region)
           (should (eq (semantic-region-unit region) unit))
           (should (equal (semantic-region-string region) expected)))))))
+
+(ert-deftest semantic-region-test-parse-paragraph-matches-ki ()
+  (semantic-region-test--with-buffer "foo\nbar\n\n \t\nbaz\nqux"
+    (let ((first (semantic-region-parse-at 'paragraph 1))
+          (empty (semantic-region-parse-at 'paragraph 9))
+          (whitespace (semantic-region-parse-at 'paragraph 11))
+          (second (semantic-region-parse-at 'paragraph (point-max))))
+      (should (equal (semantic-region-string first) "foo\nbar\n"))
+      (should (equal (cons (semantic-region-beg first)
+                           (semantic-region-end first))
+                     (cons 1 9)))
+      (should (semantic-region-empty-p empty))
+      (should (= (semantic-region-beg empty) 9))
+      (should (semantic-region-empty-p whitespace))
+      (should (= (semantic-region-beg whitespace) 10))
+      (should (equal (semantic-region-string second) "baz\nqux")))))
+
+(ert-deftest semantic-region-test-parse-empty-paragraph-returns-nil ()
+  (semantic-region-test--with-buffer ""
+    (should-not (semantic-region-parse-at 'paragraph (point-min)))))
 
 (ert-deftest semantic-region-test-parse-empty-word-units-return-nil ()
   (semantic-region-test--with-buffer ""
@@ -154,6 +174,20 @@
           (should (equal
                    (semantic-region-string (semantic-region-prev two))
                    blank-text)))))))
+
+(ert-deftest semantic-region-test-next-prev-paragraph-skip-empty-lines ()
+  (semantic-region-test--with-buffer "foo\nbar\n\n \t\nbaz\nqux"
+    (let* ((first (semantic-region-parse-at 'paragraph 1))
+           (second (semantic-region-next first))
+           (extended (semantic-region-extend-next first)))
+      (should (equal (semantic-region-string second) "baz\nqux"))
+      (should (eq (semantic-region-unit second) 'paragraph))
+      (should (equal (semantic-region-string (semantic-region-prev second))
+                     "foo\nbar\n"))
+      (should (equal (semantic-region-string extended)
+                     (buffer-string)))
+      (should-not (semantic-region-next second))
+      (should-not (semantic-region-prev first)))))
 
 (ert-deftest semantic-region-test-next-prev-wordish-units ()
   (semantic-region-test--with-buffer "foo + bar"
@@ -252,6 +286,7 @@
     (let ((source (semantic-region-parse-at 'char 3)))
       (dolist (case '((line "foo bar")
                       (line-star "  foo bar  ")
+                      (paragraph "  foo bar  \n")
                       (char "f")
                       (word "foo")
                       (word-plus "foo")
@@ -329,6 +364,57 @@
       (should (equal (semantic-region-string
                       (semantic-region-parse-at submode (point)))
                      "beta")))))
+
+(ert-deftest semantic-region-test-paragraph-navigation-matches-ki ()
+  (semantic-region-test--with-buffer "foo\n\n\nbar\n\nbaz"
+    (setq sr-submode 'paragraph)
+    (sr-nav-next)
+    (should (= (line-number-at-pos) 2))
+    (should (semantic-region-empty-p
+             (semantic-region-parse-at 'paragraph (point))))
+    (sr-nav-next)
+    (should (= (line-number-at-pos) 3))
+    (sr-nav-next)
+    (should (equal
+             (semantic-region-string
+              (semantic-region-parse-at 'paragraph (point)))
+             "bar\n"))
+    (sr-nav-prev)
+    (should (= (line-number-at-pos) 3))
+    (sr-nav-left)
+    (should (equal
+             (semantic-region-string
+              (semantic-region-parse-at 'paragraph (point)))
+             "foo\n"))
+    (sr-nav-right)
+    (should (equal
+             (semantic-region-string
+              (semantic-region-parse-at 'paragraph (point)))
+             "bar\n"))
+    (sr-nav-last)
+    (should (equal
+             (semantic-region-string
+              (semantic-region-parse-at 'paragraph (point)))
+             "baz"))
+    (sr-nav-first)
+    (should (equal
+             (semantic-region-string
+              (semantic-region-parse-at 'paragraph (point)))
+             "foo\n"))))
+
+(ert-deftest semantic-region-test-paragraph-first-last-skip-edge-separators ()
+  (semantic-region-test--with-buffer "\nfoo\n\nbar\n\n"
+    (setq sr-submode 'paragraph)
+    (sr-nav-last)
+    (should (equal
+             (semantic-region-string
+              (semantic-region-parse-at 'paragraph (point)))
+             "bar\n"))
+    (sr-nav-first)
+    (should (equal
+             (semantic-region-string
+              (semantic-region-parse-at 'paragraph (point)))
+             "foo\n"))))
 
 ;;; NODE -------------------------------------------------------------------
 
@@ -664,6 +750,10 @@ pre-existing property of the old code, not something the
       ;; on an empty buffer; only word-ish submodes return nil at eobp.
       (when (memq submode '(word word-plus word-star))
         (should (null (sr--unit-bounds-at 1 submode)))))))
+
+(ert-deftest sr-test-empty-buffer-has-no-paragraph ()
+  (with-temp-buffer
+    (should-not (sr--unit-bounds-at (point-min) 'paragraph))))
 
 (ert-deftest semantic-region-test-highlight-provider-splits-multiline-range ()
   (semantic-region-test--with-buffer "foo\nbar\n"

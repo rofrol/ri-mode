@@ -35,6 +35,7 @@
         (case
          '((ri-extend-set-line-star-mode line-star)
            (ri-extend-set-line-mode line)
+           (ri-extend-set-paragraph-mode paragraph)
            (ri-extend-set-character-mode char)
            (ri-extend-set-word-mode word)
            (ri-extend-set-word-star-mode word-star)
@@ -112,6 +113,7 @@
         (case
          '((ri-extend-set-line-star-mode line-star 1 (1 . 13))
            (ri-extend-set-line-mode line 3 (3 . 13))
+           (ri-extend-set-paragraph-mode paragraph 1 (1 . 14))
            (ri-extend-set-character-mode char 1 (1 . 2))
            (ri-extend-set-word-mode word 3 (3 . 8))
            (ri-extend-set-word-star-mode word-star 3 (3 . 8))
@@ -126,6 +128,52 @@
         (should (= (point) expected-point))
         (should (equal (sr--get-current-unit-bounds)
                        expected-bounds))))))
+
+(ert-deftest ri-extend-test-paragraph-switch-keeps-empty-line-current ()
+  (ri-extend-test--with-buffer "\nfoo\n"
+    (setq sr-submode 'char)
+    (ri-extend-set-paragraph-mode)
+    (should (eq sr-submode 'paragraph))
+    (should (= (point) (point-min)))
+    (should (equal (sr--get-current-unit-bounds)
+                   (cons (point-min) (point-min))))))
+
+(ert-deftest ri-extend-test-paragraph-navigation-keeps-active-edge ()
+  (ri-extend-test--with-buffer "foo\nbar\n\nspam\nbaz\n\nlol"
+    (setq sr-submode 'paragraph)
+    (should (ri--enter-extend))
+    (ri-extend-nav-next)
+    (let ((bounds (ri--selection-bounds)))
+      (should (equal
+               (buffer-substring-no-properties
+                (car bounds) (cdr bounds))
+               "foo\nbar\n\nspam\nbaz\n"))
+      (should (eq (ri--selection-state-active-edge ri--selection)
+                  'end))
+      (should (= (point) (1- (cdr bounds)))))
+    (ri-extend-nav-prev)
+    (let ((bounds (ri--selection-bounds)))
+      (should (equal
+               (buffer-substring-no-properties
+                (car bounds) (cdr bounds))
+               "foo\nbar\n"))
+      (should (= (point) (1- (cdr bounds)))))
+    (ri--exit-extend)
+
+    (search-forward "spam")
+    (goto-char (match-beginning 0))
+    (should (ri--enter-extend))
+    (ri-swap-cursor)
+    (ri-extend-nav-prev)
+    (let ((bounds (ri--selection-bounds)))
+      (should (equal
+               (buffer-substring-no-properties
+                (car bounds) (cdr bounds))
+               "foo\nbar\n\nspam\nbaz\n"))
+      (should (eq (ri--selection-state-active-edge ri--selection)
+                  'start))
+      (should (= (point) (car bounds))))
+    (ri--exit-extend)))
 
 (ert-deftest ri-extend-test-line-down-does-not-highlight-newline ()
   (ri-extend-test--with-buffer "foo\nbar\n"
@@ -289,6 +337,10 @@
                   #'ri-set-node-mode))
       (should (eq (lookup-key ri--normal-help-map "d")
                   #'ri-set-node-mode))
+      (should (eq (lookup-key mini-modal-map "E")
+                  #'ri-extend-set-paragraph-mode))
+      (should (eq (lookup-key ri--normal-help-map "E")
+                  #'ri-extend-set-paragraph-mode))
       (should (eq (lookup-key mini-modal-map "I")
                   #'ri-join-lines))
       (should (eq (lookup-key ri--normal-help-map "I")
@@ -301,8 +353,10 @@
                   #'ri-parent-line))
       (should (eq (lookup-key ri--normal-help-map ".")
                   #'ri-parent-line))
-      (let ((sr-submode 'node))
-        (should (equal (ri--submode-name) "NODE"))))))
+      (dolist (case '((paragraph "PARAGRAPH")
+                      (node "NODE")))
+        (let ((sr-submode (car case)))
+          (should (equal (ri--submode-name) (cadr case))))))))
 
 (ert-deftest ri-extend-test-registers-cut-chord ()
   (let ((kkp-chord--mod-maps (make-hash-table :test 'eql))
