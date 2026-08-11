@@ -47,6 +47,13 @@
   :type '(repeat (repeat (list string string)))
   :group 'keymap-legend)
 
+(defcustom keymap-legend-max-label-width
+  10
+  "Maximum display width of one binding label in a keymap legend.
+Longer labels are truncated with an ellipsis before rendering."
+  :type 'integer
+  :group 'keymap-legend)
+
 (defvar keymap-legend--state nil
   "Complete state of the active `KeymapLegend', or nil.")
 
@@ -537,9 +544,19 @@ whose value Emacs will parse for `%'-constructs again."
      (slot . 0)
      (window-height . fit-window-to-buffer))))
 
+(defun keymap-legend--limit-label (label)
+  "Truncate LABEL to `keymap-legend-max-label-width' display columns."
+  (truncate-string-to-width
+   (or label "")
+   (max 1 keymap-legend-max-label-width)
+   0 nil "…"))
+
 (defun keymap-legend--cell-entry-text (entry)
-  "Return the display description from ENTRY or an empty string."
-  (if entry (or (plist-get entry :description) "") ""))
+  "Return the bounded display description from ENTRY or an empty string."
+  (if entry
+      (keymap-legend--limit-label
+       (or (plist-get entry :description) ""))
+    ""))
 
 (defun keymap-legend--table-cell-widths (matrix columns)
   "Return natural display widths for COLUMNS in MATRIX."
@@ -806,7 +823,8 @@ When INDENT-FIRST is non-nil, use INDENT on the first line as well."
       ""
     (let* ((parts (mapcar (lambda (entry)
                             (concat (plist-get entry :key) " — "
-                                    (plist-get entry :description)))
+                                    (keymap-legend--limit-label
+                                     (plist-get entry :description))))
                           overflow))
            (text (concat "Other bindings: " (mapconcat #'identity parts ", "))))
       (mapconcat #'identity
@@ -822,13 +840,15 @@ When INDENT-FIRST is non-nil, use INDENT on the first line as well."
             (append lines
                     (keymap-legend--wrap-labeled
                      (concat (plist-get entry :key) " — ")
-                     (plist-get entry :description)
+                     (keymap-legend--limit-label
+                      (plist-get entry :description))
                      width))))
     (when release
       (setq lines
             (append lines
                     (keymap-legend--wrap-text
-                     (format "Release hold: %s" release)
+                     (format "Release hold: %s"
+                             (keymap-legend--limit-label release))
                      width))))
     (mapconcat #'identity lines "\n")))
 
@@ -869,7 +889,9 @@ When INDENT-FIRST is non-nil, use INDENT on the first line as well."
                (plist-get model :release))
       (push (mapconcat #'identity
                        (keymap-legend--wrap-text
-                        (format "Release hold: %s" (plist-get model :release))
+                        (format "Release hold: %s"
+                                (keymap-legend--limit-label
+                                 (plist-get model :release)))
                         width)
                        "\n")
             blocks))

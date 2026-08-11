@@ -72,6 +72,26 @@
           (should-not ri--help-prefix-active)
           (should-not (memq #'ri--exit-help-prefix pre-command-hook)))))))
 
+(ert-deftest ri-chord-test-c-h-legend-uses-concise-labels ()
+  (let ((map (ri--help-prefix-legend-map)))
+    (dolist (case '((?h "Hello")
+                    (?v "Desc Var")
+                    (?a "Apro Cmd")))
+      (let (binding)
+        (map-keymap
+         (lambda (event value)
+           (when (eql event (car case))
+             (setq binding value)))
+         map)
+        (should (equal (nth 1 binding) (cadr case)))))
+    (should (eq (lookup-key map "v") #'describe-variable))
+    (should (equal (ri--help-prefix-label #'describe-variable)
+                   "Desc Var"))
+    (should (equal (ri--help-prefix-label #'view-hello-file)
+                   "Hello"))
+    (should (equal (ri--help-prefix-label #'apropos)
+                   "Apro"))))
+
 (ert-deftest ri-chord-test-help-prefix-does-not-reopen-during-command ()
   (with-temp-buffer
     (let (shown)
