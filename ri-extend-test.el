@@ -289,6 +289,10 @@
                   #'ri-set-node-mode))
       (should (eq (lookup-key ri--normal-help-map "d")
                   #'ri-set-node-mode))
+      (should (eq (lookup-key mini-modal-map "I")
+                  #'ri-join-lines))
+      (should (eq (lookup-key ri--normal-help-map "I")
+                  #'ri-join-lines))
       (should (eq (lookup-key mini-modal-map "x")
                   #'ri-cut-selection))
       (should (eq (lookup-key ri--normal-help-map "x")
@@ -332,6 +336,36 @@
       (should (equal kill-ring '("foo bar")))
       (should-not (ri--selection-active-p)))))
 
+(ert-deftest ri-extend-test-join-lines-matches-ki ()
+  (ri-extend-test--with-buffer "foo\n    spam bar"
+    (setq sr-submode 'word)
+    (goto-char (point-max))
+    (backward-char)
+    (should (equal (ri--selection-bounds) (cons 14 17)))
+    (ri-join-lines)
+    (should (equal (buffer-string) "foospam bar"))
+    (should (= (point) 11))
+    (should (equal (ri--selection-bounds) (cons 9 12)))
+    ;; The first line has no previous line, so joining it is a no-op.
+    (ri-join-lines)
+    (should (equal (buffer-string) "foospam bar"))))
+
+(ert-deftest ri-extend-test-join-lines-preserves-extend-selection ()
+  (ri-extend-test--with-buffer "foo\n    spam bar"
+    (setq sr-submode 'word)
+    (goto-char (point-max))
+    (backward-char)
+    (should (ri--enter-extend))
+    (should (equal (ri--selection-bounds) (cons 14 17)))
+    (ri-join-lines)
+    (should (equal (buffer-string) "foospam bar"))
+    (should (ri--selection-active-p))
+    (should (equal (ri--selection-bounds) (cons 9 12)))
+    (should (= (point) 11))
+    (should (eq (ri--selection-state-active-edge ri--selection) 'end))
+    (ri-join-lines)
+    (should (equal (ri--selection-bounds) (cons 9 12)))
+    (ri--exit-extend)))
 
 (ert-deftest ri-extend-test-mode-line-remaps-eglot-label ()
   (with-temp-buffer
