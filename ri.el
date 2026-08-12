@@ -451,6 +451,15 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
     map)
   "Keymap for the Cut momentary layer (x held).")
 
+(defvar ri--undo-redo-layer-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "j" '(menu-item "Coarse Undo" ri-smart-undo))
+    (define-key map "l" '(menu-item "Coarse Redo" ri-smart-redo))
+    (define-key map "u" '(menu-item "Fine Undo" ri-fine-undo))
+    (define-key map "o" '(menu-item "Fine Redo" ri-fine-redo))
+    map)
+  "Keymap for the Undo/Redo momentary layer (z held).")
+
 
 ;;;; Layer specs (single source of truth for labels and icons)
 
@@ -473,7 +482,12 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
          :label "≡ Cut"
          :tap #'ri-cut-selection
          :map ri--cut-layer-map
-         :release "Cut"))
+         :release "Cut")
+   (list :key ?z
+         :label "≡ Undo/Redo"
+         :tap #'ri-smart-undo
+         :map ri--undo-redo-layer-map
+         :release "Undo"))
   "Momentary layer specifications.
 :key     -- KKP keycode for the chord modifier.
 :label   -- Display label with icon (used in menus and legend titles).
@@ -487,21 +501,44 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
            :key (lambda (s) (plist-get s :key))
            :test #'eql))
 
+(defun ri--layer-context-p ()
+  "Return non-nil when a RI momentary layer may be entered."
+  (and (bound-and-true-p mini-modal-mode)
+       (null ri--menu-state)
+       (null ri--help-prefix-active)))
+
 (defun ri--chord-when-p ()
   "Return non-nil when a KKP chord should be active.
 Active only in NORM mode, when no transient menu is open, and when
 Emacs is not reading a prefix key sequence."
-  (and (bound-and-true-p mini-modal-mode)
-       (null ri--menu-state)
-       (null ri--help-prefix-active)
+  (and (ri--layer-context-p)
        ;; Let Emacs' prefix maps, including `C-h', own the following key.
        ;; KKP calls this predicate before the current event is added to
        ;; `this-command-keys-vector', so an empty vector means a standalone
        ;; key and a non-empty vector means that a prefix is in progress.
        (zerop (length (this-command-keys-vector)))))
 
+(defun ri--press-layer ()
+  "Enter the momentary layer bound to `last-command-event'.
+This handles terminals that encode an ordinary key press as one byte
+and its release as a KKP CSI-u event."
+  (interactive)
+  (let* ((keycode (event-basic-type last-command-event))
+         (spec (and (characterp keycode) (ri--layer-spec keycode))))
+    (unless spec
+      (user-error "No RI layer bound to %s"
+                  (single-key-description last-command-event)))
+    (if (ri--layer-context-p)
+        (progn
+          (kkp-chord-press keycode)
+          ;; Opening UI is not an editing command and must not break a
+          ;; consecutive undo sequence before the held sub-key arrives.
+          (setq this-command last-command))
+      (when-let* ((tap (plist-get spec :tap)))
+        (funcall tap)))))
+
 (defun ri-chord-setup ()
-  "Register KKP chords for momentary layers from `ri--layer-specs'."
+  "Register KKP chords and plain-press fallbacks from `ri--layer-specs'."
   (dolist (spec ri--layer-specs)
     (let ((key (plist-get spec :key))
           (tap (plist-get spec :tap))
@@ -521,7 +558,14 @@ Emacs is not reading a prefix key sequence."
                     ;; the cursor that belongs to NORM.
                     (modal-cursor-refresh))
         :on-release #'keymap-legend-hide
-        :map map))))
+        :map map)
+      (define-key mini-modal-map (string key) #'ri--press-layer))))
+
+;; Registration only populates KKP dispatch tables.  Do it while loading so
+;; evaluating this file refreshes newly added layers in an active RI session.
+(ri-chord-setup)
+(when kkp-chord-mode
+  (kkp-chord-mode 1))
 
 ;;;; Mode line
 
@@ -585,7 +629,7 @@ Emacs is not reading a prefix key sequence."
     (define-key map "x" '(menu-item "≡ Cut" ri-cut-selection))
     (define-key map "f" '(menu-item "Extend" ri-toggle-extend))
     (define-key map "z" '(menu-item "≡ Undo/Redo" ri-smart-undo))
-    (define-key map "Z" '(menu-item "Coarse Redo" undo-redo))
+    (define-key map "Z" '(menu-item "Coarse Redo" ri-smart-redo))
     (define-key map (kbd "SPC") '(menu-item "Space" ri-space-menu))
     (define-key map (kbd "<return>") '(menu-item "Save" save-buffer))
     (define-key map "/" '(menu-item "⇋ Curs" ri-swap-cursor))
@@ -757,21 +801,15 @@ keymap lookups during that command must keep their resolved binding."
   (modal-cursor-mode 1)
   (mini-modal-setup)
   (kkp-chord-mode 1)
+  (ri-chord-setup)
   (global-kkp-mode 1)
   (add-hook 'kkp-chord-after-release-hook #'ri--restore-message-after-release)
-  (ri-chord-setup)
   (define-key mini-modal-map
               (kbd "C-h")
               '(menu-item "Help" help-command :filter ri--help-prefix-filter))
   (define-key mini-modal-map "h" #'ri-enter-insert-left)
   (define-key mini-modal-map ";" #'ri-enter-insert-right)
-  (define-key mini-modal-map "c" #'ri-copy-unit)
-  (define-key mini-modal-map "r" #'ri-delete-selection)
-  (define-key mini-modal-map "g" #'ri-change-selection)
-  (define-key mini-modal-map "t" #'ignore)
   (define-key mini-modal-map "F" #'ri-transform-menu)
-  (define-key mini-modal-map "v" #'ri-paste-selection)
-  (define-key mini-modal-map "x" #'ri-cut-selection)
   (define-key mini-modal-map (kbd "SPC") #'ri-space-menu)
   (let (to-remove)
     (dolist (entry minor-mode-alist)
@@ -812,8 +850,7 @@ keymap lookups during that command must keep their resolved binding."
   (define-key mini-modal-map "w" #'ri-extend-set-subword-mode)
   (define-key mini-modal-map "d" #'ri-set-node-mode)
   (define-key mini-modal-map "f" #'ri-toggle-extend)
-  (define-key mini-modal-map "z" #'ri-smart-undo)
-  (define-key mini-modal-map "Z" #'undo-redo)
+  (define-key mini-modal-map "Z" #'ri-smart-redo)
   (define-key mini-modal-map (kbd "<return>") #'save-buffer)
   (define-key mini-modal-map (kbd "<up>") 'undefined)
   (define-key mini-modal-map (kbd "<down>") 'undefined)

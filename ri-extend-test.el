@@ -86,6 +86,24 @@
       (should (equal (ri--selection-bounds) extended-bounds)))
     (ri--exit-extend)))
 
+(ert-deftest ri-extend-test-fine-undo-redo-splits-grouped-insertion ()
+  (with-temp-buffer
+    (buffer-enable-undo)
+    (insert "abc")
+    (undo-boundary)
+    (let ((last-command nil))
+      (cl-labels
+          ((dispatch (command)
+             (let ((this-command command))
+               (call-interactively command)
+               (setq last-command this-command))))
+        (dolist (expected '("ab" "a" ""))
+          (dispatch #'ri-fine-undo)
+          (should (equal (buffer-string) expected)))
+        (dolist (expected '("a" "ab" "abc"))
+          (dispatch #'ri-fine-redo)
+          (should (equal (buffer-string) expected)))))))
+
 
 (ert-deftest ri-extend-test-node-extends-across-named-siblings ()
   (ri-extend-test--with-json-buffer
@@ -321,8 +339,8 @@
               ((symbol-function 'mini-modal-setup) #'ignore)
               ((symbol-function 'kkp-chord-mode) #'ignore)
               ((symbol-function 'global-kkp-mode) #'ignore)
-              ((symbol-function 'ri-chord-setup) #'ignore)
-              ((symbol-function 'buffer-list) (lambda () nil)))
+              ((symbol-function 'buffer-list)
+               (lambda (&optional _frame) nil)))
       (ri-enable)
       (should (eq (lookup-key mini-modal-map "/")
                   #'ri-swap-cursor))
@@ -354,7 +372,7 @@
       (should (eq (lookup-key ri--normal-help-map "L")
                   #'ri-indent))
       (should (eq (lookup-key mini-modal-map "x")
-                  #'ri-cut-selection))
+                  #'ri--press-layer))
       (should (eq (lookup-key ri--normal-help-map "x")
                   #'ri-cut-selection))
       (should (eq (lookup-key mini-modal-map ".")

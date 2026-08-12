@@ -131,6 +131,12 @@ KEYCODE is an integer (e.g., 99 for ?c).
 INTERVENING-P is non-nil if at least one other key was pressed while
 this modifier was held.  Used to decide tap vs. hold on release.")
 
+(defvar kkp-chord--transient-exit nil
+  "Exit function for the keymap activated by a plain modifier press.")
+
+(defvar kkp-chord--transient-keycode nil
+  "Keycode whose plain press activated `kkp-chord--transient-exit'.")
+
 (defvar kkp-chord--mod-maps (make-hash-table :test 'eql)
   "Hash: keycode → keymap.  Consulted while this key is held.
 Entries are sparse keymaps whose bindings use single-character
@@ -251,6 +257,31 @@ after the one whose map contains the command."
 ;; Event handlers
 ;; ---------------------------------------------------------------------------
 
+(defun kkp-chord--deactivate-transient-map (&optional keycode)
+  "Deactivate the plain-press map, optionally only for KEYCODE."
+  (when (and kkp-chord--transient-exit
+             (or (null keycode)
+                 (eql keycode kkp-chord--transient-keycode)))
+    (let ((exit kkp-chord--transient-exit))
+      (setq kkp-chord--transient-exit nil
+            kkp-chord--transient-keycode nil)
+      (funcall exit))))
+
+(defun kkp-chord--activate-transient-map (keycode)
+  "Activate KEYCODE's chord map for ordinary single-byte key presses."
+  (when-let* ((map (gethash keycode kkp-chord--mod-maps)))
+    (kkp-chord--deactivate-transient-map)
+    (setq kkp-chord--transient-keycode keycode
+          kkp-chord--transient-exit
+          (set-transient-map
+           map
+           (lambda () (assq keycode kkp-chord--held))))))
+
+(defun kkp-chord--mark-plain-command ()
+  "Mark held modifiers before a command read outside KKP translation."
+  (when kkp-chord--held
+    (kkp-chord--mark-held-intervening)))
+
 (defun kkp-chord--on-mod-press (keycode)
   "Handle press of a chord-modifier KEYCODE.
 Mark other held modifiers as used, then hold KEYCODE with no
@@ -259,7 +290,11 @@ intervening key yet."
   (setq kkp-chord--held (assq-delete-all keycode kkp-chord--held))
   (push (cons keycode nil) kkp-chord--held)
   (when-let* ((action (gethash keycode kkp-chord--press-actions)))
-    (funcall action)))
+    (funcall action))
+  ;; With only KKP event-type reporting enabled, an unmodified printable
+  ;; press remains a normal Emacs event while its release is CSI-u.  Keep
+  ;; the layer map active for those ordinary sub-key presses as well.
+  (kkp-chord--activate-transient-map keycode))
 
 
 (defun kkp-chord--on-release (keycode)
@@ -269,13 +304,17 @@ action.  Otherwise just unmarks it as held."
   (let ((entry (assq keycode kkp-chord--held)))
     (when entry
       (setq kkp-chord--held (delq entry kkp-chord--held))
+      (kkp-chord--deactivate-transient-map keycode)
       (when-let* ((action (gethash keycode kkp-chord--release-actions)))
         (funcall action))
+      ;; Reaching this state proves the press predicate passed: inactive
+      ;; presses are never added to `kkp-chord--held'.  Do not re-check it
+      ;; while decoding release; `this-command-keys-vector' can still contain
+      ;; the ordinary byte used for the corresponding press.
       (unless (cdr entry)
-        (when (kkp-chord--active-p keycode)
-          (when-let* ((tap-command
-                       (gethash keycode kkp-chord--tap-actions)))
-            (funcall tap-command)))))))
+        (when-let* ((tap-command
+                     (gethash keycode kkp-chord--tap-actions)))
+          (kkp-chord--dispatch-command tap-command))))))
 
 (defun kkp-chord--dispatch-command (command)
   "Execute COMMAND as a standalone command from KKP input.
@@ -364,6 +403,14 @@ ordinary command loop does not update `this-command' or `last-command'."
 ;; Public API
 ;; ---------------------------------------------------------------------------
 
+(defun kkp-chord-press (keycode)
+  "Begin registered chord layer KEYCODE from an ordinary key binding.
+This is the fallback path for terminals that report release events but
+leave unmodified printable press events as single bytes."
+  (unless (gethash keycode kkp-chord--mod-maps)
+    (user-error "No chord layer registered for %s" (single-key-description keycode)))
+  (kkp-chord--on-mod-press keycode))
+
 ;;;###autoload
 (cl-defun kkp-chord-define (keycode &key tap map when on-press on-release)
   "Register KEYCODE as a tap-hold chord modifier key.
@@ -415,10 +462,17 @@ Also ensures event-type reporting is enabled in all active terminals."
   (if kkp-chord-mode
       (progn
         (kkp-chord--install-advice)
+        (add-hook 'pre-command-hook #'kkp-chord--mark-plain-command)
+        (add-hook 'kkp-terminal-setup-complete-hook
+                  #'kkp-chord--update-all-terminals)
         ;; Update any already-active terminals to include event-type flag.
         ;; For terminals that haven't been set up yet, the flag was already
         ;; added to `kkp-active-enhancements' at load time.
         (kkp-chord--update-all-terminals))
+    (remove-hook 'pre-command-hook #'kkp-chord--mark-plain-command)
+    (remove-hook 'kkp-terminal-setup-complete-hook
+                 #'kkp-chord--update-all-terminals)
+    (kkp-chord--deactivate-transient-map)
     (kkp-chord--remove-advice)))
 
 (provide 'kkp-chord)

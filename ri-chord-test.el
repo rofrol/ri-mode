@@ -9,12 +9,17 @@
   "Run BODY with isolated chord registrations and held state."
   (declare (indent 0) (debug t))
   `(let ((kkp-chord--held nil)
+         (kkp-chord--transient-exit nil)
+         (kkp-chord--transient-keycode nil)
          (kkp-chord--mod-maps (make-hash-table :test 'eql))
          (kkp-chord--tap-actions (make-hash-table :test 'eql))
          (kkp-chord--predicates (make-hash-table :test 'eql))
          (kkp-chord--press-actions (make-hash-table :test 'eql))
          (kkp-chord--release-actions (make-hash-table :test 'eql)))
-     ,@body))
+     (unwind-protect
+         (progn ,@body)
+       (kkp-chord--deactivate-transient-map)
+       (keymap-legend-hide))))
 
 (ert-deftest ri-chord-test-prefix-keys-do-not-shadow-emacs-keymaps ()
   (ri-chord-test--with-fresh-chords
@@ -192,6 +197,78 @@
                     (string-to-list "118;:1u"))
                    [])))
         (should (equal kkp-chord--held '((118))))))))
+
+(ert-deftest ri-chord-test-z-layer-dispatches-undo-and-redo ()
+  (ri-chord-test--with-fresh-chords
+    (with-temp-buffer
+      (buffer-enable-undo)
+      (insert "base")
+      (setq buffer-undo-list nil)
+      (insert " change")
+      (undo-boundary)
+      (let ((mini-modal-mode t)
+            (ri--menu-state nil)
+            (ri--help-prefix-active nil))
+        (ri-chord-setup)
+        (should (eq (gethash ?z kkp-chord--mod-maps)
+                    ri--undo-redo-layer-map))
+        (should (eq (gethash ?z kkp-chord--tap-actions)
+                    #'ri-smart-undo))
+        (should (eq (lookup-key ri--undo-redo-layer-map "j")
+                    #'ri-smart-undo))
+        (should (eq (lookup-key ri--undo-redo-layer-map "l")
+                    #'ri-smart-redo))
+        (should (eq (lookup-key ri--undo-redo-layer-map "u")
+                    #'ri-fine-undo))
+        (should (eq (lookup-key ri--undo-redo-layer-map "o")
+                    #'ri-fine-redo))
+        ;; A plain press remains in this vector while its CSI-u release is
+        ;; decoded.  That must not suppress the accepted layer's tap action.
+        (cl-letf (((symbol-function 'this-command-keys-vector)
+                   (lambda () [?z]))
+                  ((symbol-function 'ri--hide-frame) #'ignore)
+                  ((symbol-function 'modal-cursor-refresh) #'ignore))
+          (cl-labels
+              ((send (input)
+                 (should
+                  (equal
+                   (kkp-chord--translate-advice
+                    #'ignore (string-to-list input))
+                   []))))
+            ;; A plain printable press plus a CSI-u release is the path used
+            ;; when the terminal does not escape every ordinary key.
+            (let ((last-command-event ?z))
+              (call-interactively #'ri--press-layer))
+            (should keymap-legend--state)
+            (should (equal (plist-get keymap-legend--state :title)
+                           "≡ Undo/Redo"))
+            (let ((text
+                   (with-current-buffer keymap-legend-buffer-name
+                     (buffer-string))))
+              (should (string-match-p "Undo" text))
+              (should (string-match-p "Redo" text)))
+            (send "122;:3u")
+            (should-not keymap-legend--state)
+            (should (equal (buffer-string) "base"))
+            ;; Plain sub-key presses use the active transient layer map.
+            (let ((last-command-event ?z))
+              (call-interactively #'ri--press-layer))
+            (let ((command (key-binding "l")))
+              (should (eq command #'ri-smart-redo))
+              (let ((this-command command))
+                (kkp-chord--mark-plain-command)
+                (call-interactively command)))
+            (send "122;:3u")
+            (should (equal (buffer-string) "base change"))
+            (let ((last-command-event ?z))
+              (call-interactively #'ri--press-layer))
+            (let ((command (key-binding "j")))
+              (should (eq command #'ri-smart-undo))
+              (let ((this-command command))
+                (kkp-chord--mark-plain-command)
+                (call-interactively command)))
+            (send "122;:3u")
+            (should (equal (buffer-string) "base"))))))))
 
 (ert-deftest ri-chord-test-help-key-prompt-survives-shift-release ()
   (let ((ri--help-prefix-active t)

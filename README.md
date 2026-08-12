@@ -76,17 +76,18 @@ main bindings are:
 | `I`                  | Join the current line to the previous line                  |
 | `J` / `L`            | Dedent / indent nonblank selected lines by four columns      |
 | `F`                  | Open the Transform menu                                      |
-| `z` / `Z`            | Undo / redo                                                  |
+| `z` / `Z`            | Undo / redo; hold `z` for the Undo/Redo layer                |
 | `RET`                | Save the buffer                                              |
 | `SPC`                | Open the command menu                                        |
 | `C-h`                | Show the default Emacs help keymap and read one help key |
 
-The `c`, `r`, `g`, `t`, `v`, and `x` keys also act as momentary layers.
-Hold one of them to display its available actions, press the shown
-direction key while still holding it, then release. These layers
-provide directional duplicate, eat, open, swap, paste, and cut operations.
-A quick tap of `c`, `r`, `g`, `v`, or `x` performs the primary action shown
-in the table.
+The `c`, `r`, `g`, `t`, `v`, `x`, and `z` keys also act as momentary
+layers. Hold one of them to display its available actions, press the
+shown direction key while still holding it, then release. These layers
+provide directional duplicate, eat, open, swap, paste, and cut
+operations. In the `z` layer, `j`/`l` perform coarse undo/redo and
+`u`/`o` perform character-granular undo/redo. A quick tap of `c`, `r`,
+`g`, `v`, `x`, or `z` performs its primary action.
 
 `NODE` mode requires a tree-sitter grammar for the current major mode;
 see the Tree-sitter setup below.
