@@ -323,6 +323,53 @@ the stack is empty, exit extend mode gracefully."
            (setq undo-list (cdr undo-list)))
          (gethash undo-list undo-equiv-table))))
 
+(defun ri--first-undo-cell (undo-list)
+  "Return the first non-boundary cons cell in UNDO-LIST."
+  (while (and (consp undo-list) (null (car undo-list)))
+    (setq undo-list (cdr undo-list)))
+  (and (consp undo-list) undo-list))
+
+(defun ri--split-undo-cell (cell first rest)
+  "Replace CELL's entry with FIRST and put REST after a new boundary.
+Preserve any redo equivalence mapping for the new REST list."
+  (let* ((tail (cdr cell))
+         (equivalent (gethash cell undo-equiv-table))
+         (rest-cell (cons rest tail)))
+    (setcar cell first)
+    (setcdr cell (cons nil rest-cell))
+    (when equivalent
+      (puthash rest-cell equivalent undo-equiv-table))))
+
+(defun ri--split-next-insertion-undo ()
+  "Make the next multi-character insertion undo one character only."
+  (when-let* ((cell
+               (ri--first-undo-cell
+                (if (and (eq last-command 'undo)
+                         (listp pending-undo-list))
+                    pending-undo-list
+                  buffer-undo-list))))
+    (pcase (car cell)
+      (`(,(and beg (pred integerp)) . ,(and end (pred integerp)))
+       (when (> (- end beg) 1)
+         (ri--split-undo-cell
+          cell
+          (cons (1- end) end)
+          (cons beg (1- end))))))))
+
+(defun ri--split-next-insertion-redo ()
+  "Make the next multi-character insertion redo one character only."
+  (when-let* ((cell (ri--first-undo-cell buffer-undo-list)))
+    (pcase (car cell)
+      (`(,(and text (pred stringp)) . ,(and pos (pred integerp)))
+       (when (> (length text) 1)
+         (let* ((absolute-pos (abs pos))
+                (next-pos (1+ absolute-pos)))
+           (ri--split-undo-cell
+            cell
+            (cons (substring text 0 1) pos)
+            (cons (substring text 1)
+                  (if (< pos 0) (- next-pos) next-pos)))))))))
+
 (defun ri-smart-undo ()
   "Dispatch undo based on current mode context.
 In extend mode: contract the selection by one unit (`ri--extend-undo').
@@ -334,7 +381,30 @@ Otherwise: run `undo-only', stopping at an exhausted redo branch."
     ;; branch maps to t and would otherwise replay the discarded edit.
     (when (ri--undo-at-exhausted-redo-p)
       (setq pending-undo-list t))
-    (undo-only)))
+    (undo-only)
+    ;; KKP chord actions run while Emacs is reading the next event, before
+    ;; the command loop can delimit the redo record they just created.
+    (undo-boundary)))
+
+(defun ri-smart-redo ()
+  "Redo one change and delimit it for a following KKP chord action."
+  (interactive)
+  (undo-redo)
+  (undo-boundary))
+
+(defun ri-fine-undo ()
+  "Undo one character of a grouped insertion, or one ordinary undo unit."
+  (interactive)
+  (if (ri--selection-active-p)
+      (ri--extend-undo)
+    (ri--split-next-insertion-undo)
+    (ri-smart-undo)))
+
+(defun ri-fine-redo ()
+  "Redo one character of a grouped insertion, or one ordinary redo unit."
+  (interactive)
+  (ri--split-next-insertion-redo)
+  (ri-smart-redo))
 
 (defun ri--extend-horizontal-move (direction)
   "Move the active extend edge one content unit in DIRECTION.
