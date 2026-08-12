@@ -262,16 +262,44 @@ FEATURE names the tree-sitter-backed feature and defaults to NODE."
               (setq sr--node-current node)))
         (error nil)))))
 
-(defun semantic-region--node-sibling-region (region direction named)
+(defun sr--node-horizontal-target-p (node)
+  "Return non-nil when NODE is traversable with Left/Right.
+Named nodes are always traversable.  Also retain anonymous word-like
+grammar tokens, such as language keywords, while skipping punctuation."
+  (or (treesit-node-check node 'named)
+      (when-let* ((bounds (sr--node-bounds node))
+                  (char (char-after (car bounds))))
+        (or (eq (char-syntax char) ?w)
+            (eq char ?_)))))
+
+(defun sr--node-horizontal-sibling (node direction)
+  "Return NODE's traversable sibling in DIRECTION.
+DIRECTION is `next' or `prev'."
+  (let ((sibling
+         (if (eq direction 'next)
+             (treesit-node-next-sibling node)
+           (treesit-node-prev-sibling node))))
+    (while (and sibling
+                (not (sr--node-horizontal-target-p sibling)))
+      (setq sibling
+            (if (eq direction 'next)
+                (treesit-node-next-sibling sibling)
+              (treesit-node-prev-sibling sibling))))
+    sibling))
+
+(defun semantic-region--node-sibling-region (region direction meaningful)
   "Return REGION's sibling in DIRECTION.
-When NAMED is non-nil, skip anonymous punctuation nodes."
+When MEANINGFUL is non-nil, skip punctuation-only anonymous nodes while
+retaining named nodes and word-like anonymous grammar tokens."
   (with-current-buffer (semantic-region-buffer region)
     (condition-case nil
         (when-let* ((node (semantic-region--node-for-region region))
                     (sibling
-                     (if (eq direction 'next)
-                         (treesit-node-next-sibling node named)
-                       (treesit-node-prev-sibling node named)))
+                     (if meaningful
+                         (sr--node-horizontal-sibling node direction)
+                       (if (eq direction 'next)
+                           (treesit-node-next-sibling node)
+                         (treesit-node-prev-sibling node))))
                     (bounds (sr--node-bounds sibling)))
           (setq sr--node-current sibling)
           (semantic-region--build
@@ -296,8 +324,8 @@ When NAMED is non-nil, skip anonymous punctuation nodes."
     ('down
      (sr--node-with-different-range
       node (lambda (current) (treesit-node-child current 0 t))))
-    ('left (treesit-node-prev-sibling node t))
-    ('right (treesit-node-next-sibling node t))
+    ('left (sr--node-horizontal-sibling node 'prev))
+    ('right (sr--node-horizontal-sibling node 'next))
     ('prev (treesit-node-prev-sibling node))
     ('next (treesit-node-next-sibling node))
     ('first
@@ -623,8 +651,8 @@ is represented by a zero-width region at its beginning."
 (defun semantic-region-next (region)
   "Return the next region for REGION's unit, or nil at buffer end.
 WORD skips whitespace and symbols.  WORD+, WORD*, SUBWORD, and
-PARAGRAPH skip their insignificant separators.  NODE traverses named
-sibling nodes.  LINE, LINE*, and CHAR traverse adjacent units."
+PARAGRAPH skip their insignificant separators.  NODE skips anonymous
+punctuation siblings.  LINE, LINE*, and CHAR traverse adjacent units."
   (semantic-region--require-live region)
   (if (eq (semantic-region-unit region) 'node)
       (semantic-region--node-sibling-region region 'next t)
@@ -652,8 +680,8 @@ sibling nodes.  LINE, LINE*, and CHAR traverse adjacent units."
 (defun semantic-region-prev (region)
   "Return the previous region for REGION's unit, or nil at buffer start.
 WORD skips whitespace and symbols.  WORD+, WORD*, SUBWORD, and
-PARAGRAPH skip their insignificant separators.  NODE traverses named
-sibling nodes.  LINE, LINE*, and CHAR traverse adjacent units."
+PARAGRAPH skip their insignificant separators.  NODE skips anonymous
+punctuation siblings.  LINE, LINE*, and CHAR traverse adjacent units."
   (semantic-region--require-live region)
   (if (eq (semantic-region-unit region) 'node)
       (semantic-region--node-sibling-region region 'prev t)

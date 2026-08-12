@@ -453,7 +453,7 @@
     (should (equal (semantic-region-string
                     (semantic-region-parse-at 'node (point)))
                    "{\"x\": 123}"))
-    ;; Left/Right traverse named siblings.
+    ;; Left/Right skip anonymous punctuation siblings.
     (sr-nav-right)
     (should (equal (semantic-region-string
                     (semantic-region-parse-at 'node (point)))
@@ -488,6 +488,42 @@
     (should (equal (semantic-region-string
                     (semantic-region-parse-at 'node (point)))
                    "{\"x\": 123}"))))
+
+(ert-deftest semantic-region-test-node-navigation-reaches-anonymous-elisp-head ()
+  (semantic-region-test--with-buffer
+      "(setq mouse-wheel-tilt-scroll t)"
+    (unless (and (treesit-available-p)
+                 (treesit-language-available-p 'elisp))
+      (ert-skip "Elisp tree-sitter grammar unavailable"))
+    (emacs-lisp-mode)
+    (treesit-parser-create 'elisp)
+    (setq sr-submode 'node)
+    (goto-char (point-min))
+    (should (equal (semantic-region-string
+                    (semantic-region-parse-at 'node (point)))
+                   "(setq mouse-wheel-tilt-scroll t)"))
+    (sr-nav-down)
+    (should (equal (semantic-region-string
+                    (semantic-region-parse-at 'node (point)))
+                   "mouse-wheel-tilt-scroll"))
+    (let* ((symbol (semantic-region-parse-at 'node (point)))
+           (head (semantic-region-prev symbol)))
+      (should (equal (semantic-region-string head) "setq"))
+      (should (equal (semantic-region-string
+                      (semantic-region-next head))
+                     "mouse-wheel-tilt-scroll")))
+    (sr-nav-left)
+    (should (equal (semantic-region-string
+                    (semantic-region-parse-at 'node (point)))
+                   "setq"))
+    (sr-nav-right)
+    (should (equal (semantic-region-string
+                    (semantic-region-parse-at 'node (point)))
+                   "mouse-wheel-tilt-scroll"))
+    (sr-nav-right)
+    (should (equal (semantic-region-string
+                    (semantic-region-parse-at 'node (point)))
+                   "t"))))
 
 (ert-deftest semantic-region-test-parent-line-requires-tree-sitter ()
   (semantic-region-test--with-buffer "plain text"
