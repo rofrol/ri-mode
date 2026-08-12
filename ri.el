@@ -38,7 +38,7 @@
                    "status-frame"
                    "semantic-regions"
                    "modal-cursor"
-                   "ki-tabs"))
+                   "ri-tabs"))
       (let ((path (expand-file-name dir ri-root)))
         (when (file-directory-p path)
           (add-to-list 'load-path path))))))
@@ -49,7 +49,7 @@
 (require 'status-frame)
 (require 'semantic-regions)
 (require 'modal-cursor)
-(require 'ki-tabs)
+(require 'ri-tabs)
 (require 'ri-extend)
 (require 'ri-duplicate)
 (require 'ri-edit)
@@ -412,31 +412,31 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
   (let ((map (make-sparse-keymap)))
     (define-key map "j"
                 '(menu-item "<< Marked File"
-                            ki-tabs-switch-to-left-marked-buffer))
+                            ri-tabs-switch-to-left-marked-buffer))
     (define-key map "l"
                 '(menu-item "Marked File >>"
-                            ki-tabs-switch-to-right-marked-buffer))
+                            ri-tabs-switch-to-right-marked-buffer))
     (define-key map "y"
                 '(menu-item "|< Marked File"
-                            ki-tabs-switch-to-first-marked-buffer))
+                            ri-tabs-switch-to-first-marked-buffer))
     (define-key map "p"
                 '(menu-item "Marked File >|"
-                            ki-tabs-switch-to-last-marked-buffer))
+                            ri-tabs-switch-to-last-marked-buffer))
     (define-key map "u"
                 '(menu-item "Marked File >"
-                            ki-tabs-switch-to-previous-buffer))
+                            ri-tabs-switch-to-previous-buffer))
     (define-key map "o"
                 '(menu-item "< Marked File"
-                            ki-tabs-switch-to-next-buffer))
+                            ri-tabs-switch-to-next-buffer))
     (define-key map "k"
-                '(menu-item "Mark File" ki-tabs-toggle-buffer-mark))
+                '(menu-item "Mark File" ri-tabs-toggle-buffer-mark))
     (define-key map "n" '(menu-item "Close" kill-current-buffer))
     (define-key map "i"
                 '(menu-item "Unmark Others"
-                            ki-tabs-unmark-other-buffers))
+                            ri-tabs-unmark-other-buffers))
     (define-key map "m"
                 '(menu-item "Alternate"
-                            ki-tabs-switch-to-alternate-buffer))
+                            ri-tabs-switch-to-alternate-buffer))
     map)
   "Keymap for the Buffer momentary layer (e held).")
 
@@ -839,7 +839,7 @@ keymap lookups during that command must keep their resolved binding."
   (interactive)
   (setq status-frame-height 6)
   (modal-cursor-mode 1)
-  (ki-tabs-mode 1)
+  (ri-tabs-mode 1)
   (mini-modal-setup)
   (kkp-chord-mode 1)
   (ri-chord-setup)
