@@ -36,6 +36,38 @@
       (set-buffer-modified-p nil))
     (kill-buffer buffer)))
 
+(defun ri-tabs-test--track-root-buffers (root)
+  "Register every live file buffer below ROOT for test cleanup."
+  (dolist (buffer (buffer-list))
+    (let ((file (buffer-file-name buffer)))
+      (when (and file
+                 (condition-case nil
+                     (file-in-directory-p file root)
+                   (error nil)))
+        (cl-pushnew buffer ri-tabs-test--buffers)))))
+
+(defun ri-tabs-test--file-id (file)
+  "Return the canonical persistent identity for FILE."
+  (setq file (expand-file-name file))
+  (if (file-exists-p file)
+      (file-truename file)
+    (expand-file-name
+     (file-name-nondirectory file)
+     (file-truename (file-name-directory file)))))
+
+(defun ri-tabs-test--store-files (&rest files)
+  "Persist canonical identities for FILES."
+  (ri-tabs--write-state
+   (ri-tabs--make-state
+    (mapcar #'ri-tabs-test--file-id files))))
+
+(defun ri-tabs-test--buffers-for-id (file-id)
+  "Return all live visible file buffers representing FILE-ID."
+  (seq-filter
+   (lambda (buffer)
+     (equal (ri-tabs--buffer-file-id buffer) file-id))
+   (ri-tabs--file-buffer-list)))
+
 (defmacro ri-tabs-test-with-persistence (&rest body)
   "Run BODY with isolated file-backed persistent mark storage."
   (declare (indent 0) (debug t))
@@ -54,6 +86,7 @@
            ,@body)
        (when ri-tabs-mode
          (ri-tabs-mode -1))
+       (ri-tabs-test--track-root-buffers ri-tabs-test-root)
        (mapc #'ri-tabs-test--kill-buffer ri-tabs-test--buffers)
        (when (file-directory-p ri-tabs-test-root)
          (delete-directory ri-tabs-test-root t)))))
@@ -515,6 +548,415 @@
                         warnings))
       (should (equal (multisession-value ri-tabs--marks-store)
                      invalid)))))
+
+(ert-deftest ri-tabs-test-restores-two-marks-without-explicit-visits ()
+  (ri-tabs-test-with-persistence
+    (let* ((first
+            (ri-tabs-test--make-file ri-tabs-test-root "restore-a.el"))
+           (second
+            (ri-tabs-test--make-file ri-tabs-test-root "restore-b.el"))
+           (first-id (ri-tabs-test--file-id first))
+           (second-id (ri-tabs-test--file-id second))
+           (ids (sort (list first-id second-id) #'string-lessp)))
+      (ri-tabs-test--store-files first second)
+      (should-not (ri-tabs-test--buffers-for-id first-id))
+      (should-not (ri-tabs-test--buffers-for-id second-id))
+      (ri-tabs-mode 1)
+      (dolist (file-id ids)
+        (let ((buffers (ri-tabs-test--buffers-for-id file-id)))
+          (should (= (length buffers) 1))
+          (should (ri-tabs-buffer-marked-p (car buffers)))))
+      (should
+       (equal
+        (mapcar #'ri-tabs--buffer-file-id
+                (ri-tabs--marked-buffer-list))
+        ids)))))
+
+(ert-deftest ri-tabs-test-fresh-store-restores-all-marks-from-disk ()
+  (ri-tabs-test-with-persistence
+    (let* ((first-file
+            (ri-tabs-test--make-file ri-tabs-test-root "disk-a.el"))
+           (second-file
+            (ri-tabs-test--make-file ri-tabs-test-root "disk-b.el"))
+           (first-id (ri-tabs-test--file-id first-file))
+           (second-id (ri-tabs-test--file-id second-file)))
+      (ri-tabs-test--store-files)
+      (ri-tabs-mode 1)
+      (let ((first (ri-tabs-test--visit-file first-file))
+            (second (ri-tabs-test--visit-file second-file)))
+        (ri-tabs-mark-buffer first)
+        (ri-tabs-mark-buffer second)
+        (ri-tabs-mode -1)
+        (setq ri-tabs--marks-store (ri-tabs-test--make-store))
+        (ri-tabs-test--kill-buffer first)
+        (ri-tabs-test--kill-buffer second))
+      (ri-tabs-mode 1)
+      (dolist (file-id (list first-id second-id))
+        (let ((buffers (ri-tabs-test--buffers-for-id file-id)))
+          (should (= (length buffers) 1))
+          (should (ri-tabs-buffer-marked-p (car buffers))))))))
+
+(ert-deftest ri-tabs-test-startup-defers-and-restores-each-file-once ()
+  (ri-tabs-test-with-persistence
+    (let* ((first
+            (ri-tabs-test--make-file ri-tabs-test-root "deferred-a.el"))
+           (second
+            (ri-tabs-test--make-file ri-tabs-test-root "deferred-b.el"))
+           (first-id (ri-tabs-test--file-id first))
+           (second-id (ri-tabs-test--file-id second))
+           (find-file-noselect-function
+            (symbol-function 'find-file-noselect))
+           opens)
+      (ri-tabs-test--store-files first second)
+      (cl-letf (((symbol-function 'find-file-noselect)
+                 (lambda (&rest args)
+                   (push (car args) opens)
+                   (apply find-file-noselect-function args))))
+        (let ((after-init-time nil))
+          (ri-tabs-mode 1)
+          (ri-tabs-mode 1))
+        (should-not (ri-tabs-test--buffers-for-id first-id))
+        (should-not (ri-tabs-test--buffers-for-id second-id))
+        (ri-tabs--startup-activate)
+        (ri-tabs--startup-activate))
+      (should (= (cl-count first-id opens :test #'equal) 1))
+      (should (= (cl-count second-id opens :test #'equal) 1))
+      (should (= (length (ri-tabs-test--buffers-for-id first-id)) 1))
+      (should (= (length (ri-tabs-test--buffers-for-id second-id)) 1)))))
+
+(ert-deftest ri-tabs-test-post-startup-restore-is-immediate ()
+  (ri-tabs-test-with-persistence
+    (let* ((file
+            (ri-tabs-test--make-file ri-tabs-test-root "immediate.el"))
+           (file-id (ri-tabs-test--file-id file)))
+      (ri-tabs-test--store-files file)
+      (let ((after-init-time '(1)))
+        (ri-tabs-mode 1)
+        (let ((buffers (ri-tabs-test--buffers-for-id file-id)))
+          (should (= (length buffers) 1))
+          (should (ri-tabs-buffer-marked-p (car buffers))))))))
+
+(ert-deftest ri-tabs-test-restore-reuses-already-live-buffer ()
+  (ri-tabs-test-with-persistence
+    (let* ((live-file
+            (ri-tabs-test--make-file ri-tabs-test-root "already-live.el"))
+           (missing-file
+            (ri-tabs-test--make-file ri-tabs-test-root "missing-live.el"))
+           (live-id (ri-tabs-test--file-id live-file))
+           (missing-id (ri-tabs-test--file-id missing-file))
+           (live-buffer (ri-tabs-test--visit-file live-file)))
+      (ri-tabs-test--store-files live-file missing-file)
+      (ri-tabs-mode 1)
+      (let ((live-buffers (ri-tabs-test--buffers-for-id live-id))
+            (restored-buffers (ri-tabs-test--buffers-for-id missing-id)))
+        (should (equal live-buffers (list live-buffer)))
+        (should (= (length restored-buffers) 1))
+        (should (ri-tabs-buffer-marked-p live-buffer))
+        (should (ri-tabs-buffer-marked-p (car restored-buffers)))))))
+
+(ert-deftest ri-tabs-test-activation-is-idempotent ()
+  (ri-tabs-test-with-persistence
+    (let* ((first
+            (ri-tabs-test--make-file ri-tabs-test-root "idempotent-a.el"))
+           (second
+            (ri-tabs-test--make-file ri-tabs-test-root "idempotent-b.el"))
+           (first-id (ri-tabs-test--file-id first))
+           (second-id (ri-tabs-test--file-id second))
+           (find-file-noselect-function
+            (symbol-function 'find-file-noselect))
+           (calls 0))
+      (ri-tabs-test--store-files first second)
+      (ri-tabs-mode 1)
+      (let ((first-buffer
+             (car (ri-tabs-test--buffers-for-id first-id)))
+            (second-buffer
+             (car (ri-tabs-test--buffers-for-id second-id))))
+        (cl-letf (((symbol-function 'find-file-noselect)
+                   (lambda (&rest args)
+                     (cl-incf calls)
+                     (apply find-file-noselect-function args))))
+          (ri-tabs--activate))
+        (should (zerop calls))
+        (should
+         (equal (ri-tabs-test--buffers-for-id first-id)
+                (list first-buffer)))
+        (should
+         (equal (ri-tabs-test--buffers-for-id second-id)
+                (list second-buffer)))))))
+
+(ert-deftest ri-tabs-test-restore-preserves-selection-and-windows ()
+  (ri-tabs-test-with-persistence
+    (let ((first
+           (ri-tabs-test--make-file ri-tabs-test-root "windows-a.el"))
+          (second
+           (ri-tabs-test--make-file ri-tabs-test-root "windows-b.el"))
+          (selected-buffer (generate-new-buffer "ri-tabs-selected"))
+          (other-buffer (generate-new-buffer "ri-tabs-other")))
+      (push selected-buffer ri-tabs-test--buffers)
+      (push other-buffer ri-tabs-test--buffers)
+      (ri-tabs-test--store-files first second)
+      (with-current-buffer selected-buffer
+        (dotimes (line 100)
+          (insert (format "line %d\n" line))))
+      (save-window-excursion
+        (delete-other-windows)
+        (switch-to-buffer selected-buffer)
+        (goto-char 200)
+        (let* ((selected-window (selected-window))
+               (other-window (split-window-below)))
+          (set-window-buffer other-window other-buffer)
+          (set-window-start selected-window 80)
+          (let ((configuration (current-window-configuration))
+                (selected-point (point))
+                (selected-start (window-start selected-window))
+                (displayed-buffer (window-buffer selected-window)))
+            (ri-tabs-mode 1)
+            (should (eq (current-buffer) selected-buffer))
+            (should (eq (selected-window) selected-window))
+            (should (eq (window-buffer selected-window)
+                        displayed-buffer))
+            (should (= (point) selected-point))
+            (should (= (window-start selected-window)
+                       selected-start))
+            (should
+             (compare-window-configurations
+              configuration (current-window-configuration)))))))))
+
+(ert-deftest ri-tabs-test-close-does-not-immediately-reopen-mark ()
+  (ri-tabs-test-with-persistence
+    (let* ((file
+            (ri-tabs-test--make-file ri-tabs-test-root "close.el"))
+           (file-id (ri-tabs-test--file-id file)))
+      (ri-tabs-test--store-files file)
+      (ri-tabs-mode 1)
+      (ri-tabs-test--kill-buffer
+       (car (ri-tabs-test--buffers-for-id file-id)))
+      (should ri-tabs-mode)
+      (should-not (ri-tabs-test--buffers-for-id file-id))
+      (should
+       (member file-id (plist-get (ri-tabs--read-state) :files))))))
+
+(ert-deftest ri-tabs-test-reenable-restores-closed-mark ()
+  (ri-tabs-test-with-persistence
+    (let* ((file
+            (ri-tabs-test--make-file ri-tabs-test-root "reenable-close.el"))
+           (file-id (ri-tabs-test--file-id file)))
+      (ri-tabs-test--store-files file)
+      (ri-tabs-mode 1)
+      (ri-tabs-test--kill-buffer
+       (car (ri-tabs-test--buffers-for-id file-id)))
+      (should-not (ri-tabs-test--buffers-for-id file-id))
+      (ri-tabs-mode -1)
+      (ri-tabs-mode 1)
+      (let ((buffers (ri-tabs-test--buffers-for-id file-id)))
+        (should (= (length buffers) 1))
+        (should (ri-tabs-buffer-marked-p (car buffers)))))))
+
+(ert-deftest ri-tabs-test-explicit-unmark-prevents-restoration ()
+  (ri-tabs-test-with-persistence
+    (let* ((file
+            (ri-tabs-test--make-file ri-tabs-test-root "unmark-restore.el"))
+           (file-id (ri-tabs-test--file-id file)))
+      (ri-tabs-test--store-files file)
+      (ri-tabs-mode 1)
+      (let ((buffer (car (ri-tabs-test--buffers-for-id file-id))))
+        (ri-tabs-unmark-buffer buffer)
+        (ri-tabs-test--kill-buffer buffer))
+      (ri-tabs-mode -1)
+      (ri-tabs-mode 1)
+      (should-not (ri-tabs-test--buffers-for-id file-id))
+      (should-not
+       (member file-id (plist-get (ri-tabs--read-state) :files))))))
+
+(ert-deftest ri-tabs-test-empty-initialized-state-opens-nothing ()
+  (ri-tabs-test-with-persistence
+    (let* ((live-file
+            (ri-tabs-test--make-file ri-tabs-test-root "empty-live.el"))
+           (closed-file
+            (ri-tabs-test--make-file ri-tabs-test-root "empty-closed.el"))
+           (closed-id (ri-tabs-test--file-id closed-file))
+           (live-buffer (ri-tabs-test--visit-file live-file)))
+      (ri-tabs-test--store-files)
+      (ri-tabs-mode 1)
+      (should-not (ri-tabs-buffer-marked-p live-buffer))
+      (should-not (ri-tabs-test--buffers-for-id closed-id))
+      (should (equal (ri-tabs--read-state)
+                     '(:version 1 :files nil))))))
+
+(ert-deftest ri-tabs-test-deferred-first-enable-initializes-once ()
+  (ri-tabs-test-with-persistence
+    (let* ((first-file
+            (ri-tabs-test--make-file ri-tabs-test-root "boundary-a.el"))
+           (second-file
+            (ri-tabs-test--make-file ri-tabs-test-root "boundary-b.el"))
+           (first (ri-tabs-test--visit-file first-file))
+           (second nil)
+           (write-state-function
+            (symbol-function 'ri-tabs--write-state))
+           (writes 0))
+      (cl-letf (((symbol-function 'ri-tabs--write-state)
+                 (lambda (state)
+                   (cl-incf writes)
+                   (funcall write-state-function state))))
+        (let ((after-init-time nil))
+          (ri-tabs-mode 1)
+          (setq second (ri-tabs-test--visit-file second-file)))
+        (should (null (ri-tabs--read-state)))
+        (ri-tabs--startup-activate))
+      (should (= writes 1))
+      (should (ri-tabs-buffer-marked-p first))
+      (should (ri-tabs-buffer-marked-p second))
+      (should
+       (equal
+        (plist-get (ri-tabs--read-state) :files)
+        (sort (list (ri-tabs--buffer-file-id first)
+                    (ri-tabs--buffer-file-id second))
+              #'string-lessp))))))
+
+(ert-deftest ri-tabs-test-missing-file-remains-marked-without-buffer ()
+  (ri-tabs-test-with-persistence
+    (let* ((existing
+            (ri-tabs-test--make-file ri-tabs-test-root "available.el"))
+           (missing
+            (expand-file-name "missing.el" ri-tabs-test-root))
+           (existing-id (ri-tabs-test--file-id existing))
+           (missing-id (ri-tabs-test--file-id missing))
+           warnings)
+      (ri-tabs-test--store-files existing missing)
+      (cl-letf (((symbol-function 'display-warning)
+                 (lambda (&rest warning)
+                   (push warning warnings))))
+        (ri-tabs-mode 1))
+      (should
+       (ri-tabs-buffer-marked-p
+        (car (ri-tabs-test--buffers-for-id existing-id))))
+      (should-not (ri-tabs-test--buffers-for-id missing-id))
+      (should
+       (= (cl-count 'ri-tabs warnings :key #'car :test #'eq) 1))
+      (should
+       (equal
+        (plist-get (ri-tabs--read-state) :files)
+        (sort (list existing-id missing-id) #'string-lessp))))))
+
+(ert-deftest ri-tabs-test-one-restore-failure-does-not-block-later-files ()
+  (ri-tabs-test-with-persistence
+    (let* ((first
+            (ri-tabs-test--make-file ri-tabs-test-root "failure-a.el"))
+           (failing
+            (ri-tabs-test--make-file ri-tabs-test-root "failure-b.el"))
+           (last
+            (ri-tabs-test--make-file ri-tabs-test-root "failure-c.el"))
+           (first-id (ri-tabs-test--file-id first))
+           (failing-id (ri-tabs-test--file-id failing))
+           (last-id (ri-tabs-test--file-id last))
+           (find-file-noselect-function
+            (symbol-function 'find-file-noselect))
+           warnings)
+      (ri-tabs-test--store-files first failing last)
+      (cl-letf (((symbol-function 'find-file-noselect)
+                 (lambda (&rest args)
+                   (if (equal (car args) failing-id)
+                       (signal 'file-error
+                               (list "Synthetic restore failure"
+                                     failing-id))
+                     (apply find-file-noselect-function args))))
+                ((symbol-function 'display-warning)
+                 (lambda (&rest warning)
+                   (push warning warnings))))
+        (ri-tabs-mode 1))
+      (should (= (length (ri-tabs-test--buffers-for-id first-id)) 1))
+      (should-not (ri-tabs-test--buffers-for-id failing-id))
+      (should (= (length (ri-tabs-test--buffers-for-id last-id)) 1))
+      (should
+       (= (cl-count 'ri-tabs warnings :key #'car :test #'eq) 1))
+      (should
+       (equal
+        (plist-get (ri-tabs--read-state) :files)
+        (sort (list first-id failing-id last-id) #'string-lessp))))))
+
+(ert-deftest ri-tabs-test-malformed-state-restores-and-writes-nothing ()
+  (ri-tabs-test-with-persistence
+    (let* ((file
+            (ri-tabs-test--make-file ri-tabs-test-root "never-open.el"))
+           (file-id (ri-tabs-test--file-id file))
+           (invalid (list :version 99 :files (list file-id)))
+           (find-file-calls 0)
+           (write-calls 0)
+           warnings)
+      (setf (multisession-value ri-tabs--marks-store) invalid)
+      (cl-letf (((symbol-function 'find-file-noselect)
+                 (lambda (&rest _args)
+                   (cl-incf find-file-calls)))
+                ((symbol-function 'ri-tabs--write-state)
+                 (lambda (_state)
+                   (cl-incf write-calls)))
+                ((symbol-function 'display-warning)
+                 (lambda (&rest warning)
+                   (push warning warnings))))
+        (ri-tabs-mode 1))
+      (should (zerop find-file-calls))
+      (should (zerop write-calls))
+      (should-not (ri-tabs-test--buffers-for-id file-id))
+      (should
+       (= (cl-count 'ri-tabs warnings :key #'car :test #'eq) 1))
+      (should
+       (equal (multisession-value ri-tabs--marks-store)
+              invalid)))))
+
+(ert-deftest ri-tabs-test-canonical-live-duplicates-are-not-reopened ()
+  (ri-tabs-test-with-persistence
+    (let* ((real-file
+            (ri-tabs-test--make-file ri-tabs-test-root "canonical.el"))
+           (link-file
+            (expand-file-name "canonical-link.el" ri-tabs-test-root))
+           (file-id (ri-tabs-test--file-id real-file))
+           (first nil)
+           (second (generate-new-buffer "ri-tabs-canonical-duplicate"))
+           (find-file-calls 0))
+      (make-symbolic-link real-file link-file)
+      (ri-tabs-test--store-files real-file)
+      (setq first (ri-tabs-test--visit-file link-file))
+      (push second ri-tabs-test--buffers)
+      (with-current-buffer second
+        (set-visited-file-name real-file t))
+      (should (= (length (ri-tabs-test--buffers-for-id file-id)) 2))
+      (cl-letf (((symbol-function 'find-file-noselect)
+                 (lambda (&rest _args)
+                   (cl-incf find-file-calls))))
+        (ri-tabs-mode 1))
+      (should (zerop find-file-calls))
+      (should (= (length (ri-tabs-test--buffers-for-id file-id)) 2))
+      (should (ri-tabs-buffer-marked-p first))
+      (should (ri-tabs-buffer-marked-p second)))))
+
+(ert-deftest ri-tabs-test-disable-cancels-deferred-restoration ()
+  (ri-tabs-test-with-persistence
+    (let* ((file
+            (ri-tabs-test--make-file ri-tabs-test-root "cancel.el"))
+           (file-id (ri-tabs-test--file-id file)))
+      (ri-tabs-test--store-files file)
+      (let ((after-init-time nil))
+        (ri-tabs-mode 1)
+        (should-not (ri-tabs-test--buffers-for-id file-id))
+        (ri-tabs-mode -1))
+      (ri-tabs--startup-activate)
+      (should-not ri-tabs-mode)
+      (should-not (ri-tabs-test--buffers-for-id file-id)))))
+
+(ert-deftest ri-tabs-test-restoration-batches-global-refresh ()
+  (ri-tabs-test-with-persistence
+    (let ((first
+           (ri-tabs-test--make-file ri-tabs-test-root "refresh-a.el"))
+          (second
+           (ri-tabs-test--make-file ri-tabs-test-root "refresh-b.el"))
+          (global-refreshes 0))
+      (ri-tabs-test--store-files first second)
+      (cl-letf (((symbol-function 'tab-line-force-update)
+                 (lambda (&optional all-frames)
+                   (when all-frames
+                     (cl-incf global-refreshes)))))
+        (ri-tabs-mode 1))
+      (should (= global-refreshes 1)))))
 
 (provide 'ri-tabs-test)
 

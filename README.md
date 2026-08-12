@@ -98,12 +98,16 @@ and `u`/`o` perform character-granular undo/redo. A quick tap of `c`,
 `r`, `g`, `v`, `x`, or `z` performs its primary action.
 
 File marks are persistent: `e k` writes the mark immediately, and the
-mark survives both buffer closure and an Emacs restart. Closing with
-`e n` or the tab close action only kills the buffer; it does not unmark
-the file. Only explicit mark commands (`e k`, `e i`, or their
-`ri-tabs-*` command equivalents) change persistent membership. Closed
-marked files are neither displayed nor reopened automatically, and
-marked-file navigation continues to consider live buffers only.
+mark survives both buffer closure and an Emacs restart. When Ki tabs
+activates after restart—or is disabled and enabled again—it reopens
+every available still-marked file without selecting or displaying it.
+Closing with `e n` or the tab close action only kills the buffer, so it
+stays closed for the current activation and returns on the next
+activation or restart. Explicit mark commands (`e k`, `e i`, or their
+`ri-tabs-*` equivalents) are the only operations that change persistent
+membership; explicitly unmarking a file prevents future restoration.
+Unavailable paths remain marked and are retried on a later activation.
+Marked-file navigation continues to consider live buffers only.
 
 `NODE` mode requires a tree-sitter grammar for the current major mode;
 see the Tree-sitter setup below.
