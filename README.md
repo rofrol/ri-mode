@@ -101,7 +101,7 @@ File marks are persistent: `e k` writes the mark immediately, and the
 mark survives both buffer closure and an Emacs restart. Closing with
 `e n` or the tab close action only kills the buffer; it does not unmark
 the file. Only explicit mark commands (`e k`, `e i`, or their
-`ki-tabs-*` command equivalents) change persistent membership. Closed
+`ri-tabs-*` command equivalents) change persistent membership. Closed
 marked files are neither displayed nor reopened automatically, and
 marked-file navigation continues to consider live buffers only.
 

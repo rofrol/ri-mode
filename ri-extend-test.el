@@ -335,18 +335,18 @@
         (kkp-chord-after-release-hook nil)
         (sr-highlight-predicate nil)
         (status-frame-height 0)
-        ki-tabs-enabled)
+        ri-tabs-enabled)
     (cl-letf (((symbol-function 'modal-cursor-mode) #'ignore)
-              ((symbol-function 'ki-tabs-mode)
+              ((symbol-function 'ri-tabs-mode)
                (lambda (&optional arg)
-                 (setq ki-tabs-enabled arg)))
+                 (setq ri-tabs-enabled arg)))
               ((symbol-function 'mini-modal-setup) #'ignore)
               ((symbol-function 'kkp-chord-mode) #'ignore)
               ((symbol-function 'global-kkp-mode) #'ignore)
               ((symbol-function 'buffer-list)
                (lambda (&optional _frame) nil)))
       (ri-enable)
-      (should (equal ki-tabs-enabled 1))
+      (should (equal ri-tabs-enabled 1))
       (should (eq (lookup-key mini-modal-map "/")
                   #'ri-swap-cursor))
       (should (keymapp (lookup-key mini-modal-map (kbd "C-h"))))
@@ -403,7 +403,7 @@
         (kkp-chord-after-release-hook nil)
         (sr-highlight-predicate nil)
         (status-frame-height 0)
-        (ki-tabs-mode nil))
+        (ri-tabs-mode nil))
     (unwind-protect
         (save-window-excursion
           (cl-letf (((symbol-function 'modal-cursor-mode) #'ignore)
@@ -420,10 +420,10 @@
             (with-current-buffer buffer
               (setq buffer-file-name "/tmp/ri-tabs-after-enable.el")
               (run-hooks 'find-file-hook)
-              (should ki-tabs-mode)
+              (should ri-tabs-mode)
               (should tab-line-mode)
               (should (eq tab-line-tabs-function
-                          #'ki-tabs--buffer-list))
+                          #'ri-tabs--buffer-list))
               (should
                (equal
                 (mapconcat
@@ -434,8 +434,8 @@
                  (tab-line-format)
                  "")
                 " [ ] ri-tabs-after-enable.el ")))))
-      (when ki-tabs-mode
-        (ki-tabs-mode -1))
+      (when ri-tabs-mode
+        (ri-tabs-mode -1))
       (when (buffer-live-p buffer)
         (kill-buffer buffer)))))
 

@@ -10,11 +10,11 @@ This feature remembers marks; it does not automatically reopen closed files.
 
 Ri already maps the relevant keys correctly:
 
-- `e k` calls `ki-tabs-toggle-buffer-mark`.
+- `e k` calls `ri-tabs-toggle-buffer-mark`.
 - `e n` calls `kill-current-buffer`.
-- `e i` calls `ki-tabs-unmark-other-buffers`.
+- `e i` calls `ri-tabs-unmark-other-buffers`.
 
-The state is currently held only in the buffer-local variable `ki-tabs--marked-p`. Killing a buffer destroys that value. `find-file-hook` installs the tab-line UI but does not restore the mark, and there is no persistent file identity.
+The state is currently held only in the buffer-local variable `ri-tabs--marked-p`. Killing a buffer destroys that value. `find-file-hook` installs the tab-line UI but does not restore the mark, and there is no persistent file identity.
 
 The underlying problem is that the state belongs to a transient buffer object even though the user-facing operation is "Mark File".
 
@@ -31,7 +31,7 @@ Ri requires Emacs 31.1 or newer, while multisession variables have been availabl
 - synchronized reads for changes made by another Emacs process;
 - temporary-file-plus-rename writes in the default file backend.
 
-Do not add a custom session file, depend on `savehist-mode`, or register `ki-tabs--marked-p` in `desktop-locals-to-save`.
+Do not add a custom session file, depend on `savehist-mode`, or register `ri-tabs--marked-p` in `desktop-locals-to-save`.
 
 ## Behavioral contract
 
@@ -40,7 +40,7 @@ Do not add a custom session file, depend on `savehist-mode`, or register `ki-tab
 3. Opening `F` again in the same Emacs process restores its marked state.
 4. Opening `F` after restarting Emacs restores its marked state.
 5. Pressing `e k` on a marked file explicitly removes the persistent mark.
-6. `ki-tabs-unmark-buffer` removes the persistent mark.
+6. `ri-tabs-unmark-buffer` removes the persistent mark.
 7. `e i` removes all other persistent marks, including marks for files that currently have no live buffer.
 8. Renaming or using Save As on a marked, visited file moves the mark from the old identity to the new identity.
 9. Closed marked files are not displayed and are not opened by marked-buffer navigation. Existing `e j`, `e l`, `e y`, and `e p` navigation continues to operate on live marked buffers only.
@@ -57,14 +57,14 @@ A project-scoped option could be designed separately, but it would alter current
 
 ## Persistent data model
 
-Add a multisession object in `ki-tabs/ki-tabs.el`:
+Add a multisession object in `ri-tabs/ri-tabs.el`:
 
 ```elisp
 (require 'multisession)
 
-(define-multisession-variable ki-tabs--marks-store nil
+(define-multisession-variable ri-tabs--marks-store nil
   "Persistent Ki tab marks."
-  :package "ki-tabs"
+  :package "ri-tabs"
   :synchronized t)
 ```
 
@@ -100,11 +100,11 @@ Marks therefore become file-level state. If multiple live buffers visit the same
 
 ## In-memory state
 
-Keep `ki-tabs--marked-p`, but redefine its role: it is a buffer-local render cache, not the source of truth.
+Keep `ri-tabs--marked-p`, but redefine its role: it is a buffer-local render cache, not the source of truth.
 
-Add a second buffer-local value, such as `ki-tabs--file-id`, to remember the identity last synchronized for that buffer. It is required to migrate a mark when `after-set-visited-file-name-hook` runs after a rename or Save As operation.
+Add a second buffer-local value, such as `ri-tabs--file-id`, to remember the identity last synchronized for that buffer. It is required to migrate a mark when `after-set-visited-file-name-hook` runs after a rename or Save As operation.
 
-The tab-line rendering and cache-key paths must continue to read only `ki-tabs--marked-p`. They must not read multisession storage or perform filesystem work during redisplay.
+The tab-line rendering and cache-key paths must continue to read only `ri-tabs--marked-p`. They must not read multisession storage or perform filesystem work during redisplay.
 
 ## Read and write lifecycle
 
@@ -112,7 +112,7 @@ The tab-line rendering and cache-key paths must continue to read only `ki-tabs--
 
 Read persistent state only at semantic boundaries:
 
-- when `ki-tabs-mode` is enabled;
+- when `ri-tabs-mode` is enabled;
 - when a file is visited;
 - when a visited filename changes;
 - immediately before an explicit mark mutation.
@@ -127,8 +127,8 @@ Every explicit mutation should follow this order:
 2. Determine its stable file identity.
 3. Read and validate the latest persistent state.
 4. Compute a new immutable state value.
-5. Persist it with `(setf (multisession-value ki-tabs--marks-store) new-state)`.
-6. Only after a successful write, update `ki-tabs--marked-p` in every live buffer with the affected file identity.
+5. Persist it with `(setf (multisession-value ri-tabs--marks-store) new-state)`.
+6. Only after a successful write, update `ri-tabs--marked-p` in every live buffer with the affected file identity.
 7. Force one tab-line refresh.
 
 A failed persistence write must not leave the UI claiming that the operation succeeded.
@@ -137,7 +137,7 @@ No write occurs from `kill-buffer-hook`.
 
 ## Mode initialization
 
-Change `ki-tabs--enable` as follows:
+Change `ri-tabs--enable` as follows:
 
 - If the persistent value is uninitialized (`nil`), collect all currently open visible file buffers, mark them, and persist a version-1 state in one write. This preserves the documented current behavior for the first enable.
 - If a valid state already exists, initialize every live file buffer from that state instead of marking all existing buffers unconditionally.
@@ -147,12 +147,12 @@ Change `ki-tabs--enable` as follows:
 
 ## Hook responsibilities
 
-The current `ki-tabs--sync-current-buffer` is used for multiple events with different semantics. Split or parameterize those responsibilities so that a major-mode change cannot be mistaken for a newly opened or renamed file.
+The current `ri-tabs--sync-current-buffer` is used for multiple events with different semantics. Split or parameterize those responsibilities so that a major-mode change cannot be mistaken for a newly opened or renamed file.
 
 ### `find-file-hook`
 
 - compute and remember the file identity;
-- restore `ki-tabs--marked-p` from persistent state;
+- restore `ri-tabs--marked-p` from persistent state;
 - install the Ki tab-line configuration.
 
 ### `after-set-visited-file-name-hook`
@@ -176,19 +176,19 @@ Only invalidate tab lines. Do not remove a persistent identity.
 
 ## Command changes
 
-### `ki-tabs-mark-buffer`
+### `ri-tabs-mark-buffer`
 
 Add the current file identity to persistent state, write it, synchronize all live buffers for that identity, and refresh once.
 
-### `ki-tabs-unmark-buffer`
+### `ri-tabs-unmark-buffer`
 
 Remove the identity from persistent state, write it, synchronize all live buffers for that identity, and refresh once.
 
-### `ki-tabs-toggle-buffer-mark`
+### `ri-tabs-toggle-buffer-mark`
 
 Read the latest persistent state and invert membership there. Do not invert a potentially stale buffer-local cache.
 
-### `ki-tabs-unmark-other-buffers`
+### `ri-tabs-unmark-other-buffers`
 
 Do not iterate only over live buffers. Replace the persistent file list atomically with:
 
@@ -201,7 +201,7 @@ Then synchronize all live file buffers and refresh once.
 
 Automatic hooks must not make `find-file` unusable because persistence data cannot be read. On a read or schema error:
 
-- report a `ki-tabs` warning with the original error;
+- report a `ri-tabs` warning with the original error;
 - leave the affected buffer unmarked for that synchronization attempt;
 - do not automatically overwrite the unreadable state.
 
@@ -211,13 +211,13 @@ The version validator should reject unknown schemas explicitly. A future schema 
 
 ## Files to change
 
-### `ki-tabs/ki-tabs.el`
+### `ri-tabs/ri-tabs.el`
 
 - require `multisession`;
 - define and validate the persistent state;
 - add stable file-identity helpers;
 - add state read, normalization, and commit helpers;
-- retain `ki-tabs--marked-p` as a render cache;
+- retain `ri-tabs--marked-p` as a render cache;
 - add the last-synchronized file identity;
 - make mark, unmark, toggle, and unmark-others persistent;
 - synchronize duplicate buffers visiting the same file;
@@ -226,11 +226,11 @@ The version validator should reject unknown schemas explicitly. A future schema 
 - preserve marks across buffer kills and mode disable;
 - update command and mode docstrings.
 
-### `ki-tabs/ki-tabs-test.el`
+### `ri-tabs/ri-tabs-test.el`
 
 Add isolated persistence fixtures and behavioral tests described below.
 
-Existing rendering and navigation unit tests may continue to bind `ki-tabs--marked-p` directly when persistent behavior is not under test.
+Existing rendering and navigation unit tests may continue to bind `ri-tabs--marked-p` directly when persistent behavior is not under test.
 
 ### `README.md`
 
@@ -251,9 +251,9 @@ Tests involving persistence must isolate themselves from the user's real state:
 
 - bind `multisession-directory` to a temporary directory;
 - bind `user-init-file` to a non-nil synthetic value, because multisession intentionally avoids backend storage when `user-init-file` is nil;
-- bind `ki-tabs--marks-store` to a fresh `make-multisession` object using the file backend;
+- bind `ri-tabs--marks-store` to a fresh `make-multisession` object using the file backend;
 - create real temporary files rather than assigning fake `buffer-file-name` values;
-- disable `ki-tabs-mode`, kill temporary buffers, and remove temporary files during cleanup.
+- disable `ri-tabs-mode`, kill temporary buffers, and remove temporary files during cleanup.
 
 Add tests for these observable contracts:
 
@@ -267,13 +267,13 @@ Add tests for these observable contracts:
    Mark, unmark, kill, and reopen; assert that the file remains unmarked.
 
 4. **Unmark Others includes closed files**  
-   Mark two files, kill one buffer, invoke `ki-tabs-unmark-other-buffers` from the other, reopen the closed file, and assert that it is unmarked.
+   Mark two files, kill one buffer, invoke `ri-tabs-unmark-other-buffers` from the other, reopen the closed file, and assert that it is unmarked.
 
 5. **Rename migration**  
    Mark a file, rename or Save As through Emacs, kill the buffer, and verify that the new identity is marked while the old identity is not.
 
 6. **Mode re-enable does not reseed**  
-   Persist an initialized empty state, disable and re-enable `ki-tabs-mode`, and assert that already open files remain unmarked.
+   Persist an initialized empty state, disable and re-enable `ri-tabs-mode`, and assert that already open files remain unmarked.
 
 7. **First enable preserves current behavior**  
    With uninitialized storage, enable the mode and assert that existing file buffers are marked and persisted in a single initialized state.
@@ -294,10 +294,10 @@ Add tests for these observable contracts:
 
 After implementation:
 
-1. Run the complete `ki-tabs-test.el` suite.
+1. Run the complete `ri-tabs-test.el` suite.
 2. Run a smoke test using two separate batch Emacs processes and one temporary multisession directory:
    - process A opens and marks a file, then exits;
-   - process B opens the same file and asserts `ki-tabs-buffer-marked-p` is non-nil.
+   - process B opens the same file and asserts `ri-tabs-buffer-marked-p` is non-nil.
 3. Exercise the real Ri interaction:
    - open a file;
    - press `e k`;
@@ -306,7 +306,7 @@ After implementation:
    - confirm that the tab displays the marked marker.
 4. Rename a marked file through Emacs, close it, reopen the new path, and confirm that the mark followed the rename.
 
-The current baseline is seven passing `ki-tabs` tests with no failures.
+The current baseline is seven passing `ri-tabs` tests with no failures.
 
 ## Alternatives considered
 
