@@ -246,7 +246,7 @@
                    (with-current-buffer keymap-legend-buffer-name
                      (buffer-string))))
               (should (string-match-p "Undo" text))
-              (should (string-match-p "Redo" text)))
+              (should (string-match-p "Coarse Redo" text)))
             (send "122;:3u")
             (should-not keymap-legend--state)
             (should (equal (buffer-string) "base"))
