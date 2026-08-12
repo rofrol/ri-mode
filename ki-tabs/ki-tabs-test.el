@@ -4,6 +4,60 @@
 (require 'ert)
 (require 'ki-tabs)
 
+(defvar ki-tabs-test--buffers nil)
+
+(defun ki-tabs-test--make-store ()
+  "Return a fresh synchronized file-backed multisession object."
+  (make-multisession
+   :key "marks-store"
+   :initial-value nil
+   :package "ki-tabs-test"
+   :synchronized t
+   :storage 'files))
+
+(defun ki-tabs-test--make-file (root name)
+  "Create NAME below ROOT and return its absolute filename."
+  (let ((file (expand-file-name name root)))
+    (make-directory (file-name-directory file) t)
+    (with-temp-file file
+      (insert name "\n"))
+    file))
+
+(defun ki-tabs-test--visit-file (file)
+  "Visit FILE and register its buffer for test cleanup."
+  (let ((buffer (find-file-noselect file)))
+    (cl-pushnew buffer ki-tabs-test--buffers)
+    buffer))
+
+(defun ki-tabs-test--kill-buffer (buffer)
+  "Kill BUFFER without prompting when it is live."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (set-buffer-modified-p nil))
+    (kill-buffer buffer)))
+
+(defmacro ki-tabs-test-with-persistence (&rest body)
+  "Run BODY with isolated file-backed persistent mark storage."
+  (declare (indent 0) (debug t))
+  `(let* ((ki-tabs-test-root
+           (make-temp-file "ki-tabs-persistence-" t))
+          (multisession-directory
+           (expand-file-name "multisession/" ki-tabs-test-root))
+          (user-init-file
+           (expand-file-name "synthetic-init.el" ki-tabs-test-root))
+          (ki-tabs--marks-store (ki-tabs-test--make-store))
+          (ki-tabs-test--buffers nil))
+     (unwind-protect
+         (progn
+           (when ki-tabs-mode
+             (ki-tabs-mode -1))
+           ,@body)
+       (when ki-tabs-mode
+         (ki-tabs-mode -1))
+       (mapc #'ki-tabs-test--kill-buffer ki-tabs-test--buffers)
+       (when (file-directory-p ki-tabs-test-root)
+         (delete-directory ki-tabs-test-root t)))))
+
 (ert-deftest ki-tabs-test-buffer-list-keeps-marked-files-plus-current ()
   (let ((alpha (generate-new-buffer "ki-tabs-alpha"))
         (zeta (generate-new-buffer "ki-tabs-zeta"))
@@ -172,74 +226,295 @@
       (mapc #'kill-buffer (list alpha beta gamma transient)))))
 
 (ert-deftest ki-tabs-test-buffer-layer-mark-and-alternate-operations ()
-  (let ((current (generate-new-buffer "ki-tabs-current"))
-        (alternate (generate-new-buffer "ki-tabs-alternate"))
-        (other (generate-new-buffer "ki-tabs-other")))
-    (unwind-protect
-        (save-window-excursion
-          (dolist (entry `((,current . "/tmp/current.el")
-                           (,alternate . "/tmp/alternate.el")
-                           (,other . "/tmp/other.el")))
-            (with-current-buffer (car entry)
-              (setq buffer-file-name (cdr entry)
-                    ki-tabs--marked-p t)))
-          (cl-letf (((symbol-function 'buffer-list)
-                     (lambda (&optional _frame)
-                       (list current alternate other))))
-            (switch-to-buffer current)
-            (ki-tabs-unmark-other-buffers)
-            (should (ki-tabs-buffer-marked-p current))
-            (should-not (ki-tabs-buffer-marked-p alternate))
-            (should-not (ki-tabs-buffer-marked-p other))
-            (ki-tabs-toggle-buffer-mark)
-            (should-not (ki-tabs-buffer-marked-p current))
-            (ki-tabs-toggle-buffer-mark)
-            (should (ki-tabs-buffer-marked-p current))
-            (ki-tabs-switch-to-alternate-buffer)
-            (should (eq (current-buffer) alternate))))
-      (mapc #'kill-buffer (list current alternate other)))))
+  (ki-tabs-test-with-persistence
+    (save-window-excursion
+      (let ((current
+             (ki-tabs-test--visit-file
+              (ki-tabs-test--make-file
+               ki-tabs-test-root "current.el")))
+            (alternate
+             (ki-tabs-test--visit-file
+              (ki-tabs-test--make-file
+               ki-tabs-test-root "alternate.el")))
+            (other
+             (ki-tabs-test--visit-file
+              (ki-tabs-test--make-file
+               ki-tabs-test-root "other.el"))))
+        (ki-tabs-mode 1)
+        (cl-letf (((symbol-function 'buffer-list)
+                   (lambda (&optional _frame)
+                     (list current alternate other))))
+          (switch-to-buffer current)
+          (ki-tabs-unmark-other-buffers)
+          (should (ki-tabs-buffer-marked-p current))
+          (should-not (ki-tabs-buffer-marked-p alternate))
+          (should-not (ki-tabs-buffer-marked-p other))
+          (ki-tabs-toggle-buffer-mark)
+          (should-not (ki-tabs-buffer-marked-p current))
+          (ki-tabs-toggle-buffer-mark)
+          (should (ki-tabs-buffer-marked-p current))
+          (ki-tabs-switch-to-alternate-buffer)
+          (should (eq (current-buffer) alternate)))))))
 
 (ert-deftest ki-tabs-test-mode-installs-for-files-and-restores-state ()
-  (let ((file (generate-new-buffer "ki-tabs-file"))
-        (late-file (generate-new-buffer "ki-tabs-late-file"))
-        (special (generate-new-buffer "ki-tabs-special")))
-    (unwind-protect
-        (progn
-          (with-current-buffer file
-            (setq buffer-file-name "/tmp/file.el")
-            (setq-local tab-line-separator "before"))
-          (ki-tabs-mode 1)
-          (with-current-buffer file
-            (should (ki-tabs-buffer-marked-p)))
-          (with-current-buffer file
-            (should tab-line-mode)
-            (should (eq tab-line-tabs-function #'ki-tabs--buffer-list))
-            (should (eq tab-line-tab-name-format-function
-                        #'ki-tabs--format-tab))
-            (should (eq tab-line-close-tab-function 'kill-buffer))
-            (should (equal tab-line-separator "")))
-          (with-current-buffer special
-            (should-not tab-line-mode))
-          (with-current-buffer late-file
-            (setq buffer-file-name "/tmp/late.el")
-            (run-hooks 'find-file-hook)
-            (should-not (ki-tabs-buffer-marked-p))
-            (should tab-line-mode)
-            (should (eq tab-line-tabs-function #'ki-tabs--buffer-list)))
-          (ki-tabs-mode -1)
-          (with-current-buffer file
-            (should-not tab-line-mode)
-            (should (local-variable-p 'tab-line-separator))
-            (should (equal tab-line-separator "before"))
-            (should-not (local-variable-p 'tab-line-tabs-function))
-            (should-not (local-variable-p 'ki-tabs--marked-p)))
-          (with-current-buffer late-file
-            (should-not tab-line-mode)
-            (should-not (local-variable-p 'tab-line-format))
-            (should-not (local-variable-p 'ki-tabs--marked-p))))
-      (when ki-tabs-mode
-        (ki-tabs-mode -1))
-      (mapc #'kill-buffer (list file late-file special)))))
+  (ki-tabs-test-with-persistence
+    (let* ((file
+            (ki-tabs-test--visit-file
+             (ki-tabs-test--make-file ki-tabs-test-root "file.el")))
+           (late-path
+            (ki-tabs-test--make-file ki-tabs-test-root "late.el"))
+           (late-file nil)
+           (special (generate-new-buffer "ki-tabs-special")))
+      (push special ki-tabs-test--buffers)
+      (with-current-buffer file
+        (setq-local tab-line-separator "before"))
+      (ki-tabs-mode 1)
+      (with-current-buffer file
+        (should (ki-tabs-buffer-marked-p))
+        (should tab-line-mode)
+        (should (eq tab-line-tabs-function #'ki-tabs--buffer-list))
+        (should (eq tab-line-tab-name-format-function
+                    #'ki-tabs--format-tab))
+        (should (eq tab-line-close-tab-function 'kill-buffer))
+        (should (equal tab-line-separator "")))
+      (with-current-buffer special
+        (should-not tab-line-mode))
+      (setq late-file (ki-tabs-test--visit-file late-path))
+      (with-current-buffer late-file
+        (should-not (ki-tabs-buffer-marked-p))
+        (should tab-line-mode)
+        (should (eq tab-line-tabs-function #'ki-tabs--buffer-list)))
+      (ki-tabs-mode -1)
+      (with-current-buffer file
+        (should-not tab-line-mode)
+        (should (local-variable-p 'tab-line-separator))
+        (should (equal tab-line-separator "before"))
+        (should-not (local-variable-p 'tab-line-tabs-function))
+        (should-not (local-variable-p 'ki-tabs--marked-p))
+        (should-not (local-variable-p 'ki-tabs--file-id)))
+      (with-current-buffer late-file
+        (should-not tab-line-mode)
+        (should-not (local-variable-p 'tab-line-format))
+        (should-not (local-variable-p 'ki-tabs--marked-p))
+        (should-not (local-variable-p 'ki-tabs--file-id))))))
+
+(ert-deftest ki-tabs-test-mark-survives-kill-and-reopen ()
+  (ki-tabs-test-with-persistence
+    (let ((file (ki-tabs-test--make-file
+                 ki-tabs-test-root "kill-and-reopen.el")))
+      (ki-tabs-mode 1)
+      (let ((buffer (ki-tabs-test--visit-file file)))
+        (with-current-buffer buffer
+          (should-not (ki-tabs-buffer-marked-p))
+          (ki-tabs-mark-buffer)
+          (should (ki-tabs-buffer-marked-p))
+          (should
+           (member (ki-tabs--buffer-file-id buffer)
+                   (plist-get (ki-tabs--read-state) :files))))
+        (ki-tabs-test--kill-buffer buffer))
+      (let ((reopened (ki-tabs-test--visit-file file)))
+        (with-current-buffer reopened
+          (should (ki-tabs-buffer-marked-p)))))))
+
+(ert-deftest ki-tabs-test-mark-reloads-from-disk ()
+  (ki-tabs-test-with-persistence
+    (let ((file (ki-tabs-test--make-file
+                 ki-tabs-test-root "reload.el")))
+      (ki-tabs-mode 1)
+      (let ((buffer (ki-tabs-test--visit-file file)))
+        (with-current-buffer buffer
+          (ki-tabs-mark-buffer))
+        (ki-tabs-test--kill-buffer buffer))
+      (setq ki-tabs--marks-store (ki-tabs-test--make-store))
+      (let ((reopened (ki-tabs-test--visit-file file)))
+        (with-current-buffer reopened
+          (should (ki-tabs-buffer-marked-p)))))))
+
+(ert-deftest ki-tabs-test-unmark-survives-kill-and-reopen ()
+  (ki-tabs-test-with-persistence
+    (let ((file (ki-tabs-test--make-file
+                 ki-tabs-test-root "unmark.el")))
+      (ki-tabs-mode 1)
+      (let ((buffer (ki-tabs-test--visit-file file)))
+        (with-current-buffer buffer
+          (ki-tabs-mark-buffer)
+          (ki-tabs-unmark-buffer)
+          (should-not (ki-tabs-buffer-marked-p)))
+        (ki-tabs-test--kill-buffer buffer))
+      (let ((reopened (ki-tabs-test--visit-file file)))
+        (with-current-buffer reopened
+          (should-not (ki-tabs-buffer-marked-p)))))))
+
+(ert-deftest ki-tabs-test-unmark-others-includes-closed-files ()
+  (ki-tabs-test-with-persistence
+    (let* ((first-file
+            (ki-tabs-test--make-file ki-tabs-test-root "first.el"))
+           (second-file
+            (ki-tabs-test--make-file ki-tabs-test-root "second.el")))
+      (ki-tabs-mode 1)
+      (let ((first (ki-tabs-test--visit-file first-file))
+            (second (ki-tabs-test--visit-file second-file)))
+        (with-current-buffer first
+          (ki-tabs-mark-buffer))
+        (with-current-buffer second
+          (ki-tabs-mark-buffer))
+        (ki-tabs-test--kill-buffer second)
+        (with-current-buffer first
+          (ki-tabs-unmark-other-buffers)
+          (should (ki-tabs-buffer-marked-p)))
+        (let ((reopened (ki-tabs-test--visit-file second-file)))
+          (with-current-buffer reopened
+            (should-not (ki-tabs-buffer-marked-p))))))))
+
+(ert-deftest ki-tabs-test-rename-and-save-as-migrate-marks ()
+  (ki-tabs-test-with-persistence
+    (let* ((old-file
+            (ki-tabs-test--make-file ki-tabs-test-root "old.el"))
+           (renamed-file
+            (expand-file-name "renamed.el" ki-tabs-test-root))
+           (save-source
+            (ki-tabs-test--make-file ki-tabs-test-root "source.el"))
+           (saved-file
+            (expand-file-name "saved.el" ki-tabs-test-root)))
+      (ki-tabs-mode 1)
+      (let* ((renamed-buffer (ki-tabs-test--visit-file old-file))
+             (old-id (ki-tabs--buffer-file-id renamed-buffer)))
+        (with-current-buffer renamed-buffer
+          (ki-tabs-mark-buffer)
+          (rename-visited-file renamed-file))
+        (let ((renamed-id (ki-tabs--buffer-file-id renamed-buffer))
+              (files (plist-get (ki-tabs--read-state) :files)))
+          (should (member renamed-id files))
+          (should-not (member old-id files)))
+        (ki-tabs-test--kill-buffer renamed-buffer)
+        (with-current-buffer
+            (ki-tabs-test--visit-file renamed-file)
+          (should (ki-tabs-buffer-marked-p))))
+      (let* ((saved-buffer (ki-tabs-test--visit-file save-source))
+             (source-id (ki-tabs--buffer-file-id saved-buffer)))
+        (with-current-buffer saved-buffer
+          (ki-tabs-mark-buffer)
+          (write-file saved-file))
+        (let ((saved-id (ki-tabs--buffer-file-id saved-buffer))
+              (files (plist-get (ki-tabs--read-state) :files)))
+          (should (member saved-id files))
+          (should-not (member source-id files)))
+        (ki-tabs-test--kill-buffer saved-buffer)
+        (with-current-buffer
+            (ki-tabs-test--visit-file saved-file)
+          (should (ki-tabs-buffer-marked-p)))))))
+
+(ert-deftest ki-tabs-test-mode-reenable-does-not-reseed-empty-state ()
+  (ki-tabs-test-with-persistence
+    (let* ((file (ki-tabs-test--make-file
+                  ki-tabs-test-root "reenable.el"))
+           (buffer (ki-tabs-test--visit-file file)))
+      (ki-tabs-mode 1)
+      (with-current-buffer buffer
+        (should (ki-tabs-buffer-marked-p))
+        (ki-tabs-unmark-buffer)
+        (should-not (ki-tabs-buffer-marked-p)))
+      (should (equal (ki-tabs--read-state)
+                     '(:version 1 :files nil)))
+      (ki-tabs-mode -1)
+      (ki-tabs-mode 1)
+      (with-current-buffer buffer
+        (should-not (ki-tabs-buffer-marked-p))))))
+
+(ert-deftest ki-tabs-test-first-enable-seeds-and-persists-open-files ()
+  (ki-tabs-test-with-persistence
+    (let* ((first
+            (ki-tabs-test--visit-file
+             (ki-tabs-test--make-file ki-tabs-test-root "seed-a.el")))
+           (second
+            (ki-tabs-test--visit-file
+             (ki-tabs-test--make-file ki-tabs-test-root "seed-b.el")))
+           (writes 0)
+           (write-state (symbol-function 'ki-tabs--write-state)))
+      (cl-letf (((symbol-function 'ki-tabs--write-state)
+                 (lambda (state)
+                   (cl-incf writes)
+                   (funcall write-state state))))
+        (ki-tabs-mode 1))
+      (should (= writes 1))
+      (should (ki-tabs-buffer-marked-p first))
+      (should (ki-tabs-buffer-marked-p second))
+      (should
+       (equal
+        (plist-get (ki-tabs--read-state) :files)
+        (sort (list (ki-tabs--buffer-file-id first)
+                    (ki-tabs--buffer-file-id second))
+              #'string-lessp))))))
+
+(ert-deftest ki-tabs-test-symlink-and-real-path-share-mark ()
+  (ki-tabs-test-with-persistence
+    (let* ((real-file
+            (ki-tabs-test--make-file ki-tabs-test-root "real.el"))
+           (link-file
+            (expand-file-name "link.el" ki-tabs-test-root)))
+      (make-symbolic-link real-file link-file)
+      (ki-tabs-mode 1)
+      (let ((linked-buffer (ki-tabs-test--visit-file link-file)))
+        (with-current-buffer linked-buffer
+          (ki-tabs-mark-buffer))
+        (ki-tabs-test--kill-buffer linked-buffer))
+      (let ((real-buffer (ki-tabs-test--visit-file real-file)))
+        (with-current-buffer real-buffer
+          (should (ki-tabs-buffer-marked-p)))))))
+
+(ert-deftest ki-tabs-test-duplicate-file-buffers-share-mark-cache ()
+  (ki-tabs-test-with-persistence
+    (let* ((file
+            (ki-tabs-test--make-file ki-tabs-test-root "duplicate.el"))
+           (first nil)
+           (second nil))
+      (ki-tabs-mode 1)
+      (setq first (ki-tabs-test--visit-file file)
+            second (generate-new-buffer "ki-tabs-duplicate"))
+      (push second ki-tabs-test--buffers)
+      (with-current-buffer second
+        (set-visited-file-name file t))
+      (with-current-buffer first
+        (ki-tabs-toggle-buffer-mark))
+      (should (ki-tabs-buffer-marked-p first))
+      (should (ki-tabs-buffer-marked-p second))
+      (with-current-buffer second
+        (ki-tabs-toggle-buffer-mark))
+      (should-not (ki-tabs-buffer-marked-p first))
+      (should-not (ki-tabs-buffer-marked-p second)))))
+
+(ert-deftest ki-tabs-test-mark-commands-reject-non-file-buffer ()
+  (ki-tabs-test-with-persistence
+    (let ((buffer (generate-new-buffer "ki-tabs-non-file")))
+      (push buffer ki-tabs-test--buffers)
+      (dolist (command '(ki-tabs-mark-buffer
+                         ki-tabs-unmark-buffer
+                         ki-tabs-toggle-buffer-mark
+                         ki-tabs-unmark-other-buffers))
+        (with-current-buffer buffer
+          (should-error (funcall command) :type 'user-error))))))
+
+(ert-deftest ki-tabs-test-malformed-schema-is-not-overwritten-by-hooks ()
+  (ki-tabs-test-with-persistence
+    (let ((file
+           (ki-tabs-test--make-file ki-tabs-test-root "malformed.el"))
+          (invalid '(:version 99 :files ("/unsupported")))
+          warnings
+          buffer)
+      (ki-tabs-mode 1)
+      (setf (multisession-value ki-tabs--marks-store) invalid)
+      (cl-letf (((symbol-function 'display-warning)
+                 (lambda (type message &optional level buffer-name)
+                   (push (list type message level buffer-name)
+                         warnings))))
+        (setq buffer (ki-tabs-test--visit-file file)))
+      (should (buffer-live-p buffer))
+      (should-not (ki-tabs-buffer-marked-p buffer))
+      (should (seq-some (lambda (warning)
+                          (eq (car warning) 'ki-tabs))
+                        warnings))
+      (should (equal (multisession-value ki-tabs--marks-store)
+                     invalid)))))
 
 (provide 'ki-tabs-test)
 

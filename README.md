@@ -97,6 +97,14 @@ others, and `m` switches to the alternate file. In the `z` layer,
 and `u`/`o` perform character-granular undo/redo. A quick tap of `c`,
 `r`, `g`, `v`, `x`, or `z` performs its primary action.
 
+File marks are persistent: `e k` writes the mark immediately, and the
+mark survives both buffer closure and an Emacs restart. Closing with
+`e n` or the tab close action only kills the buffer; it does not unmark
+the file. Only explicit mark commands (`e k`, `e i`, or their
+`ki-tabs-*` command equivalents) change persistent membership. Closed
+marked files are neither displayed nor reopened automatically, and
+marked-file navigation continues to consider live buffers only.
+
 `NODE` mode requires a tree-sitter grammar for the current major mode;
 see the Tree-sitter setup below.
 
