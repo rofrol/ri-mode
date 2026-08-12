@@ -53,6 +53,16 @@
     (should-not (string-match-p (regexp-quote long-label)
                                 (plist-get overflow :text)))))
 
+(ert-deftest keymap-legend-test-default-limit-keeps-coarse-redo ()
+  (let* ((entry (list :key "l" :description "Coarse Redo"))
+         (rendered
+          (keymap-legend--render-for-width
+           (keymap-legend-test--model-with-entry entry)
+           200)))
+    (should (string-match-p
+             (regexp-quote "Coarse Redo")
+             (plist-get rendered :text)))))
+
 (ert-deftest keymap-legend-test-release-label-is-bounded ()
   (let* ((keymap-legend-max-label-width 10)
          (long-label (make-string 80 ?x))

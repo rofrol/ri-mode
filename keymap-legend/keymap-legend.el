@@ -48,7 +48,7 @@
   :group 'keymap-legend)
 
 (defcustom keymap-legend-max-label-width
-  10
+  11
   "Maximum display width of one binding label in a keymap legend.
 Longer labels are truncated with an ellipsis before rendering."
   :type 'integer
