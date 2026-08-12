@@ -664,7 +664,7 @@ and its release as a KKP CSI-u event."
     (define-key map "e" '(menu-item "≡ Buffer" ignore))
     (define-key map "g" '(menu-item "≡ Open" ri-change-selection))
     (define-key map "t" '(menu-item "≡ Swap" ignore))
-    (define-key map "F" '(menu-item "… Transform" ri-transform-menu))
+    (define-key map "F" '(menu-item "⌨︎ Transform" ri-transform-menu))
     (define-key map "v" '(menu-item "≡ Paste" ri-paste-selection))
     (define-key map "x" '(menu-item "≡ Cut" ri-cut-selection))
     (define-key map "f" '(menu-item "Extend" ri-toggle-extend))
