@@ -408,6 +408,38 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
     (define-key map "y" '(menu-item "|< Eat" ri-eat-first))
     (define-key map "p" '(menu-item "Eat >|" ri-eat-last)) map))
 
+(defvar ri--buffer-layer-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "j"
+                '(menu-item "<< Marked File"
+                            ki-tabs-switch-to-left-marked-buffer))
+    (define-key map "l"
+                '(menu-item "Marked File >>"
+                            ki-tabs-switch-to-right-marked-buffer))
+    (define-key map "y"
+                '(menu-item "|< Marked File"
+                            ki-tabs-switch-to-first-marked-buffer))
+    (define-key map "p"
+                '(menu-item "Marked File >|"
+                            ki-tabs-switch-to-last-marked-buffer))
+    (define-key map "u"
+                '(menu-item "Marked File >"
+                            ki-tabs-switch-to-previous-buffer))
+    (define-key map "o"
+                '(menu-item "< Marked File"
+                            ki-tabs-switch-to-next-buffer))
+    (define-key map "k"
+                '(menu-item "Mark File" ki-tabs-toggle-buffer-mark))
+    (define-key map "n" '(menu-item "Close" kill-current-buffer))
+    (define-key map "i"
+                '(menu-item "Unmark Others"
+                            ki-tabs-unmark-other-buffers))
+    (define-key map "m"
+                '(menu-item "Alternate"
+                            ki-tabs-switch-to-alternate-buffer))
+    map)
+  "Keymap for the Buffer momentary layer (e held).")
+
 (defvar ri--open-layer-map
   (let ((map (make-sparse-keymap)))
     (define-key map "j" '(menu-item "<< Open" ri-open-left))
@@ -473,6 +505,11 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
          :map ri--copy-layer-map
          :release "Copy")
    (list :key ?r :label "Delete/≡ Eat" :tap #'ri-delete-selection :map ri--eat-layer-map :release "Delete")
+   (list :key ?e
+         :label "≡ Buffer"
+         :tap nil
+         :map ri--buffer-layer-map
+         :release nil)
    (list :key ?g :label "≡ Open" :tap #'ri-change-selection :map ri--open-layer-map :release "Change")
    (list :key ?t :label "≡ Swap" :tap nil :map ri--swap-layer-map :release nil)
    (list :key ?v
@@ -624,6 +661,7 @@ and its release as a KKP CSI-u event."
     (define-key map "d" '(menu-item "NODE" ri-set-node-mode))
     (define-key map "c" '(menu-item "Copy/≡ Dup" ri-copy-unit))
     (define-key map "r" '(menu-item "Delete/≡ Eat" ri-delete-selection))
+    (define-key map "e" '(menu-item "≡ Buffer" ignore))
     (define-key map "g" '(menu-item "≡ Open" ri-change-selection))
     (define-key map "t" '(menu-item "≡ Swap" ignore))
     (define-key map "F" '(menu-item "… Transform" ri-transform-menu))

@@ -433,7 +433,7 @@
                      ""))
                  (tab-line-format)
                  "")
-                " [-] ri-tabs-after-enable.el ")))))
+                " [ ] ri-tabs-after-enable.el ")))))
       (when ki-tabs-mode
         (ki-tabs-mode -1))
       (when (buffer-live-p buffer)
