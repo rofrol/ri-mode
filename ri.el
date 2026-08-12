@@ -504,7 +504,7 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
          :tap #'ri-copy-unit
          :map ri--copy-layer-map
          :release "Copy")
-   (list :key ?r :label "Delete/≡ Eat" :tap #'ri-delete-selection :map ri--eat-layer-map :release "Delete")
+   (list :key ?r :label "≡ Delete" :tap #'ri-delete-selection :map ri--eat-layer-map :release "Delete")
    (list :key ?e
          :label "≡ Buffer"
          :tap nil
@@ -660,7 +660,7 @@ and its release as a KKP CSI-u event."
     (define-key map "w" '(menu-item "SUBWORD" ri-extend-set-subword-mode))
     (define-key map "d" '(menu-item "NODE" ri-set-node-mode))
     (define-key map "c" '(menu-item "Copy/≡ Dup" ri-copy-unit))
-    (define-key map "r" '(menu-item "Delete/≡ Eat" ri-delete-selection))
+    (define-key map "r" '(menu-item "≡ Delete" ri-delete-selection))
     (define-key map "e" '(menu-item "≡ Buffer" ignore))
     (define-key map "g" '(menu-item "≡ Open" ri-change-selection))
     (define-key map "t" '(menu-item "≡ Swap" ignore))
