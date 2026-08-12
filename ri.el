@@ -37,7 +37,8 @@
                    "keymap-legend"
                    "status-frame"
                    "semantic-regions"
-                   "modal-cursor"))
+                   "modal-cursor"
+                   "ki-tabs"))
       (let ((path (expand-file-name dir ri-root)))
         (when (file-directory-p path)
           (add-to-list 'load-path path))))))
@@ -48,6 +49,7 @@
 (require 'status-frame)
 (require 'semantic-regions)
 (require 'modal-cursor)
+(require 'ki-tabs)
 (require 'ri-extend)
 (require 'ri-duplicate)
 (require 'ri-edit)
@@ -799,6 +801,7 @@ keymap lookups during that command must keep their resolved binding."
   (interactive)
   (setq status-frame-height 6)
   (modal-cursor-mode 1)
+  (ki-tabs-mode 1)
   (mini-modal-setup)
   (kkp-chord-mode 1)
   (ri-chord-setup)
