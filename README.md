@@ -73,6 +73,7 @@ main bindings are:
 | `f`                  | Start Extend; navigation then grows or shrinks the selection |
 | `/`                  | Move the cursor to the other edge of the unit or selection   |
 | `c`, `r`, `g`, `v`, `x` | Copy, delete, change, paste, or cut the unit/selection |
+| `e` (hold)           | Open the Ki-style Buffer momentary layer                     |
 | `I`                  | Join the current line to the previous line                  |
 | `J` / `L`            | Dedent / indent nonblank selected lines by four columns      |
 | `F`                  | Open the Transform menu                                      |
@@ -81,13 +82,20 @@ main bindings are:
 | `SPC`                | Open the command menu                                        |
 | `C-h`                | Show the default Emacs help keymap and read one help key |
 
-The `c`, `r`, `g`, `t`, `v`, `x`, and `z` keys also act as momentary
-layers. Hold one of them to display its available actions, press the
-shown direction key while still holding it, then release. These layers
-provide directional duplicate, eat, open, swap, paste, and cut
-operations. In the `z` layer, `j`/`l` perform coarse undo/redo and
-`u`/`o` perform character-granular undo/redo. A quick tap of `c`, `r`,
-`g`, `v`, `x`, or `z` performs its primary action.
+The `c`, `r`, `e`, `g`, `t`, `v`, `x`, and `z` keys also act as
+momentary layers. Hold one of them to display its available actions,
+press the shown key while still holding it, then release. These layers
+provide duplicate, eat, buffer, open, swap, paste, cut, and undo/redo
+operations.
+
+The Buffer layer matches Ki: `j`/`l` cycle marked buffers with wrapping,
+`y`/`p` select the first/last marked buffer, `u`/`o` move through all
+open files—including unmarked files—without wrapping, `k` toggles the
+current buffer mark, `n` closes the current buffer, `i` unmarks the
+others, and `m` switches to the alternate file. In the `z` layer,
+`j`/`l` perform coarse undo/redo
+and `u`/`o` perform character-granular undo/redo. A quick tap of `c`,
+`r`, `g`, `v`, `x`, or `z` performs its primary action.
 
 `NODE` mode requires a tree-sitter grammar for the current major mode;
 see the Tree-sitter setup below.

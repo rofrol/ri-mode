@@ -270,6 +270,35 @@
             (send "122;:3u")
             (should (equal (buffer-string) "base"))))))))
 
+(ert-deftest ri-chord-test-buffer-layer-registers-ki-bindings ()
+  (ri-chord-test--with-fresh-chords
+    (with-temp-buffer
+      (let ((mini-modal-mode t)
+            (ri--menu-state nil)
+            (ri--help-prefix-active nil))
+        (ri-chord-setup)
+        (let ((spec (ri--layer-spec ?e)))
+          (should (equal (plist-get spec :label) "≡ Buffer"))
+          (should-not (plist-get spec :tap))
+          (should (eq (plist-get spec :map) ri--buffer-layer-map)))
+        (should (eq (gethash ?e kkp-chord--mod-maps)
+                    ri--buffer-layer-map))
+        (dolist
+            (binding
+             `(("j" . ,#'ki-tabs-switch-to-left-marked-buffer)
+               ("l" . ,#'ki-tabs-switch-to-right-marked-buffer)
+               ("y" . ,#'ki-tabs-switch-to-first-marked-buffer)
+               ("p" . ,#'ki-tabs-switch-to-last-marked-buffer)
+               ("u" . ,#'ki-tabs-switch-to-previous-buffer)
+               ("o" . ,#'ki-tabs-switch-to-next-buffer)
+               ("k" . ,#'ki-tabs-toggle-buffer-mark)
+               ("n" . ,#'kill-current-buffer)
+               ("i" . ,#'ki-tabs-unmark-other-buffers)
+               ("m" . ,#'ki-tabs-switch-to-alternate-buffer)))
+          (should (eq (lookup-key ri--buffer-layer-map (car binding))
+                      (cdr binding))))
+        (should (eq (lookup-key ri--normal-help-map "e") #'ignore))))))
+
 (ert-deftest ri-chord-test-help-key-prompt-survives-shift-release ()
   (let ((ri--help-prefix-active t)
         (ri--restore-message-after-release nil)

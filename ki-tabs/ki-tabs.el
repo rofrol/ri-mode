@@ -8,11 +8,11 @@
 
 ;;; Commentary:
 
-;; `ki-tabs-mode' displays every live file-visiting buffer in a tab line
-;; above file windows.  Tabs stay in path order, use the shortest unique
-;; path suffix as their label, and follow Ki's clean/modified markers.
-;; Selecting a tab switches the current window to its buffer; closing a tab
-;; kills that buffer.
+;; `ki-tabs-mode' displays every marked file-visiting buffer in a tab line
+;; above file windows and appends the current buffer while it is unmarked.
+;; Marked tabs stay in path order, use the shortest unique path suffix as
+;; their label, and show Ki's marked/modified state indicators.  Selecting a
+;; tab switches the current window to its buffer; closing a tab kills it.
 
 ;;; Code:
 
@@ -25,13 +25,23 @@
   :group 'convenience
   :prefix "ki-tabs-")
 
-(defcustom ki-tabs-clean-marker "[-]"
-  "Marker shown before the name of an unmodified file."
+(defcustom ki-tabs-unmarked-marker "[ ]"
+  "Marker shown before the name of an unmodified, unmarked file."
   :type 'string
   :group 'ki-tabs)
 
-(defcustom ki-tabs-modified-marker "[÷]"
-  "Marker shown before the name of a modified file."
+(defcustom ki-tabs-marked-marker "[-]"
+  "Marker shown before the name of an unmodified, marked file."
+  :type 'string
+  :group 'ki-tabs)
+
+(defcustom ki-tabs-unmarked-modified-marker "[:]"
+  "Marker shown before the name of a modified, unmarked file."
+  :type 'string
+  :group 'ki-tabs)
+
+(defcustom ki-tabs-marked-modified-marker "[÷]"
+  "Marker shown before the name of a modified, marked file."
   :type 'string
   :group 'ki-tabs)
 
@@ -78,6 +88,16 @@
 (defvar-local ki-tabs--tab-line-was-active nil
   "Whether `tab-line-mode' was active before Ki tabs were installed.")
 
+(defvar-local ki-tabs--marked-p nil
+  "Non-nil when the current file buffer is marked as a Ki tab.")
+
+(defun ki-tabs-buffer-marked-p (&optional buffer)
+  "Return non-nil when BUFFER is marked as a Ki tab.
+BUFFER defaults to the current buffer."
+  (let ((buffer (or buffer (current-buffer))))
+    (and (buffer-live-p buffer)
+         (buffer-local-value 'ki-tabs--marked-p buffer))))
+
 (defun ki-tabs--file-buffer-p (buffer)
   "Return non-nil when BUFFER is a live visible file buffer."
   (and (buffer-live-p buffer)
@@ -92,10 +112,33 @@
         (string-lessp (buffer-name left) (buffer-name right))
       (string-lessp left-file right-file))))
 
-(defun ki-tabs--buffer-list ()
+(defun ki-tabs--file-buffer-list ()
   "Return all open file buffers in stable path order."
   (sort (seq-filter #'ki-tabs--file-buffer-p (buffer-list))
         #'ki-tabs--buffer-less-p))
+
+(defun ki-tabs--marked-buffer-list ()
+  "Return marked file buffers in stable path order."
+  (seq-filter #'ki-tabs-buffer-marked-p
+              (ki-tabs--file-buffer-list)))
+
+(defun ki-tabs--navigation-buffer-list ()
+  "Return marked buffers followed by every open unmarked file buffer."
+  (let (marked unmarked)
+    (dolist (buffer (ki-tabs--file-buffer-list))
+      (if (ki-tabs-buffer-marked-p buffer)
+          (push buffer marked)
+        (push buffer unmarked)))
+    (nconc (nreverse marked) (nreverse unmarked))))
+
+(defun ki-tabs--buffer-list ()
+  "Return marked file buffers followed by the current unmarked file."
+  (let ((current (window-buffer))
+        (marked (ki-tabs--marked-buffer-list)))
+    (if (or (not (ki-tabs--file-buffer-p current))
+            (memq current marked))
+        marked
+      (append marked (list current)))))
 
 (defun ki-tabs--path-parts (file)
   "Return the non-empty path components of FILE."
@@ -147,12 +190,21 @@
    ((mode-line-window-selected-p) 'ki-tabs-current-tab)
    (t 'ki-tabs-current-tab-inactive-window)))
 
+(defun ki-tabs--marker (buffer)
+  "Return BUFFER's marker for its marked and modified state."
+  (let ((marked (ki-tabs-buffer-marked-p buffer)))
+    (if (buffer-modified-p buffer)
+        (if marked
+            ki-tabs-marked-modified-marker
+          ki-tabs-unmarked-modified-marker)
+      (if marked
+          ki-tabs-marked-marker
+        ki-tabs-unmarked-marker))))
+
 (defun ki-tabs--format-tab (buffer buffers)
   "Format BUFFER as a Ki-style tab among BUFFERS."
   (let* ((selected (eq buffer (window-buffer)))
-         (marker (if (buffer-modified-p buffer)
-                     ki-tabs-modified-marker
-                   ki-tabs-clean-marker))
+         (marker (ki-tabs--marker buffer))
          (name (funcall tab-line-tab-name-function buffer buffers))
          (label (string-replace "%" "%%"
                                 (format " %s %s " marker name)))
@@ -173,12 +225,15 @@
   "Return a tab-line cache key for TABS and their file state."
   (append
    (tab-line-cache-key-default tabs)
-   (list ki-tabs-clean-marker
-         ki-tabs-modified-marker
+   (list ki-tabs-unmarked-marker
+         ki-tabs-marked-marker
+         ki-tabs-unmarked-modified-marker
+         ki-tabs-marked-modified-marker
          (mapcar (lambda (buffer)
                    (list (buffer-name buffer)
                          (buffer-file-name buffer)
-                         (buffer-modified-p buffer)))
+                         (buffer-modified-p buffer)
+                         (ki-tabs-buffer-marked-p buffer)))
                  tabs))))
 
 (defun ki-tabs--capture-state ()
@@ -229,12 +284,132 @@
               (set (make-local-variable variable) value)
             (kill-local-variable variable))))
       (kill-local-variable 'ki-tabs--saved-state)
-      (kill-local-variable 'ki-tabs--tab-line-was-active))))
+      (kill-local-variable 'ki-tabs--tab-line-was-active)))
+  (kill-local-variable 'ki-tabs--marked-p))
 
 (defun ki-tabs--refresh (&rest _ignored)
   "Invalidate every Ki tab line when `ki-tabs-mode' is active."
   (when ki-tabs-mode
     (tab-line-force-update t)))
+
+(defun ki-tabs--set-buffer-marked (buffer marked)
+  "Set BUFFER's marked state to MARKED and refresh every tab line."
+  (unless (ki-tabs--file-buffer-p buffer)
+    (user-error "Buffer is not visiting a visible file"))
+  (with-current-buffer buffer
+    (setq ki-tabs--marked-p marked))
+  (ki-tabs--refresh))
+
+(defun ki-tabs-mark-buffer (&optional buffer)
+  "Mark BUFFER as a Ki tab.
+BUFFER defaults to the current buffer."
+  (interactive)
+  (ki-tabs--set-buffer-marked (or buffer (current-buffer)) t))
+
+(defun ki-tabs-unmark-buffer (&optional buffer)
+  "Unmark BUFFER as a Ki tab.
+BUFFER defaults to the current buffer."
+  (interactive)
+  (ki-tabs--set-buffer-marked (or buffer (current-buffer)) nil))
+
+(defun ki-tabs-toggle-buffer-mark (&optional buffer)
+  "Toggle whether BUFFER is marked as a Ki tab.
+BUFFER defaults to the current buffer."
+  (interactive)
+  (let ((buffer (or buffer (current-buffer))))
+    (ki-tabs--set-buffer-marked
+     buffer
+     (not (ki-tabs-buffer-marked-p buffer)))))
+
+(defun ki-tabs--switch-to-marked-buffer (movement)
+  "Switch to a marked buffer selected by MOVEMENT.
+MOVEMENT is one of `left', `right', `first', or `last'.  Left and
+right navigation wrap at the ends of the marked buffer list."
+  (let* ((buffers (ki-tabs--marked-buffer-list))
+         (count (length buffers))
+         (position (seq-position buffers (current-buffer) #'eq))
+         (target
+          (when (> count 0)
+            (pcase movement
+              ('first (car buffers))
+              ('last (nth (1- count) buffers))
+              ('left
+               (nth (if position
+                        (mod (1- position) count)
+                      (1- count))
+                    buffers))
+              ('right
+               (nth (if position
+                        (mod (1+ position) count)
+                      0)
+                    buffers))))))
+    (when target
+      (switch-to-buffer target))))
+
+(defun ki-tabs-switch-to-left-marked-buffer ()
+  "Switch to the marked buffer on the left, wrapping at the start."
+  (interactive)
+  (ki-tabs--switch-to-marked-buffer 'left))
+
+(defun ki-tabs-switch-to-right-marked-buffer ()
+  "Switch to the marked buffer on the right, wrapping at the end."
+  (interactive)
+  (ki-tabs--switch-to-marked-buffer 'right))
+
+(defun ki-tabs-switch-to-first-marked-buffer ()
+  "Switch to the first marked buffer."
+  (interactive)
+  (ki-tabs--switch-to-marked-buffer 'first))
+
+(defun ki-tabs-switch-to-last-marked-buffer ()
+  "Switch to the last marked buffer."
+  (interactive)
+  (ki-tabs--switch-to-marked-buffer 'last))
+
+(defun ki-tabs--switch-to-relative-buffer (offset)
+  "Switch OFFSET positions in the open file list without wrapping.
+As in Ki, marked buffers come first, followed by every open unmarked
+file buffer."
+  (let* ((buffers (ki-tabs--navigation-buffer-list))
+         (position (seq-position buffers (current-buffer) #'eq))
+         (target-position (and position (+ position offset))))
+    (when (and target-position
+               (>= target-position 0)
+               (< target-position (length buffers)))
+      (switch-to-buffer (nth target-position buffers)))))
+
+(defun ki-tabs-switch-to-previous-buffer ()
+  "Switch to the previous open file buffer."
+  (interactive)
+  (ki-tabs--switch-to-relative-buffer -1))
+
+(defun ki-tabs-switch-to-next-buffer ()
+  "Switch to the next open file buffer."
+  (interactive)
+  (ki-tabs--switch-to-relative-buffer 1))
+
+(defun ki-tabs-unmark-other-buffers ()
+  "Unmark every buffer except the current buffer."
+  (interactive)
+  (let ((current (current-buffer)))
+    (dolist (buffer (buffer-list))
+      (when (and (not (eq buffer current))
+                 (ki-tabs-buffer-marked-p buffer))
+        (with-current-buffer buffer
+          (setq ki-tabs--marked-p nil)))))
+  (ki-tabs--refresh))
+
+(defun ki-tabs-switch-to-alternate-buffer ()
+  "Switch to the most recently used other visible file buffer."
+  (interactive)
+  (let ((current (current-buffer)))
+    (when-let* ((alternate
+                 (seq-find
+                  (lambda (buffer)
+                    (and (not (eq buffer current))
+                         (ki-tabs--file-buffer-p buffer)))
+                  (buffer-list))))
+      (switch-to-buffer alternate))))
 
 (defun ki-tabs--sync-current-buffer ()
   "Install or remove Ki tabs after the current buffer changes role."
@@ -256,6 +431,8 @@
   (dolist (buffer (buffer-list))
     (when (buffer-live-p buffer)
       (with-current-buffer buffer
+        (when (ki-tabs--file-buffer-p buffer)
+          (setq ki-tabs--marked-p t))
         (ki-tabs--install))))
   (ki-tabs--refresh))
 
@@ -276,11 +453,13 @@
 
 ;;;###autoload
 (define-minor-mode ki-tabs-mode
-  "Display Ki-style tabs for all open file buffers.
+  "Display Ki-style tabs for marked files and the current file.
 
-The global mode adds a tab line to every file-visiting buffer.  Tabs are
-sorted by path, duplicate basenames receive the shortest unique path
-suffix, and modified files use `ki-tabs-modified-marker'."
+Enabling the global mode marks every existing file-visiting buffer.
+Files visited later start unmarked and remain visible while current.
+Use `ki-tabs-mark-buffer', `ki-tabs-unmark-buffer', or
+`ki-tabs-toggle-buffer-mark' to change that state.  Each tab's marker
+shows both its marked and modified state."
   :global t
   :group 'ki-tabs
   (if ki-tabs-mode
