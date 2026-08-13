@@ -165,7 +165,7 @@ Signal a user error unless BUFFER is a live visible file buffer with a usable
       (user-error "Buffer has no usable current directory"))
     (ri-tabs--canonical-directory default-directory)))
 
-(defun ri-tabs--git-work-tree-root (directory)
+(defun ri-tabs-git-work-tree-root (directory)
   "Return Git's canonical work-tree root for DIRECTORY, or nil.
 Git itself is authoritative so process environment variables such as
 GIT_DIR and GIT_WORK_TREE are honored."
@@ -181,7 +181,7 @@ GIT_DIR and GIT_WORK_TREE are honored."
 (defun ri-tabs--buffer-git-root (buffer)
   "Return BUFFER's effective canonical Git work-tree root, or nil."
   (when (ri-tabs--file-buffer-p buffer)
-    (ri-tabs--git-work-tree-root (ri-tabs--buffer-directory buffer))))
+    (ri-tabs-git-work-tree-root (ri-tabs--buffer-directory buffer))))
 
 (defun ri-tabs--compute-buffer-owner-context (buffer)
   "Compute BUFFER's canonical marked-set owner context.
@@ -189,7 +189,7 @@ Prefer the effective Git work-tree root; outside Git use BUFFER's effective
 current directory.  This function may invoke Git and therefore belongs only on
 model-synchronization paths, never presentation repaint paths."
   (let ((directory (ri-tabs--buffer-directory buffer)))
-    (or (ri-tabs--git-work-tree-root directory) directory)))
+    (or (ri-tabs-git-work-tree-root directory) directory)))
 
 (defun ri-tabs--buffer-owner-context (buffer)
   "Return BUFFER's cached canonical marked-set owner context.
@@ -247,7 +247,7 @@ OWNERS is an alist of (OWNER . FILES), where OWNER is a canonical directory."
          (seq-some
           (lambda (file)
             (let ((directory (file-name-directory file)))
-              (or (ri-tabs--git-work-tree-root directory)
+              (or (ri-tabs-git-work-tree-root directory)
                   (and (file-directory-p directory)
                        (ri-tabs--canonical-directory directory)))))
           files)))

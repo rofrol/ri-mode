@@ -351,7 +351,7 @@
           (with-current-buffer foreign
             (setq buffer-file-name "/tmp/project-b/main.el"
                   default-directory "/tmp/project-b/"))
-          (cl-letf (((symbol-function 'ri-tabs--git-work-tree-root)
+          (cl-letf (((symbol-function 'ri-tabs-git-work-tree-root)
                      (lambda (_directory) nil)))
             (let ((buffers (list owner foreign)))
               (should (equal (ri-tabs--tab-name owner buffers owner-root)
