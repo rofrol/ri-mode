@@ -72,11 +72,14 @@ the echo area even though it does not become an Emacs command.")
 ;;   bit 1 (2): report event types (1=press, 2=repeat, 3=release)
 ;;   bit 2 (4): report alternate keys
 ;;   bit 3 (8): report ALL keys as escape codes
+;;   bit 4 (16): report associated text
 ;;
-;; kkp.el sets bits 0 + 2 = 5.  We add bits 1 + 3 → 15.
+;; kkp.el sets bits 0 + 2 = 5.  We add bits 1 + 3 + 4 → 31.
 ;; Without bit 1, press/release events are indistinguishable.
 ;; Without bit 3, regular keys ('c', 'k') are plain bytes — they
 ;;   bypass kkp's CSI handler and our advice never sees them.
+;; Without bit 4, AltGr/layout-produced Unicode text (for example ł)
+;;   is not present in CSI-u at all, so it cannot be distinguished from Meta.
 ;; ---------------------------------------------------------------------------
 (unless (assoc 'report-event-types kkp--progressive-enhancement-flags)
   (push '(report-event-types . (:bit 2)) kkp--progressive-enhancement-flags))
@@ -86,9 +89,13 @@ the echo area even though it does not become an Emacs command.")
   (push '(report-all-keys-as-escape-codes . (:bit 8)) kkp--progressive-enhancement-flags))
 (add-to-list 'kkp-active-enhancements 'report-all-keys-as-escape-codes)
 
+(unless (assoc 'report-associated-text kkp--progressive-enhancement-flags)
+  (push '(report-associated-text . (:bit 16)) kkp--progressive-enhancement-flags))
+(add-to-list 'kkp-active-enhancements 'report-associated-text)
+
 (defconst kkp-chord--required-enhancement-mask
-  (logior 2 8)
-  "KKP flag bits required for event types and escaped ordinary keys.")
+  (logior 2 8 16)
+  "KKP flag bits required for event types, escaped ordinary keys, and associated text.")
 
 (defun kkp-chord--update-active-terminal (terminal)
   "Re-negotiate KKP flags in TERMINAL to include chord-required bits.
@@ -112,7 +119,7 @@ Safe to call when KKP is not yet active in TERMINAL."
           (setf (kkp--state-enhancements (kkp--ensure-state terminal))
                 actual))))))
 (defun kkp-chord--update-all-terminals ()
-  "Ensure every active KKP terminal has event-type reporting enabled."
+  "Ensure every active KKP terminal has all chord-required KKP flags enabled."
   (dolist (terminal (terminal-list))
     (kkp-chord--update-active-terminal terminal)))
 
@@ -175,7 +182,7 @@ passes through to normal KKP translation.")
 
 (defun kkp-chord--parse (terminal-input)
   "Parse TERMINAL-INPUT (list of char codes) into a plist.
-Returns (:keycode N :event-type N :modifier-num N).
+Returns (:keycode N :event-type N :modifier-num N :text-codepoints LIST).
 
 TERMINAL-INPUT format (with event-types enabled):
   CSI keycode[:shifted-key];modifier[:event-type];text u
@@ -204,9 +211,15 @@ event-type=1, modifier-num=0."
         (when (and (cadr mod-subparts)
                    (not (string-empty-p (cadr mod-subparts))))
           (setq event-type (string-to-number (cadr mod-subparts))))))
-    (list :keycode keycode
-          :event-type (or event-type 1)
-          :modifier-num modifier-num)))
+    (let* ((text-part (nth 2 parts))
+           (text-codepoints
+            (when (and text-part (not (string-empty-p text-part)))
+              (mapcar #'string-to-number
+                      (split-string text-part ":" t)))))
+      (list :keycode keycode
+            :event-type (or event-type 1)
+            :modifier-num modifier-num
+            :text-codepoints text-codepoints))))
 
 ;; ---------------------------------------------------------------------------
 ;; Chord modifier lookup
@@ -251,6 +264,25 @@ after the one whose map contains the command."
 (defun kkp-chord--modifier-key-p (keycode)
   "Return non-nil when KEYCODE is a physical modifier key."
   (memq keycode kkp-chord--modifier-keycodes))
+
+(defun kkp-chord--layout-text-event (parsed)
+  "Return a text event vector when PARSED carries composed layout text.
+
+Kitty's CSI-u `text' field contains the character produced by the active
+keyboard layout after modifier processing.  This is important for AltGr:
+for example the physical `l' key may have keycode 108 while its text field
+contains U+0142 (ł).  KKP normally interprets the modifier bits as Meta and
+can therefore turn that input into `M-l'.
+
+Only non-ASCII printable text which differs from the physical keycode is
+handled here.  Ordinary Meta shortcuts such as `M-l' and `M-S-l' therefore
+continue through normal KKP translation."
+  (let* ((keycode (plist-get parsed :keycode))
+         (text (plist-get parsed :text-codepoints)))
+    (when (and (= (length text) 1)
+               (>= (car text) 128)
+               (/= (car text) keycode))
+      (vector (car text)))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -335,7 +367,8 @@ ordinary command loop does not update `this-command' or `last-command'."
   (let* ((parsed (kkp-chord--parse terminal-input))
          (keycode (plist-get parsed :keycode))
          (event-type (plist-get parsed :event-type))
-         (modifier-num (plist-get parsed :modifier-num)))
+         (modifier-num (plist-get parsed :modifier-num))
+         (layout-text-event (kkp-chord--layout-text-event parsed)))
     (cond
      ;; Release event → swallow.  Run the hook after chord release actions
      ;; so clients can restore transient UI (for example an echo-area
@@ -352,6 +385,17 @@ ordinary command loop does not update `this-command' or `last-command'."
       (when (= event-type kkp-chord--event-press)
         (kkp-chord--mark-held-intervening))
       [])
+
+     ;; Text produced by the keyboard layout (notably AltGr) takes
+     ;; precedence over KKP's modifier interpretation.  A Polish Right
+     ;; Alt+l, for example, arrives as physical `l' plus text U+0142 and
+     ;; must become `ł', not `M-l'.
+     ((and (or (= event-type kkp-chord--event-press)
+               (= event-type kkp-chord--event-repeat))
+           layout-text-event)
+      (when kkp-chord--held
+        (kkp-chord--mark-held-intervening))
+      layout-text-event)
 
      ;; Repeat of a held chord modifier → swallow.
      ((and (= event-type kkp-chord--event-repeat)
