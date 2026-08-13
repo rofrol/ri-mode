@@ -30,6 +30,17 @@
      (eq (overlay-get overlay 'face) 'sr-highlight-face))
    (overlays-at pos)))
 
+(ert-deftest ri-extend-test-toggle-command-enters-extend-interactively ()
+  (ri-extend-test--with-buffer "alpha beta\n"
+    (setq sr-submode 'word)
+    (should (commandp #'ri-toggle-extend))
+    (call-interactively #'ri-toggle-extend)
+    (should (ri--selection-active-p))
+    (should (equal (ri--selection-bounds) (cons 1 6)))
+    (should (eq (ri--selection-state-active-edge ri--selection) 'end))
+    (should (= (point) 5))
+    (ri--exit-extend)))
+
 (ert-deftest ri-extend-test-submode-switch-preserves-selection ()
   (ri-extend-test--with-buffer "foo bar baz\n"
     (dolist
@@ -357,6 +368,9 @@
                   'help-command))
       (should (eq (lookup-key ri--normal-help-map "/")
                   #'ri-swap-cursor))
+      (should (eq (lookup-key mini-modal-map "f")
+                  #'ri-toggle-extend))
+      (should (commandp (lookup-key mini-modal-map "f")))
       (should (eq (lookup-key mini-modal-map "d")
                   #'ri-set-node-mode))
       (should (eq (lookup-key ri--normal-help-map "d")

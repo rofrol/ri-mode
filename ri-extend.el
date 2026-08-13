@@ -517,6 +517,7 @@ When entering: select the current unit and put point on its last character.
 In WORD, WORD*, LINE, LINE*, and PARAGRAPH modes, repeated `f` selects
 the buffer; in CHAR mode, it selects the current line.  In SUBWORD mode,
 repeated `f` is a no-op; in NODE mode, it leaves Extend."
+  (interactive)
   (unless (and (ri--selection-active-p) (eq sr-submode 'subword))
     (if (ri--selection-active-p)
         (if (ri--select-all-submode-p)
