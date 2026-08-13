@@ -525,6 +525,73 @@
                     (semantic-region-parse-at 'node (point)))
                    "t"))))
 
+
+(ert-deftest semantic-region-test-node-down-enters-atomic-elisp-string ()
+  (semantic-region-test--with-buffer "\"melpa\""
+    (unless (and (treesit-available-p)
+                 (treesit-language-available-p 'elisp))
+      (ert-skip "Elisp tree-sitter grammar unavailable"))
+    (emacs-lisp-mode)
+    (treesit-parser-create 'elisp)
+    (setq sr-submode 'node)
+    (goto-char (point-min))
+    (should (equal (semantic-region-string
+                    (semantic-region-parse-at 'node (point)))
+                   "\"melpa\""))
+    (sr-nav-down)
+    (should (equal (semantic-region-string
+                    (semantic-region-parse-at 'node (point)))
+                   "melpa"))
+    (should (equal sr--node-virtual-bounds (cons 2 7)))
+    (should (string= (treesit-node-type sr--node-virtual-parent) "string"))
+    (sr-nav-up)
+    (should-not sr--node-virtual-bounds)
+    (should (equal (semantic-region-string
+                    (semantic-region-parse-at 'node (point)))
+                   "\"melpa\""))))
+
+(ert-deftest semantic-region-test-node-down-elisp-string-cases ()
+  (dolist (case '(("\"hello world\"" . "hello world")
+                  ("\"a\\\\b\"" . "a\\\\b")
+                  ("(message \"melpa\")" . "melpa")))
+    (semantic-region-test--with-buffer (car case)
+      (unless (and (treesit-available-p)
+                   (treesit-language-available-p 'elisp))
+        (ert-skip "Elisp tree-sitter grammar unavailable"))
+      (emacs-lisp-mode)
+      (treesit-parser-create 'elisp)
+      (setq sr-submode 'node)
+      (search-forward "\"")
+      (backward-char)
+      (setq sr--node-current nil)
+      (let ((string-node (treesit-node-at (point) 'elisp)))
+        (while (and string-node
+                    (not (string= (treesit-node-type string-node) "string")))
+          (setq string-node (treesit-node-parent string-node)))
+        (should string-node)
+        (setq sr--node-current string-node)
+        (goto-char (treesit-node-start string-node)))
+      (sr-nav-down)
+      (should (equal (semantic-region-string
+                      (semantic-region-parse-at 'node (point)))
+                     (cdr case))))))
+
+(ert-deftest semantic-region-test-node-down-empty-elisp-string-is-noop ()
+  (semantic-region-test--with-buffer "\"\""
+    (unless (and (treesit-available-p)
+                 (treesit-language-available-p 'elisp))
+      (ert-skip "Elisp tree-sitter grammar unavailable"))
+    (emacs-lisp-mode)
+    (treesit-parser-create 'elisp)
+    (setq sr-submode 'node)
+    (goto-char (point-min))
+    (let ((before (semantic-region-string
+                   (semantic-region-parse-at 'node (point)))))
+      (sr-nav-down)
+      (should (equal (semantic-region-string
+                      (semantic-region-parse-at 'node (point)))
+                     before)))))
+
 (ert-deftest semantic-region-test-parent-line-requires-tree-sitter ()
   (semantic-region-test--with-buffer "plain text"
     (let ((sr-node-language-alist nil))
