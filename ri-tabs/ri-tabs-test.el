@@ -391,8 +391,8 @@
 (ert-deftest ri-tabs-test-color-hierarchy-has-explicit-backgrounds ()
   (should (equal (face-background 'ri-tabs-current-tab nil t) "#ffffff"))
   (should (equal (face-background 'ri-tabs-bar nil t) "#f4f4f4"))
-  (should (equal (face-background 'ri-tabs-visible-tab nil t) "#d8d8d8"))
-  (should (equal (face-background 'ri-tabs-tab nil t) "#c4c4c4")))
+  (should (equal (face-background 'ri-tabs-visible-tab nil t) "#8faec7"))
+  (should (equal (face-background 'ri-tabs-tab nil t) "#989898")))
 
 (ert-deftest ri-tabs-test-surface-buffer-uses-bar-background-face ()
   (let ((ri-tabs--surface-buffers (make-hash-table :test #'eq))
