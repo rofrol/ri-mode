@@ -9,21 +9,22 @@
 ;;; Commentary:
 
 ;; `ri-tabs-mode' displays an owner-context set of persistently marked files
-;; in one native Tab Bar spanning each ordinary frame and appends that frame's
-;; selected buffer while it is unmarked in the active owner set.  The owner context
-;; of the first marked file owns the set, but files in that set may live in any
-;; Git repository or outside Git.  Opening such a file never changes the owner.
-;; Marked tabs stay in path order.  Ordinary labels use basenames; when names
-;; collide, the owner-local file stays short where possible and foreign files
-;; receive the minimum parent-directory qualification needed for disambiguation.
-;; Tabs are content-sized rather than stretched to equal widths.
+;; in one Ri-owned frame-wide tab surface per ordinary frame and appends that
+;; frame's selected buffer while it is unmarked in the active owner set.  The
+;; owner context of the first marked file owns the set, but files in that set
+;; may live in any Git repository or outside Git.  Opening such a file never
+;; changes the owner.  Marked tabs stay in path order.  Ordinary labels use
+;; basenames; when names collide, the owner-local file stays short where possible
+;; and foreign files receive the minimum parent-directory qualification needed
+;; for disambiguation.  Tabs are content-sized and Ri explicitly packs complete
+;; tabs into as many rows as the frame width requires.
 
 ;;; Code:
 
+(require 'cl-lib)
 (require 'multisession)
 (require 'seq)
 (require 'subr-x)
-(require 'tab-bar)
 
 (defgroup ri-tabs nil
   "Ki-style tabs for open file buffers."
@@ -59,12 +60,12 @@
   :group 'ri-tabs)
 
 (defface ri-tabs-tab
-  '((t :inherit tab-bar-tab-inactive :box nil))
+  '((t :inherit mode-line-inactive :box nil))
   "Face used for an inactive file tab."
   :group 'ri-tabs)
 
 (defface ri-tabs-current-tab
-  '((t :inherit tab-bar-tab
+  '((t :inherit mode-line-active
        :foreground "black"
        :background "#ffffff"
        :weight bold
@@ -73,43 +74,18 @@
   :group 'ri-tabs)
 
 (defface ri-tabs-highlight
-  '((t :inherit tab-bar-tab-highlight :box nil))
+  '((t :inherit highlight :box nil))
   "Face used when the pointer is over a file tab."
   :group 'ri-tabs)
 
-(defconst ri-tabs--tab-bar-event-bindings
-  '(([down-mouse-1] . ri-tabs--mouse-select)
-    ([drag-mouse-1] . ignore)
-    ([mouse-1] . ignore)
-    ([mouse-2] . ri-tabs--mouse-close)
-    ([down-mouse-3] . ri-tabs--mouse-context-menu)
-    ([mouse-4] . ri-tabs-switch-to-previous-buffer)
-    ([mouse-5] . ri-tabs-switch-to-next-buffer)
-    ([wheel-up] . ri-tabs-switch-to-previous-buffer)
-    ([wheel-down] . ri-tabs-switch-to-next-buffer)
-    ([wheel-left] . ri-tabs-switch-to-previous-buffer)
-    ([wheel-right] . ri-tabs-switch-to-next-buffer)
-    ([S-mouse-4] . ignore)
-    ([S-mouse-5] . ignore)
-    ([S-wheel-up] . ignore)
-    ([S-wheel-down] . ignore)
-    ([S-wheel-left] . ignore)
-    ([S-wheel-right] . ignore)
-    ([touchscreen-begin] . ri-tabs--touchscreen-begin))
-  "Tab Bar event bindings owned while `ri-tabs-mode' is active.")
+(defvar ri-tabs--surface-windows (make-hash-table :test #'eq)
+  "Map live frames to their Ri tab surface windows.")
 
-(defconst ri-tabs--workspace-shortcut-commands
-  '(tab-recent tab-bar-select-tab tab-last tab-next tab-previous)
-  "Native workspace commands hidden while Ri file tabs are visible.")
+(defvar ri-tabs--surface-buffers (make-hash-table :test #'eq)
+  "Map live frames to their Ri tab surface buffers.")
 
-(defconst ri-tabs--absent (make-symbol "ri-tabs-absent")
-  "Sentinel representing an absent saved alist entry.")
-
-(defvar ri-tabs--tab-bar-state nil
-  "Pre-existing native Tab Bar state saved by `ri-tabs-mode'.")
-
-(defvar ri-tabs--temporary-frame-states nil
-  "Tab Bar state of frames created while Ri is active.")
+(defvar ri-tabs--layout-in-progress-p nil
+  "Non-nil while an Ri tab surface is being created, laid out, or removed.")
 
 (defvar ri-tabs-mode nil
   "Non-nil when Ki tabs are enabled globally.")
@@ -544,41 +520,59 @@ remain unambiguous."
       (frame-parameter frame 'no-accept-focus)
       (eq (frame-parameter frame 'minibuffer) 'only)))
 (defun ri-tabs--frame-eligible-p (frame)
-  "Return non-nil when FRAME should display an Ri file Tab Bar.
+  "Return non-nil when FRAME should display an Ri file tab surface.
 
-Ri owns the Tab Bar row of every ordinary top-level frame while the
-mode is active.  A pre-existing `tab-bar-lines-keep-state' value is
-saved and restored on disable, but must not suppress Ri's row on an
-otherwise ordinary frame.  Structural auxiliary frames are excluded."
+Ri owns one dedicated top side-window surface on every ordinary top-level
+frame while the mode is active.  Structural auxiliary frames are excluded."
   (and (frame-live-p frame)
        (not (ri-tabs--structurally-ineligible-frame-p frame))))
 
+
+(defun ri-tabs--surface-window-p (window)
+  "Return non-nil when WINDOW is an Ri-owned tab surface."
+  (and (window-live-p window)
+       (window-parameter window 'ri-tabs-surface)))
+
 (defun ri-tabs--frame-selected-window (frame)
-  "Return FRAME's selected ordinary window.
-While FRAME's minibuffer is active, return the live window that
-selected it.  Never return a minibuffer window."
+  "Return FRAME's selected ordinary editing window.
+While FRAME's minibuffer or Ri surface is selected, prefer the live ordinary
+window most recently used for editing on that frame."
   (when (frame-live-p frame)
     (let* ((minibuffer (active-minibuffer-window))
            (origin (and minibuffer (minibuffer-selected-window)))
-           (selected (frame-selected-window frame)))
-      (cond
-       ((and (window-live-p origin)
-             (eq (window-frame origin) frame)
-             (not (window-minibuffer-p origin)))
-        origin)
-       ((and (window-live-p selected)
-             (not (window-minibuffer-p selected)))
-        selected)
-       (t
-        (seq-find (lambda (window)
-                    (and (window-live-p window)
-                         (not (window-minibuffer-p window))))
-                  (window-list frame 'nomini)))))))
+           (selected (frame-selected-window frame))
+           (remembered (frame-parameter frame 'ri-tabs-last-editing-window))
+           window)
+      (setq window
+            (cond
+             ((and (window-live-p origin)
+                   (eq (window-frame origin) frame)
+                   (not (window-minibuffer-p origin))
+                   (not (ri-tabs--surface-window-p origin)))
+              origin)
+             ((and (window-live-p selected)
+                   (not (window-minibuffer-p selected))
+                   (not (ri-tabs--surface-window-p selected)))
+              selected)
+             ((and (window-live-p remembered)
+                   (eq (window-frame remembered) frame)
+                   (not (window-minibuffer-p remembered))
+                   (not (ri-tabs--surface-window-p remembered)))
+              remembered)
+             (t
+              (seq-find (lambda (candidate)
+                          (and (window-live-p candidate)
+                               (not (window-minibuffer-p candidate))
+                               (not (ri-tabs--surface-window-p candidate))))
+                        (window-list frame 'nomini)))))
+      (when window
+        (set-frame-parameter frame 'ri-tabs-last-editing-window window))
+      window)))
 
 (defun ri-tabs--tab-label (buffer buffers selected-buffer &optional owner state)
-  "Return BUFFER's Tab Bar label among BUFFERS.
-SELECTED-BUFFER determines the active face without consulting an
-ambient selected window."
+  "Return BUFFER's final propertized tab label among BUFFERS.
+SELECTED-BUFFER determines the active face without consulting an ambient
+selected window.  The returned string is presentation-ready and content-sized."
   (let* ((selected (eq buffer selected-buffer))
          (file (abbreviate-file-name (buffer-file-name buffer)))
          (help (if selected
@@ -592,15 +586,300 @@ ambient selected window."
      'mouse-face 'ri-tabs-highlight
      'help-echo help)))
 
+(cl-defstruct (ri-tabs--item (:constructor ri-tabs--make-item))
+  "Renderer-independent description of one visible Ri tab."
+  buffer label display active marked modified)
+
+(defun ri-tabs--visible-items (&optional frame)
+  "Return ordered renderer-independent visible tab items for FRAME."
+  (setq frame (or frame (selected-frame)))
+  (when (ri-tabs--frame-eligible-p frame)
+    (let* ((window (ri-tabs--frame-selected-window frame))
+           (selected-buffer (and window (window-buffer window)))
+           (owner (ri-tabs--frame-owner frame))
+           (state (ri-tabs--read-state-safely))
+           (buffers (ri-tabs--buffer-list selected-buffer owner state)))
+      (mapcar
+       (lambda (buffer)
+         (let* ((file-id (ri-tabs--buffer-file-id buffer))
+                (marked (if (and owner (not (eq state ri-tabs--read-error)))
+                            (ri-tabs--state-marked-p state owner file-id)
+                          (buffer-local-value 'ri-tabs--marked-p buffer)))
+                (active (eq buffer selected-buffer))
+                (label (ri-tabs--tab-name buffer buffers owner))
+                (display (ri-tabs--tab-label
+                          buffer buffers selected-buffer owner state)))
+           (ri-tabs--make-item
+            :buffer buffer
+            :label label
+            :display display
+            :active active
+            :marked marked
+            :modified (buffer-modified-p buffer))))
+       buffers))))
+
+(defvar ri-tabs--surface-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map [down-mouse-1] #'ri-tabs--mouse-select)
+    (define-key map [drag-mouse-1] #'ignore)
+    (define-key map [mouse-1] #'ignore)
+    (define-key map [mouse-2] #'ri-tabs--mouse-close)
+    (define-key map [down-mouse-3] #'ri-tabs--mouse-context-menu)
+    (define-key map [mouse-4] #'ri-tabs--mouse-previous)
+    (define-key map [mouse-5] #'ri-tabs--mouse-next)
+    (define-key map [wheel-up] #'ri-tabs--mouse-previous)
+    (define-key map [wheel-down] #'ri-tabs--mouse-next)
+    (define-key map [wheel-left] #'ri-tabs--mouse-previous)
+    (define-key map [wheel-right] #'ri-tabs--mouse-next)
+    (define-key map [S-mouse-4] #'ignore)
+    (define-key map [S-mouse-5] #'ignore)
+    (define-key map [S-wheel-up] #'ignore)
+    (define-key map [S-wheel-down] #'ignore)
+    (define-key map [S-wheel-left] #'ignore)
+    (define-key map [S-wheel-right] #'ignore)
+    (define-key map [touchscreen-begin] #'ri-tabs--touchscreen-begin)
+    map)
+  "Keymap used by Ri-owned tab surface buffers.")
+
+(defun ri-tabs--prepare-item-display (frame item)
+  "Return ITEM's display string with direct FRAME/buffer hit-test properties."
+  (let ((text (copy-sequence (ri-tabs--item-display item))))
+    (when (> (length text) 0)
+      (add-text-properties
+       0 (length text)
+       (list 'ri-tabs-frame frame
+             'ri-tabs-buffer (ri-tabs--item-buffer item)
+             'pointer 'hand)
+       text))
+    text))
+
+(defun ri-tabs--surface-buffer (frame)
+  "Return FRAME's live internal Ri tab surface buffer, creating it if needed."
+  (let ((existing (gethash frame ri-tabs--surface-buffers)))
+    (if (buffer-live-p existing)
+        existing
+      (let ((buffer (generate-new-buffer " *ri-tabs*")))
+        (with-current-buffer buffer
+          (setq-local buffer-read-only t
+                      cursor-type nil
+                      mode-line-format nil
+                      header-line-format nil
+                      tab-line-format nil
+                      truncate-lines t
+                      word-wrap nil)
+          (buffer-disable-undo)
+          (use-local-map ri-tabs--surface-mode-map))
+        (puthash frame buffer ri-tabs--surface-buffers)
+        buffer))))
+
+(defun ri-tabs--surface-window (frame)
+  "Return FRAME's Ri tab side window, creating it when necessary."
+  (let* ((buffer (and (ri-tabs--frame-eligible-p frame)
+                      (ri-tabs--surface-buffer frame)))
+         (existing (gethash frame ri-tabs--surface-windows)))
+    (if (and (window-live-p existing)
+             (eq (window-frame existing) frame)
+             (eq (window-buffer existing) buffer))
+        existing
+      (when (window-live-p existing)
+        (let ((ri-tabs--layout-in-progress-p t))
+          (ignore-errors
+            (set-window-dedicated-p existing nil)
+            (delete-window existing))))
+      (remhash frame ri-tabs--surface-windows)
+      (when buffer
+        (let ((ri-tabs--layout-in-progress-p t)
+              window)
+          (with-selected-frame frame
+            (setq window
+                  (display-buffer-in-side-window
+                   buffer
+                   '((side . top)
+                     (slot . -100)
+                     (window-height . 1)
+                     (window-parameters
+                      . ((no-other-window . t)
+                         (no-delete-other-windows . t)))))))
+          (when (window-live-p window)
+            (set-window-dedicated-p window t)
+            (set-window-parameter window 'ri-tabs-surface t)
+            (set-window-parameter window 'no-other-window t)
+            (set-window-parameter window 'no-delete-other-windows t)
+            (set-window-fringes window 0 0)
+            (ignore-errors (set-window-scroll-bars window 0 nil nil))
+            (puthash frame window ri-tabs--surface-windows))
+          window)))))
+
+(defun ri-tabs--display-width (window string)
+  "Return STRING's rendered width for WINDOW.
+Graphical frames use pixel measurement when available; terminals use display
+columns."
+  (if (and (window-live-p window)
+           (display-graphic-p (window-frame window))
+           (fboundp 'string-pixel-width))
+      (with-selected-window window
+        (string-pixel-width string))
+    (string-width string)))
+
+(defun ri-tabs--available-width (window)
+  "Return the horizontal width available for Ri tabs in WINDOW."
+  (max 1
+       (if (and (window-live-p window)
+                (display-graphic-p (window-frame window))
+                (fboundp 'string-pixel-width))
+           (window-body-width window t)
+         (window-body-width window))))
+
+(defun ri-tabs--pack-items-into-rows (measured-items available-width)
+  "Greedily pack MEASURED-ITEMS into rows no wider than AVAILABLE-WIDTH.
+MEASURED-ITEMS is a list of (ITEM . WIDTH).  Item order is preserved and no
+item is split.  An item wider than AVAILABLE-WIDTH occupies a row by itself."
+  (let (rows row (row-width 0))
+    (dolist (entry measured-items)
+      (let ((width (max 0 (cdr entry))))
+        (if (and row (> (+ row-width width) available-width))
+            (progn
+              (push (nreverse row) rows)
+              (setq row (list (car entry))
+                    row-width width))
+          (push (car entry) row)
+          (setq row-width (+ row-width width)))))
+    (when row
+      (push (nreverse row) rows))
+    (nreverse rows)))
+
+(defun ri-tabs--render-rows (frame rows)
+  "Return propertized text for FRAME representing packed ROWS explicitly."
+  (if (null rows)
+      " "
+    (mapconcat
+     (lambda (row)
+       (mapconcat
+        (lambda (item) (ri-tabs--prepare-item-display frame item))
+        row ""))
+     rows "\n")))
+
+(defun ri-tabs--set-surface-height (window rows)
+  "Resize Ri surface WINDOW to exactly ROWS text rows where possible."
+  (when (window-live-p window)
+    (let* ((target (max 1 rows))
+           (current (window-total-height window))
+           (delta (- target current)))
+      (unless (zerop delta)
+        (condition-case nil
+            (window-resize window delta nil t)
+          (error
+           (ignore-errors
+             (fit-window-to-buffer window target target))))))))
+
+(defun ri-tabs--surface-update (frame)
+  "Rebuild FRAME's complete Ri tab surface from model through layout."
+  (when (and ri-tabs-mode
+             (frame-live-p frame)
+             (ri-tabs--frame-eligible-p frame))
+    (let ((ri-tabs--layout-in-progress-p t))
+      (when-let* ((window (ri-tabs--surface-window frame)))
+        (let* ((items (or (ri-tabs--visible-items frame) nil))
+               (display-items
+                (mapcar
+                 (lambda (item)
+                   (setf (ri-tabs--item-display item)
+                         (ri-tabs--prepare-item-display frame item))
+                   item)
+                 items))
+               (available (ri-tabs--available-width window))
+               (measured
+                (mapcar
+                 (lambda (item)
+                   (cons item
+                         (ri-tabs--display-width
+                          window (ri-tabs--item-display item))))
+                 display-items))
+               (rows (ri-tabs--pack-items-into-rows measured available))
+               (text (ri-tabs--render-rows frame rows))
+               (buffer (window-buffer window)))
+          (with-current-buffer buffer
+            (let ((inhibit-read-only t))
+              (erase-buffer)
+              (insert text)
+              (goto-char (point-min))))
+          (set-window-point window
+                            (with-current-buffer buffer (point-min)))
+          (ri-tabs--set-surface-height window (max 1 (length rows)))
+          (set-window-parameter window 'ri-tabs-rows rows)
+          (set-window-parameter window 'ri-tabs-layout-width available))))))
+
+(defun ri-tabs--remove-surface (frame)
+  "Remove every Ri-owned UI resource associated with FRAME."
+  (let ((window (gethash frame ri-tabs--surface-windows))
+        (buffer (gethash frame ri-tabs--surface-buffers))
+        (ri-tabs--layout-in-progress-p t))
+    (remhash frame ri-tabs--surface-windows)
+    (remhash frame ri-tabs--surface-buffers)
+    (when (frame-live-p frame)
+      (set-frame-parameter frame 'ri-tabs-last-editing-window nil))
+    (when (window-live-p window)
+      (ignore-errors (delete-window window)))
+    (when (buffer-live-p buffer)
+      (kill-buffer buffer))))
+
+(defun ri-tabs--remove-all-surfaces ()
+  "Remove all Ri-owned tab surface windows and buffers."
+  (let (frames)
+    (maphash (lambda (frame _window) (push frame frames))
+             ri-tabs--surface-windows)
+    (maphash (lambda (frame _buffer) (cl-pushnew frame frames :test #'eq))
+             ri-tabs--surface-buffers)
+    (dolist (frame frames)
+      (ri-tabs--remove-surface frame))
+    (setq ri-tabs--surface-windows (make-hash-table :test #'eq)
+          ri-tabs--surface-buffers (make-hash-table :test #'eq))))
+
+(defun ri-tabs--install-surfaces ()
+  "Create/update one Ri-owned frame-wide tab surface per eligible frame."
+  (dolist (frame (frame-list))
+    (if (ri-tabs--frame-eligible-p frame)
+        (ri-tabs--surface-update frame)
+      (ri-tabs--remove-surface frame))))
+
+(defun ri-tabs--event-position (event)
+  "Return the mouse or touch position carried by EVENT."
+  (cond
+   ((and (consp event)
+         (eq (car event) 'touchscreen-begin))
+    (cdadr event))
+   (t
+    (event-start event))))
+
+(defun ri-tabs--event-target (event &optional position)
+  "Decode EVENT at POSITION into (FRAME WINDOW BUFFER).
+Target identity comes directly from text properties rendered by Ri."
+  (let* ((position (or position (ri-tabs--event-position event)))
+         (window (and position (posn-window position)))
+         (point (and position (posn-point position)))
+         (frame (cond
+                 ((windowp window) (window-frame window))
+                 ((framep window) window)
+                 (t (selected-frame))))
+         buffer)
+    (when (and (windowp window)
+               (ri-tabs--surface-window-p window)
+               (integer-or-marker-p point))
+      (with-current-buffer (window-buffer window)
+        (when (and (>= point (point-min)) (< point (point-max)))
+          (setq buffer (get-text-property point 'ri-tabs-buffer)))))
+    (list frame window buffer)))
+
 (defun ri-tabs--select-buffer (frame buffer)
-  "Display live BUFFER in FRAME's selected ordinary window.
-Resolve the target window at action time so a rendered item cannot
-retain a stale window."
+  "Display live BUFFER in FRAME's selected ordinary editing window."
   (if (and (frame-live-p frame) (buffer-live-p buffer))
       (if-let* ((window (ri-tabs--frame-selected-window frame)))
           (progn
-            (with-selected-window window
-              (switch-to-buffer buffer))
+            ;; A mouse command can originate in the Ri side window.  Leave the
+            ;; frame focused on the editing window, never on the UI surface.
+            (select-window window)
+            (switch-to-buffer buffer)
+            (set-frame-parameter frame 'ri-tabs-last-editing-window window)
             (ri-tabs--refresh))
         (ri-tabs--refresh))
     (ri-tabs--refresh)))
@@ -618,90 +897,41 @@ retain a stale window."
         (ri-tabs-toggle-buffer-mark buffer))
     (ri-tabs--refresh)))
 
-(defun ri-tabs--format-tabs (&optional frame)
-  "Return native file-tab menu items for FRAME.
-FRAME defaults to the selected frame because `tab-bar-format' calls
-formatters without arguments."
-  (setq frame (or frame (selected-frame)))
-  (if (not (ri-tabs--frame-eligible-p frame))
-      (when (frame-live-p frame)
-        (set-frame-parameter frame 'ri-tabs--item-buffers nil))
-    (let* ((window (ri-tabs--frame-selected-window frame))
-           (selected-buffer (and window (window-buffer window)))
-           (owner (ri-tabs--frame-owner frame))
-           (state (ri-tabs--read-state-safely))
-           (buffers (ri-tabs--buffer-list selected-buffer owner state))
-           (index 0)
-           items
-           mapping)
-      (dolist (buffer buffers)
-        (setq index (1+ index))
-        (let* ((item-frame frame)
-               (item-buffer buffer)
-               (selected (eq item-buffer selected-buffer))
-               (key (if selected
-                        'current-tab
-                      (intern (format "tab-%d" index))))
-               (label
-                (ri-tabs--tab-label
-                 item-buffer buffers selected-buffer owner state))
-               (help (get-text-property 0 'help-echo label))
-               (command
-                (if selected
-                    #'ignore
-                  (lambda ()
-                    (interactive)
-                    (ri-tabs--select-buffer item-frame item-buffer)))))
-          (push (list key 'menu-item label command :help help)
-                items)
-          (push (cons key item-buffer) mapping)))
-      (setq items (nreverse items)
-            mapping (nreverse mapping))
-      (set-frame-parameter frame 'ri-tabs--item-buffers mapping)
-      items)))
-
-(defun ri-tabs--event-position (event)
-  "Return the mouse or touch position carried by EVENT."
-  (cond
-   ((and (consp event)
-         (eq (car event) 'touchscreen-begin))
-    (cdadr event))
-   (t
-    (event-start event))))
-
-(defun ri-tabs--event-target (event &optional position)
-  "Decode EVENT at POSITION into (FRAME KEY BUFFER CLOSE-P).
-This is the only Ri helper that calls the native private event
-decoder.  A graphical position identifies its frame directly; a TTY
-position falls back to the selected frame."
-  (let* ((position (or position (ri-tabs--event-position event)))
+(defun ri-tabs--mouse-switch-relative (event offset)
+  "Switch OFFSET file tabs in the editing window targeted by mouse EVENT."
+  (let* ((position (ri-tabs--event-position event))
          (location (and position (posn-window position)))
          (frame (cond
-                 ((framep location) location)
                  ((windowp location) (window-frame location))
-                 (t (selected-frame))))
-         (item (and position (tab-bar--event-to-item position)))
-         (key (car item))
-         (entry
-          (and (frame-live-p frame)
-               (assq key
-                     (frame-parameter frame
-                                      'ri-tabs--item-buffers)))))
-    (list frame key (cdr entry) (nth 2 item))))
+                 ((framep location) location)
+                 (t (selected-frame)))))
+    (when-let* ((window (ri-tabs--frame-selected-window frame)))
+      (select-window window)
+      (ri-tabs--switch-to-relative-buffer offset)
+      (set-frame-parameter frame 'ri-tabs-last-editing-window window)
+      (ri-tabs--refresh))))
+
+(defun ri-tabs--mouse-previous (event)
+  "Switch to the previous file from Ri surface mouse EVENT."
+  (interactive "e")
+  (ri-tabs--mouse-switch-relative event -1))
+
+(defun ri-tabs--mouse-next (event)
+  "Switch to the next file from Ri surface mouse EVENT."
+  (interactive "e")
+  (ri-tabs--mouse-switch-relative event 1))
 
 (defun ri-tabs--mouse-select (event)
-  "Select the inactive Ri file tab clicked by EVENT."
+  "Select the Ri file tab clicked by EVENT."
   (interactive "e")
-  (pcase-let ((`(,frame ,key ,buffer ,_)
-               (ri-tabs--event-target event)))
-    (when (and buffer (not (eq key 'current-tab)))
+  (pcase-let ((`(,frame ,_window ,buffer) (ri-tabs--event-target event)))
+    (when buffer
       (ri-tabs--select-buffer frame buffer))))
 
 (defun ri-tabs--mouse-close (event)
   "Close the Ri file tab clicked by EVENT."
   (interactive "e")
-  (pcase-let ((`(,_frame ,_key ,buffer ,_)
-               (ri-tabs--event-target event)))
+  (pcase-let ((`(,_frame ,_window ,buffer) (ri-tabs--event-target event)))
     (when buffer
       (ri-tabs--close-buffer buffer))))
 
@@ -739,7 +969,7 @@ position falls back to the selected frame."
 (defun ri-tabs--mouse-context-menu (event &optional position)
   "Open the Ri file-tab context menu for EVENT at POSITION."
   (interactive "e")
-  (pcase-let ((`(,frame ,_key ,buffer ,_)
+  (pcase-let ((`(,frame ,_window ,buffer)
                (ri-tabs--event-target event position)))
     (when buffer
       (popup-menu (ri-tabs--context-menu frame buffer) event))))
@@ -753,14 +983,12 @@ position falls back to the selected frame."
   (throw 'ri-tabs--context-menu 'context-menu))
 
 (defun ri-tabs--touchscreen-begin (event)
-  "Select, close, or open a context menu for touchscreen EVENT."
+  "Select or open a context menu for touchscreen EVENT."
   (interactive "e")
   (let* ((position (ri-tabs--event-position event))
          (target (ri-tabs--event-target event position))
          (frame (nth 0 target))
-         (key (nth 1 target))
          (buffer (nth 2 target))
-         (close-p (nth 3 target))
          timer)
     (when buffer
       (when
@@ -773,206 +1001,38 @@ position falls back to the selected frame."
                           touch-screen-delay nil
                           #'ri-tabs--touchscreen-timeout))
                    (when (touch-screen-track-tap event)
-                     (cond
-                      (close-p
-                       (ri-tabs--close-buffer buffer))
-                      ((not (eq key 'current-tab))
-                       (ri-tabs--select-buffer frame buffer)))))
+                     (ri-tabs--select-buffer frame buffer)))
                (when timer
                  (cancel-timer timer))))
            'context-menu)
         (popup-menu (ri-tabs--context-menu frame buffer) event)))))
 
-(defun ri-tabs--shortcut-keys ()
-  "Return native Tab Bar shortcut keys that can select workspaces."
-  (let ((modifiers tab-bar-select-tab-modifiers))
-    (append
-     (list [(control tab)]
-           [(control shift tab)]
-           [(control shift iso-lefttab)])
-     (when modifiers
-       (mapcar
-        (lambda (digit)
-          (vector (append modifiers (list digit))))
-        (number-sequence ?0 ?9))))))
-
-(defun ri-tabs--capture-bindings (map keys)
-  "Capture direct bindings for KEYS in MAP."
-  (mapcar
-   (lambda (key)
-     (cons (copy-sequence key) (lookup-key map key)))
-   keys))
-
-(defun ri-tabs--restore-bindings (map bindings)
-  "Restore MAP from saved BINDINGS."
-  (dolist (entry bindings)
-    (if (cdr entry)
-        (define-key map (car entry) (cdr entry))
-      (define-key map (car entry) nil t))))
-
-(defun ri-tabs--install-event-bindings ()
-  "Install Ri pointer, touch, and wheel bindings in `tab-bar-map'."
-  (dolist (entry ri-tabs--tab-bar-event-bindings)
-    (define-key tab-bar-map (car entry) (cdr entry))))
-
-(defun ri-tabs--hide-workspace-shortcuts ()
-  "Disable native shortcuts that target hidden workspace tabs."
-  (dolist (key (ri-tabs--shortcut-keys))
-    (when (memq (lookup-key tab-bar-mode-map key)
-                ri-tabs--workspace-shortcut-commands)
-      (define-key tab-bar-mode-map key #'undefined))))
-
-(defun ri-tabs--capture-frame-state (frame)
-  "Capture Ri-owned Tab Bar parameters of FRAME."
-  (list frame
-        (frame-parameter frame 'tab-bar-lines)
-        (frame-parameter frame 'tab-bar-lines-keep-state)))
-
-(defun ri-tabs--configure-frame (frame &optional remember-temporary)
-  "Apply the active Ri Tab Bar policy to FRAME.
-When REMEMBER-TEMPORARY is non-nil, remember FRAME's original Tab Bar
-parameters so a frame created while Ri is active can be restored
-exactly on disable."
-  (when (frame-live-p frame)
-    (let ((ineligible
-           (ri-tabs--structurally-ineligible-frame-p frame)))
-      (when (and remember-temporary
-                 (not (assq frame ri-tabs--temporary-frame-states)))
-        (push
-         (ri-tabs--capture-frame-state frame)
-         ri-tabs--temporary-frame-states))
-      (if ineligible
-          (progn
-            (set-frame-parameter frame 'tab-bar-lines 0)
-            (set-frame-parameter
-             frame 'tab-bar-lines-keep-state t))
-        ;; Ri temporarily owns the visible row on ordinary frames.
-        ;; Pin the row while Ri is active: core Tab Bar code recalculates
-        ;; `tab-bar-lines' in several paths, and our file tabs intentionally
-        ;; are not represented by `tab-bar-tabs-function'.  The original
-        ;; keep-state value is already captured and is restored on disable.
-        (set-frame-parameter frame 'tab-bar-lines 1)
-        (set-frame-parameter frame 'tab-bar-lines-keep-state t)))))
-
 (defun ri-tabs--configure-new-frame (frame)
-  "Configure newly created FRAME while `ri-tabs-mode' is active."
+  "Initialize newly created FRAME while `ri-tabs-mode' is active."
   (when ri-tabs-mode
-    (ri-tabs--configure-frame frame t)
-    (when (ri-tabs--frame-eligible-p frame)
-      (let ((state (ri-tabs--state-for-hook)))
-        (unless (eq state ri-tabs--read-error)
-          (ri-tabs--sync-live-buffers state))))
-    (ri-tabs--refresh)))
+    (if (ri-tabs--frame-eligible-p frame)
+        (let ((state (ri-tabs--state-for-hook)))
+          (unless (eq state ri-tabs--read-error)
+            (ri-tabs--sync-live-buffers state))
+          (ri-tabs--surface-update frame))
+      (ri-tabs--remove-surface frame))))
 
-(defun ri-tabs--default-frame-lines-entry ()
-  "Return the position and value of the default Tab Bar lines entry.
-Return `ri-tabs--absent' when `default-frame-alist' has no such entry."
-  (let ((index 0)
-        (tail default-frame-alist)
-        entry)
-    (while (and tail (not entry))
-      (if (eq (caar tail) 'tab-bar-lines)
-          (setq entry (car tail))
-        (setq index (1+ index)
-              tail (cdr tail))))
-    (if entry
-        (list :index index :entry (copy-tree entry))
-      ri-tabs--absent)))
+(defun ri-tabs--frame-deleted (frame)
+  "Forget Ri-owned renderer resources belonging to deleted FRAME."
+  (let ((buffer (gethash frame ri-tabs--surface-buffers)))
+    (remhash frame ri-tabs--surface-windows)
+    (remhash frame ri-tabs--surface-buffers)
+    (when (buffer-live-p buffer)
+      (kill-buffer buffer))))
 
-(defun ri-tabs--set-default-frame-lines (value)
-  "Set the default frame Tab Bar lines entry to VALUE."
-  (setq default-frame-alist
-        (cons (cons 'tab-bar-lines value)
-              (assq-delete-all
-               'tab-bar-lines default-frame-alist))))
-
-(defun ri-tabs--restore-default-frame-lines (saved)
-  "Restore the saved default Tab Bar lines entry in SAVED."
-  (setq default-frame-alist
-        (assq-delete-all 'tab-bar-lines default-frame-alist))
-  (unless (eq saved ri-tabs--absent)
-    (let ((index
-           (min (plist-get saved :index)
-                (length default-frame-alist))))
-      (setq default-frame-alist
-            (append
-             (seq-take default-frame-alist index)
-             (list (copy-tree (plist-get saved :entry)))
-             (seq-drop default-frame-alist index))))))
-
-(defun ri-tabs--capture-tab-bar-state ()
-  "Capture native Tab Bar state before Ri takes ownership."
-  (list
-   :mode (and tab-bar-mode t)
-   :format (copy-tree (default-value 'tab-bar-format))
-   :show (default-value 'tab-bar-show)
-   :auto-width (default-value 'tab-bar-auto-width)
-   :event-bindings
-   (ri-tabs--capture-bindings
-    tab-bar-map (mapcar #'car ri-tabs--tab-bar-event-bindings))
-   :shortcut-bindings
-   (ri-tabs--capture-bindings
-    tab-bar-mode-map (ri-tabs--shortcut-keys))
-   :frames (mapcar #'ri-tabs--capture-frame-state (frame-list))
-   :default-frame-lines (ri-tabs--default-frame-lines-entry)))
-
-(defun ri-tabs--install-tab-bar ()
-  "Install the frame-wide native Ri file Tab Bar."
-  (unless ri-tabs--tab-bar-state
-    (setq ri-tabs--tab-bar-state
-          (ri-tabs--capture-tab-bar-state)))
-  (setq-default tab-bar-format '(ri-tabs--format-tabs)
-                ;; Native `tab-bar-auto-width' deliberately stretches matching
-                ;; tabs to an equal width.  Nil is the native content-sized
-                ;; behavior, which is what Ri file tabs require.
-                tab-bar-auto-width nil
-                ;; `t' is the documented unconditional visibility value.
-                ;; A numeric value is a threshold based on native workspace
-                ;; tabs, which Ri deliberately does not use for file tabs.
-                tab-bar-show t)
-  (ri-tabs--install-event-bindings)
-  (dolist (frame (frame-list))
-    (ri-tabs--configure-frame frame))
-  (ri-tabs--set-default-frame-lines 1)
-  (tab-bar-mode 1)
-  (ri-tabs--hide-workspace-shortcuts)
-  (dolist (frame (frame-list))
-    (ri-tabs--configure-frame frame)))
-
-(defun ri-tabs--restore-tab-bar-state ()
-  "Restore native Tab Bar state saved before Ri activation."
-  (when ri-tabs--tab-bar-state
-    (let ((state ri-tabs--tab-bar-state))
-      (setq-default
-       tab-bar-format (copy-tree (plist-get state :format))
-       tab-bar-show (plist-get state :show)
-       tab-bar-auto-width (plist-get state :auto-width))
-      (unless (plist-get state :mode)
-        (tab-bar-mode -1))
-      (when (plist-get state :mode)
-        (tab-bar-mode 1))
-      (dolist (entry ri-tabs--temporary-frame-states)
-        (when (frame-live-p (car entry))
-          (set-frame-parameter
-           (car entry) 'tab-bar-lines (nth 1 entry))
-          (set-frame-parameter
-           (car entry) 'tab-bar-lines-keep-state (nth 2 entry))))
-      (ri-tabs--restore-bindings
-       tab-bar-map (plist-get state :event-bindings))
-      (ri-tabs--restore-bindings
-       tab-bar-mode-map (plist-get state :shortcut-bindings))
-      (dolist (entry (plist-get state :frames))
-        (when (frame-live-p (car entry))
-          (set-frame-parameter
-           (car entry) 'tab-bar-lines (nth 1 entry))
-          (set-frame-parameter
-           (car entry) 'tab-bar-lines-keep-state (nth 2 entry))))
-      (ri-tabs--restore-default-frame-lines
-       (plist-get state :default-frame-lines))
-      (dolist (frame (frame-list))
-        (set-frame-parameter frame 'ri-tabs--item-buffers nil))
-      (setq ri-tabs--temporary-frame-states nil
-            ri-tabs--tab-bar-state nil))))
+(defun ri-tabs--window-size-changed (frame)
+  "Re-layout FRAME after a width/geometry change."
+  (when (and ri-tabs-mode
+             (not ri-tabs--layout-in-progress-p)
+             (frame-live-p frame))
+    (if (ri-tabs--frame-eligible-p frame)
+        (ri-tabs--surface-update frame)
+      (ri-tabs--remove-surface frame))))
 
 (defun ri-tabs--clear-buffer-cache (buffer)
   "Remove Ri-owned persistent-state cache variables from BUFFER."
@@ -981,30 +1041,16 @@ Return `ri-tabs--absent' when `default-frame-alist' has no such entry."
       (kill-local-variable 'ri-tabs--marked-p)
       (kill-local-variable 'ri-tabs--file-id))))
 
-(defun ri-tabs--enforce-tab-bar ()
-  "Reassert the native Tab Bar state owned by active Ri tabs.
-
-This deliberately runs after initialization as well as during later
-refreshes.  `ri-enable' is commonly called before the rest of init.el has
-finished, so later user setup must not be able to leave `ri-tabs-mode' in
-a contradictory state where the mode is active but its rendering surface
-is disabled."
-  (when ri-tabs-mode
-    (setq-default tab-bar-format '(ri-tabs--format-tabs)
-                  tab-bar-show t
-                  tab-bar-auto-width nil)
-    (unless tab-bar-mode
-      (tab-bar-mode 1))
-    (dolist (frame (frame-list))
-      (ri-tabs--configure-frame frame))))
-
 (defun ri-tabs--refresh (&rest _ignored)
-  "Invalidate every frame-wide Ri file Tab Bar and keep it visible."
-  (when ri-tabs-mode
+  "Rebuild every eligible Ri-owned frame-wide tab surface."
+  (when (and ri-tabs-mode (not ri-tabs--layout-in-progress-p))
     (if ri-tabs--refresh-batching-p
         (setq ri-tabs--refresh-pending-p t)
-      (ri-tabs--enforce-tab-bar)
-      (force-mode-line-update t))))
+      (let ((ri-tabs--layout-in-progress-p t))
+        (dolist (frame (frame-list))
+          (if (ri-tabs--frame-eligible-p frame)
+              (ri-tabs--surface-update frame)
+            (ri-tabs--remove-surface frame)))))))
 
 (defun ri-tabs--updated-state (state owner file-id marked)
   "Return STATE with FILE-ID membership in OWNER set to MARKED."
@@ -1249,7 +1295,9 @@ file buffer."
   (add-hook 'after-revert-hook #'ri-tabs--refresh)
   (add-hook 'window-selection-change-functions #'ri-tabs--refresh)
   (add-hook 'window-buffer-change-functions #'ri-tabs--refresh)
-  (add-hook 'after-make-frame-functions #'ri-tabs--configure-new-frame))
+  (add-hook 'window-size-change-functions #'ri-tabs--window-size-changed)
+  (add-hook 'after-make-frame-functions #'ri-tabs--configure-new-frame)
+  (add-hook 'delete-frame-functions #'ri-tabs--frame-deleted))
 
 (defun ri-tabs--remove-infrastructure ()
   "Remove every global hook installed by `ri-tabs-mode'."
@@ -1262,7 +1310,9 @@ file buffer."
   (remove-hook 'after-revert-hook #'ri-tabs--refresh)
   (remove-hook 'window-selection-change-functions #'ri-tabs--refresh)
   (remove-hook 'window-buffer-change-functions #'ri-tabs--refresh)
-  (remove-hook 'after-make-frame-functions #'ri-tabs--configure-new-frame))
+  (remove-hook 'window-size-change-functions #'ri-tabs--window-size-changed)
+  (remove-hook 'after-make-frame-functions #'ri-tabs--configure-new-frame)
+  (remove-hook 'delete-frame-functions #'ri-tabs--frame-deleted))
 
 (defun ri-tabs--cancel-pending-activation ()
   "Cancel any persistent Ki tab activation awaiting startup."
@@ -1319,8 +1369,8 @@ file buffer."
         (when (and completed ri-tabs-mode)
           (setq ri-tabs--activation-complete-p t))
         (when (and ri-tabs-mode (or completed ri-tabs--refresh-pending-p))
-          (ri-tabs--enforce-tab-bar)
-          (force-mode-line-update t))))))
+          (let ((ri-tabs--refresh-batching-p nil))
+            (ri-tabs--refresh)))))))
 
 (defun ri-tabs--startup-activate ()
   "Run deferred persistent Ki tab activation after Emacs startup."
@@ -1347,7 +1397,7 @@ file buffer."
   (condition-case err
       (progn
         (ri-tabs--install-infrastructure)
-        (ri-tabs--install-tab-bar)
+        (ri-tabs--install-surfaces)
         (cond
          ((or ri-tabs--activation-active-p
               ri-tabs--activation-complete-p)
@@ -1367,11 +1417,11 @@ file buffer."
      (dolist (buffer (buffer-list))
        (ri-tabs--clear-buffer-cache buffer))
      (condition-case rollback-error
-         (ri-tabs--restore-tab-bar-state)
+         (ri-tabs--remove-all-surfaces)
        (error
         (display-warning
          'ri-tabs
-         (format "Could not roll back failed Tab Bar installation: %s"
+         (format "Could not roll back failed Ri tab surface installation: %s"
                  (error-message-string rollback-error))
          :error)))
      (signal (car err) (cdr err)))))
@@ -1388,14 +1438,14 @@ file buffer."
       (ri-tabs--clear-buffer-cache buffer))
     (dolist (frame (frame-list))
       (when (frame-live-p frame)
-        (set-frame-parameter frame 'ri-tabs-owner nil)))
-    (ri-tabs--restore-tab-bar-state))
-  (setq ri-tabs--refresh-pending-p nil)
-  (force-mode-line-update t))
+        (set-frame-parameter frame 'ri-tabs-owner nil)
+        (set-frame-parameter frame 'ri-tabs-last-editing-window nil)))
+    (ri-tabs--remove-all-surfaces))
+  (setq ri-tabs--refresh-pending-p nil))
 
 ;;;###autoload
 (define-minor-mode ri-tabs-mode
-  "Display one frame-wide native Tab Bar for Ri file buffers.
+  "Display one Ri-owned frame-wide wrapping tab surface for file buffers.
 
 Every ordinary frame has an active owner-context marked set.  The
 first marked file establishes the owner context.  Files subsequently

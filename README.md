@@ -107,15 +107,18 @@ others, and `m` switches to the alternate file. In the `z` layer,
 and `u`/`o` perform character-granular undo/redo. A quick tap of `c`,
 `r`, `g`, `v`, `x`, or `z` performs its primary action.
 
-File tabs use one native Tab Bar spanning each frame. Splitting a frame
-does not duplicate the row. The active tab follows the frame's selected
-window, and selecting a file tab changes only that window's buffer;
-other windows and their layout remain unchanged.
-Tab widths follow their rendered content instead of being stretched to a
-common width. File labels normally use only the basename. If basenames
-collide, a sole owner-local file keeps the basename while foreign duplicates
-receive the shortest parent-directory suffix needed to distinguish them;
-multiple owner-local duplicates are also qualified only as much as necessary.
+File tabs use one Ri-owned top side-window surface spanning each ordinary
+frame. Splitting a frame does not duplicate the bar. The active tab follows
+the frame's selected editing window, and selecting a file tab changes only
+that window's buffer; other editing windows and their layout remain unchanged.
+Ri lays tabs out explicitly: widths follow rendered content, complete tabs wrap
+to additional rows when they no longer fit, and the surface shrinks back when
+more horizontal space becomes available. Native `tab-bar-mode` workspace tabs
+and their configuration are left untouched. File labels normally use only the
+basename. If basenames collide, a sole owner-local file keeps the basename
+while foreign duplicates receive the shortest parent-directory suffix needed
+to distinguish them; multiple owner-local duplicates are also qualified only
+as much as necessary.
 
 File marks are persistent: `e k` writes the mark immediately, and the
 mark survives both buffer closure and an Emacs restart. When Ki tabs
