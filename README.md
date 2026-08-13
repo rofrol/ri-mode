@@ -111,6 +111,11 @@ File tabs use one native Tab Bar spanning each frame. Splitting a frame
 does not duplicate the row. The active tab follows the frame's selected
 window, and selecting a file tab changes only that window's buffer;
 other windows and their layout remain unchanged.
+Tab widths follow their rendered content instead of being stretched to a
+common width. File labels normally use only the basename. If basenames
+collide, a sole owner-local file keeps the basename while foreign duplicates
+receive the shortest parent-directory suffix needed to distinguish them;
+multiple owner-local duplicates are also qualified only as much as necessary.
 
 File marks are persistent: `e k` writes the mark immediately, and the
 mark survives both buffer closure and an Emacs restart. When Ki tabs
