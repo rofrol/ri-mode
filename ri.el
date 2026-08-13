@@ -39,7 +39,8 @@
                    "semantic-regions"
                    "modal-cursor"
                    "ri-tabs"
-                   "ri-surround"))
+                   "ri-surround"
+                   "ri-pairs"))
       (let ((path (expand-file-name dir ri-root)))
         (when (file-directory-p path)
           (add-to-list 'load-path path))))))
@@ -56,6 +57,7 @@
 (require 'ri-edit)
 (require 'ri-transform)
 (require 'ri-surround)
+(require 'ri-pairs)
 (require 'cl-lib)
 (require 'face-remap)
 
@@ -964,6 +966,7 @@ keymap lookups during that command must keep their resolved binding."
               (derived-mode-p 'special-mode))
     (setq-local sr-highlight-bounds-function #'ri--highlight-bounds)
     (sr-mode 1)
+    (ri-pairs-enable-buffer)
     (ri--mode-line-enable)))
 
 ;;;; Global setup
@@ -1001,6 +1004,7 @@ keymap lookups during that command must keep their resolved binding."
   (setq sr-highlight-predicate
         (lambda () (bound-and-true-p mini-modal-mode)))
   (add-hook 'find-file-hook #'ri--maybe-enable-semantic-regions)
+  (add-hook 'after-change-major-mode-hook #'ri-pairs-enable-buffer)
   (dolist (buf (buffer-list))
     (with-current-buffer buf
       (ri--maybe-enable-semantic-regions)))
