@@ -267,9 +267,10 @@
              (offset (ri-pick--session-offset session))
              (visible (ri-pick--visible-count session))
              (window (ri-pick--session-window session))
-             (width (max 4 (if (window-live-p window)
-                               (window-body-width window)
-                             ri-pick-min-width)))
+             ;; Emacs reserves the final column for its truncation glyph.
+             (width (max 4 (1- (if (window-live-p window)
+                                   (window-body-width window)
+                                 ri-pick-min-width))))
              (content-width (- width 4))
              (status (ri-pick--session-status session))
              (rows 0)
@@ -712,6 +713,7 @@ return a cancellation function.  ON-CLOSE receives non-nil after acceptance."
         (progn
           (with-current-buffer buffer
             (ri-pick-mode)
+            (display-line-numbers-mode -1)
             (setq-local ri-pick--buffer-session session)
             (let ((inhibit-read-only t))
               (erase-buffer))

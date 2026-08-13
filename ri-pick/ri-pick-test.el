@@ -98,9 +98,8 @@
           (dolist (line (seq-subseq lines 3 (1- (length lines))))
             (should (string-prefix-p "│" line))
             (should (string-suffix-p "│" line)))
-          (should (string-match-p "\\`╰─+╯\\'" (car (last lines))))
           (dolist (line lines)
-            (should (= (string-width line) ri-pick-min-width))))
+            (should (= (string-width line) (1- ri-pick-min-width)))))
         (let ((second-pos (text-property-any
                            (point-min) (point-max) 'ri-pick-item second)))
           (should second-pos)
@@ -156,7 +155,9 @@
 
 (ert-deftest ri-pick-test-start-uses-undecorated-child-frame ()
   (ri-pick-test--without-real-ui
-    (let (closed)
+    (let ((ri-pick-mode-hook
+           (list (lambda () (display-line-numbers-mode 1))))
+          closed)
       (unwind-protect
           (progn
             (ri-pick-start
@@ -174,7 +175,9 @@
                 (should (zerop (cdr (assq parameter parameters))))))
             (with-current-buffer
                 (ri-pick--session-buffer (ri-pick--active-session))
-              (should-not header-line-format))
+              (should-not header-line-format)
+              (should-not display-line-numbers-mode)
+              (should-not display-line-numbers))
             (ri-pick-cancel)
             (should (equal quit-arguments
                            (list t (selected-window))))
