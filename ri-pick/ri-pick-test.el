@@ -59,26 +59,83 @@
     (should (eq (lookup-key ri-pick-mode-map (kbd (car binding)))
                 (cdr binding)))))
 
-(ert-deftest ri-pick-test-render-keeps-results-out-of-query-line ()
+(ert-deftest ri-pick-test-render-draws-rounded-frame-and-preserves-query ()
+  (with-temp-buffer
+    (ri-pick-mode)
+    (let* ((first (ri-pick-test--item "ri-pick/ri-pick.el" 'first))
+           (second (ri-pick-test--item "ri-tabs/ri-tabs.el" 'second))
+           (session
+            (ri-pick--session-create
+             :title "File"
+             :buffer (current-buffer)
+             :items (list first second)
+             :filtered (list first second)
+             :index 0
+             :offset 0)))
+      (let ((ri-pick--session session))
+        (ri-pick--render session)
+        (pcase-let ((`(,start . ,_) (ri-pick--query-bounds session)))
+          (goto-char start)
+          (let ((last-command-event ?r))
+            (ri-pick-self-insert 1))
+          (let ((last-command-event ?i))
+            (ri-pick-self-insert 1)))
+        (should (equal (ri-pick--query) "ri"))
+        (should (= (point)
+                   (+ 2 (car (ri-pick--query-bounds session)))))
+        (setf (ri-pick--session-index session) 1)
+        (ri-pick--render session)
+        (should (equal (ri-pick--query) "ri"))
+        (should (= (point)
+                   (+ 2 (car (ri-pick--query-bounds session)))))
+        (let ((lines (string-lines (buffer-string))))
+          (should (= (length lines) ri-pick-min-height))
+          (should (string-prefix-p "╭─ File " (car lines)))
+          (should (string-suffix-p "╮" (car lines)))
+          (should (string-prefix-p "│ " (nth 1 lines)))
+          (should (string-suffix-p " │" (nth 1 lines)))
+          (should (string-match-p "\\`├─+┤\\'" (nth 2 lines)))
+          (dolist (line (seq-subseq lines 3 (1- (length lines))))
+            (should (string-prefix-p "│" line))
+            (should (string-suffix-p "│" line)))
+          (should (string-match-p "\\`╰─+╯\\'" (car (last lines))))
+          (dolist (line lines)
+            (should (= (string-width line) ri-pick-min-width))))
+        (let ((second-pos (text-property-any
+                           (point-min) (point-max) 'ri-pick-item second)))
+          (should second-pos)
+          (should (memq 'ri-pick-selected
+                        (ensure-list (get-text-property second-pos 'face)))))))))
+
+(ert-deftest ri-pick-test-query-commands-stay-inside-frame ()
   (with-temp-buffer
     (ri-pick-mode)
     (let* ((item (ri-pick-test--item "ri-pick/ri-pick.el" 'match))
            (session
             (ri-pick--session-create
-             :buffer (current-buffer)
-             :items (list item)
-             :filtered (list item)
-             :index 0
-             :offset 0)))
+             :title "File" :buffer (current-buffer)
+             :items (list item) :filtered (list item)
+             :index 0 :offset 0)))
       (let ((ri-pick--session session))
         (ri-pick--render session)
-        (goto-char (point-min))
-        (insert "ri-pick")
-        (ri-pick--query-changed)
-        (should (equal (ri-pick--query) "ri-pick"))
-        (should (equal (mapcar #'ri-pick-item-target
-                               (ri-pick--session-filtered session))
-                       '(match)))))))
+        (let ((start (car (ri-pick--query-bounds session))))
+          (goto-char start)
+          (ri-pick-delete-backward)
+          (should (= (point) start))
+          (should (equal (ri-pick--query) ""))
+          (let ((last-command-event ?x))
+            (ri-pick-self-insert 1))
+          (ri-pick-query-beginning)
+          (ri-pick-delete-backward)
+          (should (equal (ri-pick--query) "x"))
+          (ri-pick-query-end)
+          (ri-pick-delete-forward)
+          (should (equal (ri-pick--query) "x"))
+          (should-error
+           (let ((inhibit-read-only nil))
+             (goto-char (point-min))
+             (delete-char 1))
+           :type 'text-read-only))))))
 
 (ert-deftest ri-pick-test-fuzzy-filter-keeps-duplicate-identities-stable ()
   (let* ((first (ri-pick-test--item "src/main.rs" 'first))
@@ -97,7 +154,7 @@
                       (ri-pick-test--item "README" 'miss)))))
     (should (equal (mapcar #'ri-pick-item-target results) '(match)))))
 
-(ert-deftest ri-pick-test-start-uses-display-buffer-child-frame-action ()
+(ert-deftest ri-pick-test-start-uses-undecorated-child-frame ()
   (ri-pick-test--without-real-ui
     (let (closed)
       (unwind-protect
@@ -107,6 +164,17 @@
              :on-close (lambda (accepted) (setq closed accepted)))
             (should (equal (car display-action)
                            '(display-buffer-in-child-frame)))
+            (let ((parameters
+                   (cdr (assq 'child-frame-parameters
+                              (cdr display-action)))))
+              (should (eq (cdr (assq 'undecorated parameters)) t))
+              (dolist (parameter
+                       '(border-width internal-border-width
+                         child-frame-border-width))
+                (should (zerop (cdr (assq parameter parameters))))))
+            (with-current-buffer
+                (ri-pick--session-buffer (ri-pick--active-session))
+              (should-not header-line-format))
             (ri-pick-cancel)
             (should (equal quit-arguments
                            (list t (selected-window))))

@@ -60,6 +60,7 @@
   title
   source-frame source-window source-buffer source-point
   buffer window
+  query-start query-end
   items filtered index offset status
   accept provider cancel-request timer generation
   on-close)
@@ -77,16 +78,45 @@
   "Return the active live picker session, or nil."
   (and (ri-pick--session-p ri-pick--session) ri-pick--session))
 
+(defun ri-pick--ensure-query-markers (session)
+  "Ensure SESSION has query boundary markers in its picker buffer."
+  (let ((buffer (ri-pick--session-buffer session)))
+    (when (buffer-live-p buffer)
+      (with-current-buffer buffer
+        (unless (markerp (ri-pick--session-query-start session))
+          (setf (ri-pick--session-query-start session) (make-marker)))
+        (unless (markerp (ri-pick--session-query-end session))
+          (setf (ri-pick--session-query-end session) (make-marker)))
+        (let ((start (ri-pick--session-query-start session))
+              (end (ri-pick--session-query-end session)))
+          (unless (eq (marker-buffer start) buffer)
+            (set-marker start (point-min) buffer))
+          (unless (eq (marker-buffer end) buffer)
+            (set-marker end (point-min) buffer))
+          (set-marker-insertion-type start nil)
+          (set-marker-insertion-type end t))))))
+
+(defun ri-pick--query-bounds (&optional session)
+  "Return the editable query bounds for SESSION or the active picker."
+  (when-let* ((session (or session (ri-pick--active-session)))
+              (buffer (ri-pick--session-buffer session))
+              ((buffer-live-p buffer))
+              (start-marker (ri-pick--session-query-start session))
+              (end-marker (ri-pick--session-query-end session))
+              ((eq (marker-buffer start-marker) buffer))
+              ((eq (marker-buffer end-marker) buffer))
+              (start (marker-position start-marker))
+              (end (marker-position end-marker))
+              ((<= start end)))
+    (cons start end)))
+
 (defun ri-pick--query ()
   "Return the query from the active picker buffer."
   (when-let* ((session (ri-pick--active-session))
               (buffer (ri-pick--session-buffer session))
-              ((buffer-live-p buffer)))
+              (bounds (ri-pick--query-bounds session)))
     (with-current-buffer buffer
-      (save-excursion
-        (goto-char (point-min))
-        (buffer-substring-no-properties
-         (point-min) (line-end-position))))))
+      (buffer-substring-no-properties (car bounds) (cdr bounds)))))
 
 (defun ri-pick--subsequence-score (query candidate)
   "Score QUERY against CANDIDATE, or return nil when it does not match."
@@ -152,9 +182,10 @@
 (defun ri-pick--visible-count (session)
   "Return the number of result rows visible for SESSION."
   (let ((window (ri-pick--session-window session)))
-    (max 1 (1- (if (window-live-p window)
-                   (window-body-height window)
-                 ri-pick-min-height)))))
+    (max 1 (- (if (window-live-p window)
+                  (window-body-height window)
+                ri-pick-min-height)
+              4))))
 
 (defun ri-pick--clamp-selection (session)
   "Clamp SESSION's selection and scroll offset to its filtered items."
@@ -197,52 +228,109 @@
       (add-face-text-property 0 (length text) 'ri-pick-selected t text))
     text))
 
+(defun ri-pick--border-line (width left right)
+  "Return a WIDTH-column border between LEFT and RIGHT."
+  (concat left (make-string (max 0 (- width 2)) ?─) right))
+
+(defun ri-pick--title-line (title width)
+  "Return a WIDTH-column rounded top border containing TITLE."
+  (let* ((inside-width (max 0 (- width 2)))
+         (title-width (max 0 (- inside-width 3)))
+         (title (truncate-string-to-width (or title "") title-width
+                                          nil nil "…"))
+         (prefix (if (and (> inside-width 2) (not (string-empty-p title)))
+                     (concat "─ " title " ")
+                   ""))
+         (rest (max 0 (- inside-width (string-width prefix)))))
+    (concat "╭" prefix (make-string rest ?─) "╮")))
+
 (defun ri-pick--render (session)
-  "Render SESSION's query results without moving its query point."
+  "Render SESSION as a rounded box without moving its query point."
   (when-let* ((buffer (ri-pick--session-buffer session))
               ((buffer-live-p buffer)))
+    (ri-pick--ensure-query-markers session)
     (ri-pick--clamp-selection session)
     (with-current-buffer buffer
       (let* ((inhibit-read-only t)
-             (position (min (point) (line-end-position 1)))
+             (bounds (ri-pick--query-bounds session))
+             (query (if bounds
+                        (buffer-substring-no-properties
+                         (car bounds) (cdr bounds))
+                      ""))
+             (query-offset
+              (if bounds
+                  (min (length query)
+                       (max 0 (- (point) (car bounds))))
+                0))
              (items (ri-pick--session-filtered session))
              (index (ri-pick--session-index session))
              (offset (ri-pick--session-offset session))
              (visible (ri-pick--visible-count session))
              (window (ri-pick--session-window session))
-             (width (max 1 (if (window-live-p window)
+             (width (max 4 (if (window-live-p window)
                                (window-body-width window)
                              ri-pick-min-width)))
-             (status (ri-pick--session-status session)))
-        (goto-char (point-min))
-        (unless (search-forward "\n" nil t)
-          (goto-char (point-max))
-          (insert "\n"))
-        (goto-char (point-min))
-        (forward-line 1)
-        (delete-region (point) (point-max))
-        (cond
-         (status
-          (insert (propertize status 'face 'ri-pick-annotation)
-                  "\n"))
-         ((null items)
-          (insert (propertize "No matches" 'face 'ri-pick-annotation)
-                  "\n"))
-         (t
-          (cl-loop for item in (seq-subseq
-                                items offset (min (length items)
-                                                  (+ offset visible)))
-                   for row from offset
-                   do (let ((start (point)))
-                        (insert (ri-pick--result-text
-                                 item (= row index) width)
-                                "\n")
-                        (add-text-properties
-                         start (point)
-                         (list 'read-only t
-                               'rear-nonsticky t
-                               'ri-pick-item item))))))
-        (goto-char (min position (line-end-position 1)))
+             (content-width (- width 4))
+             (status (ri-pick--session-status session))
+             (rows 0)
+             query-start query-end)
+        (erase-buffer)
+        (insert (ri-pick--title-line
+                 (ri-pick--session-title session) width)
+                "\n│ ")
+        (setq query-start (point))
+        (insert query)
+        (setq query-end (point))
+        (insert (make-string
+                 (max 0 (- content-width (string-width query))) ?\s)
+                " │\n"
+                (ri-pick--border-line width "├" "┤")
+                "\n")
+        (cl-labels
+            ((insert-row
+              (text &optional item)
+              (let* ((text (truncate-string-to-width
+                            (or text "") content-width nil nil "…"))
+                     (text-width (string-width text)))
+                (insert "│ ")
+                (let ((content-start (point)))
+                  (insert text
+                          (make-string
+                           (max 0 (- content-width text-width)) ?\s))
+                  (when item
+                    (add-text-properties content-start (point)
+                                         (list 'ri-pick-item item))))
+                (insert " │\n")
+                (cl-incf rows))))
+          (cond
+           (status
+            (insert-row (propertize status 'face 'ri-pick-annotation)))
+           ((null items)
+            (insert-row
+             (propertize "No matches" 'face 'ri-pick-annotation)))
+           (t
+            (cl-loop for item in (seq-subseq
+                                  items offset (min (length items)
+                                                    (+ offset visible)))
+                     for row from offset
+                     do (insert-row
+                         (ri-pick--result-text
+                          item (= row index) content-width)
+                         item))))
+          (while (< rows visible)
+            (insert-row "")))
+        (insert (ri-pick--border-line width "╰" "╯"))
+        (add-face-text-property (point-min) (point-max) 'fixed-pitch t)
+        (add-text-properties (point-min) (point-max)
+                             '(read-only t rear-nonsticky t))
+        (remove-text-properties query-start query-end '(read-only nil))
+        (let ((start-marker (ri-pick--session-query-start session))
+              (end-marker (ri-pick--session-query-end session)))
+          (set-marker start-marker query-start buffer)
+          (set-marker end-marker query-end buffer)
+          (set-marker-insertion-type start-marker nil)
+          (set-marker-insertion-type end-marker t))
+        (goto-char (+ query-start query-offset))
         (when (window-live-p window)
           (set-window-point window (point))
           (set-window-start window (point-min)))))))
@@ -331,7 +419,8 @@
 (defun ri-pick-delete-backward ()
   "Delete one query character before point."
   (interactive)
-  (when (> (point) (point-min))
+  (when-let* ((bounds (ri-pick--query-bounds))
+              ((> (point) (car bounds))))
     (let ((inhibit-read-only t))
       (delete-char -1))
     (ri-pick--query-changed)))
@@ -339,7 +428,8 @@
 (defun ri-pick-delete-forward ()
   "Delete one query character after point."
   (interactive)
-  (when (< (point) (line-end-position 1))
+  (when-let* ((bounds (ri-pick--query-bounds))
+              ((< (point) (cdr bounds))))
     (let ((inhibit-read-only t))
       (delete-char 1))
     (ri-pick--query-changed)))
@@ -387,12 +477,14 @@
 (defun ri-pick-query-beginning ()
   "Move to the beginning of the picker query."
   (interactive)
-  (goto-char (point-min)))
+  (when-let* ((bounds (ri-pick--query-bounds)))
+    (goto-char (car bounds))))
 
 (defun ri-pick-query-end ()
   "Move to the end of the picker query."
   (interactive)
-  (goto-char (line-end-position 1)))
+  (when-let* ((bounds (ri-pick--query-bounds)))
+    (goto-char (cdr bounds))))
 
 (defvar ri-pick-mode-map
   (let ((map (make-sparse-keymap)))
@@ -489,9 +581,9 @@
       (left-fringe . 0)
       (right-fringe . 0)
       (border-width . 0)
-      (internal-border-width . 1)
-      (child-frame-border-width . 1)
-      (undecorated . nil)
+      (internal-border-width . 0)
+      (child-frame-border-width . 0)
+      (undecorated . t)
       (cursor-type . bar)
       (tty-non-selected-cursor . nil)
       (no-special-glyphs . t)
@@ -620,13 +712,10 @@ return a cancellation function.  ON-CLOSE receives non-nil after acceptance."
         (progn
           (with-current-buffer buffer
             (ri-pick-mode)
-            (setq-local ri-pick--buffer-session session
-                        header-line-format
-                        `(:eval
-                          (propertize
-                           ,title 'face 'header-line)))
+            (setq-local ri-pick--buffer-session session)
             (let ((inhibit-read-only t))
               (erase-buffer))
+            (ri-pick--ensure-query-markers session)
             (add-hook 'kill-buffer-hook
                       #'ri-pick--picker-buffer-killed nil t))
           (let ((window
@@ -650,7 +739,8 @@ return a cancellation function.  ON-CLOSE receives non-nil after acceptance."
               (ri-pick--render session))
             (select-window window)
             (with-current-buffer buffer
-              (goto-char (point-min)))
+              (goto-char
+               (car (ri-pick--query-bounds session))))
             (setq success t)
             window))
       (unless success
