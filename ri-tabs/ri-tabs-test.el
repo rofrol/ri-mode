@@ -1392,9 +1392,38 @@
   (should (eq (face-attribute 'ri-tabs-tab :inherit nil t)
               'mode-line-inactive))
   (should (eq (face-attribute 'ri-tabs-current-tab :inherit nil t)
-              'mode-line-active))
-  (should (eq (face-attribute 'ri-tabs-highlight :inherit nil t)
-              'highlight)))
+              'mode-line-active)))
+
+(ert-deftest ri-tabs-test-tab-label-has-no-visual-mouse-face ()
+  (let ((buffer (generate-new-buffer "ri-tabs-label-hover")))
+    (unwind-protect
+        (progn
+          (with-current-buffer buffer
+            (setq buffer-file-name "/tmp/hover.el"))
+          (dolist (selected-buffer (list buffer nil))
+            (let ((label (ri-tabs--tab-label buffer "hover.el" selected-buffer)))
+              (should (eq (get-text-property 0 'face label)
+                          (if selected-buffer
+                              'ri-tabs-current-tab
+                            'ri-tabs-tab)))
+              (should (stringp (get-text-property 0 'help-echo label)))
+              (should-not (text-property-not-all
+                           0 (length label) 'mouse-face nil label)))))
+      (kill-buffer buffer))))
+
+(ert-deftest ri-tabs-test-prepare-item-display-keeps-hit-testing-without-hover ()
+  (let* ((frame (selected-frame))
+         (buffer (generate-new-buffer "ri-tabs-hit-test"))
+         (item (ri-tabs--make-item :buffer buffer :display " Tab "))
+         (text (ri-tabs--prepare-item-display frame item)))
+    (unwind-protect
+        (progn
+          (should (eq (get-text-property 1 'ri-tabs-frame text) frame))
+          (should (eq (get-text-property 1 'ri-tabs-buffer text) buffer))
+          (should (eq (get-text-property 1 'pointer text) 'hand))
+          (should-not (text-property-not-all
+                       0 (length text) 'mouse-face nil text)))
+      (kill-buffer buffer))))
 
 (ert-deftest ri-tabs-test-visible-item-model-carries-final-state ()
   (let ((current (generate-new-buffer "ri-tabs-model-current"))
@@ -1462,9 +1491,16 @@
           (should (equal (substring-no-properties text) " A \n B "))
           (should (eq (get-text-property 1 'ri-tabs-buffer text)
                       first-buffer))
+          (should (eq (get-text-property 1 'ri-tabs-frame text) frame))
+          (should (eq (get-text-property 1 'pointer text) 'hand))
           (let ((second-pos (1+ (string-search "B" text))))
             (should (eq (get-text-property second-pos 'ri-tabs-buffer text)
-                        second-buffer))))
+                        second-buffer))
+            (should (eq (get-text-property second-pos 'ri-tabs-frame text)
+                        frame))
+            (should (eq (get-text-property second-pos 'pointer text) 'hand)))
+          (should-not (text-property-not-all
+                       0 (length text) 'mouse-face nil text)))
       (mapc #'kill-buffer (list first-buffer second-buffer)))))
 
 (ert-deftest ri-tabs-test-surface-map-routes-only-ri-input ()

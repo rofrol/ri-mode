@@ -73,11 +73,6 @@
   "Face used for the current file tab."
   :group 'ri-tabs)
 
-(defface ri-tabs-highlight
-  '((t :inherit highlight :box nil))
-  "Face used when the pointer is over a file tab."
-  :group 'ri-tabs)
-
 (defvar ri-tabs--surface-windows (make-hash-table :test #'eq)
   "Map live frames to their Ri tab surface windows.")
 
@@ -600,7 +595,6 @@ resolution is performed only once per tab."
              (ri-tabs--marker buffer owner state)
              tab-name)
      'face (ri-tabs--tab-face selected)
-     'mouse-face 'ri-tabs-highlight
      'help-echo help)))
 
 (cl-defstruct (ri-tabs--item (:constructor ri-tabs--make-item))
