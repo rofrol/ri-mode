@@ -84,5 +84,16 @@
   (should (equal (keymap-legend--command-description #'ignore)
                  "Ignore")))
 
+(ert-deftest keymap-legend-test-public-window-accessor ()
+  (should-not (keymap-legend-window))
+  (cl-letf (((symbol-function 'window-live-p) (lambda (_window) t))
+            ((symbol-function 'buffer-live-p) (lambda (_buffer) t))
+            ((symbol-function 'window-buffer) (lambda (_window) 'buffer)))
+    (let ((keymap-legend--state '(:window window :buffer buffer)))
+      (should (eq (keymap-legend-window) 'window))))
+  (cl-letf (((symbol-function 'window-live-p) (lambda (_window) nil)))
+    (let ((keymap-legend--state '(:window window :buffer buffer)))
+      (should-not (keymap-legend-window)))))
+
 (provide 'keymap-legend-test)
 ;;; keymap-legend-test.el ends here

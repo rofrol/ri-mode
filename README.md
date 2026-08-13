@@ -102,6 +102,17 @@ hierarchy UI and do not require tree-sitter. When invoked during Extend, a
 supported navigation exits Extend before moving; an unavailable server or
 capability leaves the exact selection unchanged.
 
+The Space layer also contains Ki's Pick submenu. Press `SPC k f` to pick an
+open file buffer, `SPC k d` to pick a file from the current project,
+`SPC k s` to pick an Eglot document symbol, or `SPC k S` to search Eglot
+workspace symbols. The picker is a centered child-frame window with fuzzy
+query input and leaves its current keymap legend visible at the bottom.
+`C-j`/`C-k` or the arrow keys move through results, `RET` opens the selected
+item, and `Esc` or `C-g` cancels. File candidates follow `project.el` backend
+ignore rules; Buffer includes live file-visiting buffers. Document and
+Workspace symbol pickers require the corresponding Eglot capability.
+Cancelling preserves the exact source point and any active Extend selection.
+
 The `c`, `r`, `e`, `g`, `t`, `v`, `x`, and `z` keys also act as
 momentary layers. Hold one of them to display its available actions,
 press the shown key while still holding it, then release. These layers

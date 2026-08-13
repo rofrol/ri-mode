@@ -39,6 +39,7 @@
                    "semantic-regions"
                    "modal-cursor"
                    "ri-tabs"
+                   "ri-pick"
                    "ri-surround"
                    "ri-pairs"
                    "ri-mouse"))
@@ -54,6 +55,7 @@
 (require 'modal-cursor)
 (require 'ri-tabs)
 (require 'ri-extend)
+(require 'ri-pick)
 (require 'ri-lsp)
 (require 'ri-duplicate)
 (require 'ri-edit)
@@ -169,6 +171,7 @@ including Eglot's project label."
 (defvar ri--space-layer-map
   (let ((map (make-sparse-keymap)))
     (define-key map "j" '(menu-item "Editor" ri-editor-menu))
+    (define-key map "k" '(menu-item "Pick" ri-pick-menu))
     (define-key map "Z" '(menu-item "Out Calls" ri-find-outgoing-calls))
     (define-key map "z" '(menu-item "In Calls" ri-find-incoming-calls))
     (define-key map "x" '(menu-item "Def" ri-find-definition))
@@ -190,6 +193,20 @@ including Eglot's project label."
     (define-key map (kbd "<escape>") #'ri--exit-menu)
     map)
   "Keymap for the Editor submenu.")
+
+(defvar ri--pick-layer-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "f" '(menu-item "Buffer" ri-pick-buffer))
+    (define-key map "d" '(menu-item "File" ri-pick-file))
+    (define-key map "s"
+                '(menu-item "Symbol (Document)"
+                            ri-pick-document-symbol))
+    (define-key map "S"
+                '(menu-item "Symbol (Workspace)"
+                            ri-pick-workspace-symbol))
+    (define-key map (kbd "<escape>") #'ri--exit-menu)
+    map)
+  "Keymap for the Pick submenu.")
 
 
 ;;;; Menu commands
@@ -216,6 +233,55 @@ including Eglot's project label."
    (lambda ()
      (when (eq ri--menu-state 'editor)
        (ri--close-menu)))))
+
+(defun ri-pick-menu ()
+  "Enter the Ki-compatible Pick submenu."
+  (interactive)
+  (setq ri--menu-state 'pick)
+  (keymap-legend-show "Pick" ri--pick-layer-map '(:title "Pick"))
+  (set-transient-map
+   ri--pick-layer-map t
+   (lambda ()
+     (when (eq ri--menu-state 'pick)
+       (ri--close-menu)))))
+
+(defun ri--picker-closed (&optional _accepted)
+  "Clear RI menu state after a picker closes."
+  (setq ri--menu-state nil)
+  (ri--hide-frame))
+
+(defun ri--open-picker (function)
+  "Replace the Pick submenu with the picker opened by FUNCTION."
+  (setq ri--menu-state 'picker)
+  (set-transient-map nil)
+  (ri--hide-frame)
+  (condition-case error
+      (ri--call-preserving-user-error
+       (lambda () (funcall function #'ri--picker-closed)))
+    (error
+     (setq ri--menu-state nil)
+     (keymap-legend-hide)
+     (signal (car error) (cdr error)))))
+
+(defun ri-pick-buffer ()
+  "Pick one of the open file buffers."
+  (interactive)
+  (ri--open-picker #'ri-pick-open-buffers))
+
+(defun ri-pick-file ()
+  "Pick a file from the current project."
+  (interactive)
+  (ri--open-picker #'ri-pick-open-files))
+
+(defun ri-pick-document-symbol ()
+  "Pick an Eglot symbol from the current document."
+  (interactive)
+  (ri--open-picker #'ri-lsp-pick-document-symbols))
+
+(defun ri-pick-workspace-symbol ()
+  "Pick an Eglot symbol from the current workspace."
+  (interactive)
+  (ri--open-picker #'ri-lsp-pick-workspace-symbols))
 
 (defun ri-transform-menu ()
   "Show the Transform menu until a transformation is chosen."

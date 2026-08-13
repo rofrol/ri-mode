@@ -68,7 +68,24 @@
   (seq-filter
    (lambda (buffer)
      (equal (ri-tabs--buffer-file-id buffer) file-id))
-   (ri-tabs--file-buffer-list)))
+   (ri-tabs-file-buffer-list)))
+
+(ert-deftest ri-tabs-test-public-file-buffer-list-filters-and-sorts ()
+  (let ((later (generate-new-buffer "ri-tabs-public-later"))
+        (earlier (generate-new-buffer "ri-tabs-public-earlier"))
+        (non-file (generate-new-buffer "ri-tabs-public-non-file")))
+    (unwind-protect
+        (progn
+          (with-current-buffer later
+            (setq buffer-file-name "/tmp/z.el"))
+          (with-current-buffer earlier
+            (setq buffer-file-name "/tmp/a.el"))
+          (cl-letf (((symbol-function 'buffer-list)
+                     (lambda (&optional _frame)
+                       (list later non-file earlier))))
+            (should (equal (ri-tabs-file-buffer-list)
+                           (list earlier later)))))
+      (mapc #'kill-buffer (list later earlier non-file)))))
 
 (defun ri-tabs-test--capture-frame-state (frame)
   "Capture Tab Bar parameters of FRAME for fixture cleanup."
@@ -1477,7 +1494,7 @@
           (set-frame-parameter (selected-frame) 'ri-tabs-owner nil)
           (cl-letf (((symbol-function 'ri-tabs--read-state-safely)
                      (lambda () (ri-tabs--make-state)))
-                    ((symbol-function 'ri-tabs--file-buffer-list)
+                    ((symbol-function 'ri-tabs-file-buffer-list)
                      (lambda () (list marked-modified current))))
             (let ((items (ri-tabs--visible-items (selected-frame))))
               (should (= (length items) 2))
@@ -1644,7 +1661,7 @@
               (set-window-buffer other-window second)
               (cl-letf (((symbol-function 'ri-tabs--read-state-safely)
                          (lambda () ri-tabs--read-error))
-                        ((symbol-function 'ri-tabs--file-buffer-list)
+                        ((symbol-function 'ri-tabs-file-buffer-list)
                          (lambda () (list first second))))
                 (let ((items (ri-tabs--visible-items (selected-frame))))
                   (should (eq (ri-tabs--item-state (nth 0 items)) 'active))

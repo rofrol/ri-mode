@@ -34,8 +34,35 @@
                                              (car spec))))
       (should (equal binding
                      (list 'menu-item (cadr spec) (caddr spec))))))
+  (should (eq (lookup-key ri--space-layer-map "k") #'ri-pick-menu))
   (should (eq (lookup-key ri--space-layer-map (kbd "<escape>"))
               #'ri--exit-menu)))
+
+(ert-deftest ri-lsp-test-pick-layer-preserves-ki-bindings-and-labels ()
+  (dolist (spec '((?f "Buffer" ri-pick-buffer)
+                  (?d "File" ri-pick-file)
+                  (?s "Symbol (Document)" ri-pick-document-symbol)
+                  (?S "Symbol (Workspace)" ri-pick-workspace-symbol)))
+    (should
+     (equal (ri-lsp-test--raw-binding ri--pick-layer-map (car spec))
+            (list 'menu-item (cadr spec) (caddr spec)))))
+  (should (eq (lookup-key ri--pick-layer-map (kbd "<escape>"))
+              #'ri--exit-menu)))
+
+(ert-deftest ri-lsp-test-pick-menu-opens-legend-and-transient-map ()
+  (let (shown transient)
+    (cl-letf (((symbol-function 'keymap-legend-show)
+               (lambda (&rest arguments) (setq shown arguments)))
+              ((symbol-function 'set-transient-map)
+               (lambda (map keep &optional exit)
+                 (setq transient (list map keep exit)))))
+      (ri-pick-menu))
+    (should (equal (list (car shown) (caddr shown))
+                   '("Pick" (:title "Pick"))))
+    (should (eq (cadr shown) ri--pick-layer-map))
+    (should (eq (car transient) ri--pick-layer-map))
+    (should (eq (cadr transient) t))
+    (should (functionp (caddr transient)))))
 
 (ert-deftest ri-lsp-test-space-opens-ki-layer-with-legend ()
   (let (shown transient)
@@ -186,6 +213,79 @@
       (should-error (ri-find-definition) :type 'user-error))
     (should (string-match-p "Eglot" ri--restore-message-after-release))
     (should-not ri--menu-state)))
+
+(ert-deftest ri-lsp-test-document-picker-preflight-preserves-extend ()
+  (with-temp-buffer
+    (ri-lsp-test--enter-word-extend)
+    (let ((bounds (ri--selection-bounds))
+          (position (point))
+          (edge (ri--selection-state-active-edge ri--selection)))
+      (cl-letf (((symbol-function 'eglot-current-server) (lambda () nil)))
+        (should-error (ri-lsp-pick-document-symbols) :type 'user-error))
+      (should (equal (ri--selection-bounds) bounds))
+      (should (= (point) position))
+      (should (eq (ri--selection-state-active-edge ri--selection) edge)))))
+
+(ert-deftest ri-lsp-test-flattens-hierarchical-document-symbols ()
+  (with-temp-buffer
+    (insert "alpha")
+    (let* ((name (propertize "child" 'imenu-kind "Function"))
+           (entries (list (cons "Module" (list (cons name 2)))))
+           (items (ri-lsp--flatten-imenu entries (current-buffer)))
+           (item (car items))
+           (target (ri-pick-item-target item)))
+      (should (equal (ri-pick-item-label item) "Module › child"))
+      (should (equal (ri-pick-item-annotation item) "Function"))
+      (should (eq (plist-get target :buffer) (current-buffer)))
+      (should (= (plist-get target :position) 2)))))
+
+(ert-deftest ri-lsp-test-accepted-document-symbol-exits-extend-before-jump ()
+  (save-window-excursion
+    (with-temp-buffer
+      (ri-lsp-test--enter-word-extend)
+      (let ((item
+             (ri-pick-item-create
+              :label "beta"
+              :target (list :buffer (current-buffer)
+                            :position (copy-marker 8)))))
+        (cl-letf (((symbol-function 'xref-push-marker-stack) #'ignore)
+                  ((symbol-function 'ri-lsp--refresh-after-jump) #'ignore))
+          (ri-lsp--accept-document-symbol item))
+        (should-not (ri--selection-active-p))
+        (should (= (point) 8))))))
+
+(ert-deftest ri-lsp-test-workspace-provider-normalizes-and-cancels ()
+  (with-temp-buffer
+    (let* ((symbol
+            '(:name "main"
+              :kind 12
+              :containerName "app"
+              :location
+              (:uri "file:///tmp/project/src/main.el"
+               :range
+               (:start (:line 4 :character 0)
+                :end (:line 4 :character 4)))))
+           success-function
+           cancel-hints
+           delivered)
+      (cl-letf (((symbol-function 'eglot--async-request)
+                 (lambda (_server _method _params &rest arguments)
+                   (setq success-function
+                         (plist-get arguments :success-fn))
+                   41))
+                ((symbol-function 'eglot--cancel-inflight-async-requests)
+                 (lambda (hints) (setq cancel-hints hints))))
+        (let ((cancel
+               (ri-lsp--workspace-provider
+                (current-buffer) 'server "/tmp/project/" "main"
+                (lambda (items) (setq delivered items))
+                (lambda (error) (ert-fail error)))))
+          (funcall success-function (vector symbol))
+          (should (= (length delivered) 1))
+          (should (equal (ri-pick-item-label (car delivered)) "main"))
+          (should (eq (ri-pick-item-target (car delivered)) symbol))
+          (funcall cancel)
+          (should (equal cancel-hints '(:workspace/symbol))))))))
 
 (provide 'ri-lsp-test)
 ;;; ri-lsp-test.el ends here

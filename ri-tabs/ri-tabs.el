@@ -218,7 +218,7 @@ Populate the cache lazily for compatibility with buffers created before
         (string-lessp (buffer-name left) (buffer-name right))
       (string-lessp left-file right-file))))
 
-(defun ri-tabs--file-buffer-list ()
+(defun ri-tabs-file-buffer-list ()
   "Return all open file buffers in stable path order."
   (sort (seq-filter #'ri-tabs--file-buffer-p (buffer-list))
         #'ri-tabs--buffer-less-p))
@@ -355,7 +355,7 @@ BUFFER and FRAME default to the current buffer and selected frame."
 (defun ri-tabs--sync-live-buffers (_state &optional file-ids)
   "Synchronize live file identity caches.
 When FILE-IDS is non-nil, only synchronize buffers with those identities."
-  (dolist (buffer (ri-tabs--file-buffer-list))
+  (dolist (buffer (ri-tabs-file-buffer-list))
     (let ((file-id (ri-tabs--buffer-file-id buffer)))
       (when (or (null file-ids) (member file-id file-ids))
         (with-current-buffer buffer
@@ -366,7 +366,7 @@ When FILE-IDS is non-nil, only synchronize buffers with those identities."
 (defun ri-tabs--live-file-index ()
   "Return an index of canonical identities represented by live buffers."
   (let ((index (make-hash-table :test #'equal)))
-    (dolist (buffer (ri-tabs--file-buffer-list))
+    (dolist (buffer (ri-tabs-file-buffer-list))
       (when-let* ((file-id (ri-tabs--buffer-file-id buffer)))
         (puthash file-id t index)))
     index))
@@ -421,19 +421,19 @@ When FILE-IDS is non-nil, only synchronize buffers with those identities."
     (seq-filter
      (lambda (buffer)
        (ri-tabs--state-marked-p state owner (ri-tabs--buffer-file-id buffer)))
-     (ri-tabs--file-buffer-list)))
+     (ri-tabs-file-buffer-list)))
    (t
     (seq-filter
      (lambda (buffer)
        (buffer-local-value 'ri-tabs--marked-p buffer))
-     (ri-tabs--file-buffer-list)))))
+     (ri-tabs-file-buffer-list)))))
 
 (defun ri-tabs--navigation-buffer-list (&optional owner state)
   "Return OWNER's marked buffers followed by all open owner-unmarked files."
   (setq owner (or owner (ri-tabs--frame-owner)))
   (setq state (or state (ri-tabs--read-state-safely)))
   (let (marked unmarked)
-    (dolist (buffer (ri-tabs--file-buffer-list))
+    (dolist (buffer (ri-tabs-file-buffer-list))
       (if (and owner (not (eq state ri-tabs--read-error))
                (ri-tabs--state-marked-p state owner
                                         (ri-tabs--buffer-file-id buffer)))
