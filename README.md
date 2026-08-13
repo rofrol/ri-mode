@@ -109,9 +109,12 @@ workspace symbols. The picker is a centered child-frame window with fuzzy
 query input. Its `Pick` menu legend closes before the picker opens; the picker
 does not display a separate keymap legend. `C-j`/`C-k` or the arrow keys move
 through results, `RET` opens the selected item, and `Esc` or `C-g` cancels.
-File candidates follow `project.el` backend ignore rules; Buffer includes live
-file-visiting buffers. Document and Workspace symbol pickers require the
-corresponding Eglot capability.
+File candidates follow `project.el` backend ignore rules. When `GIT_DIR` or
+`GIT_WORK_TREE` in Emacs's own process environment selects an external work
+tree, File uses Git's effective root and standard ignore rules; changing those
+variables in an unrelated shell does not affect an already-running Emacs.
+Buffer includes live file-visiting buffers. Document and Workspace symbol
+pickers require the corresponding Eglot capability.
 Cancelling preserves the exact source point and any active Extend selection.
 
 The `c`, `r`, `e`, `g`, `t`, `v`, `x`, and `z` keys also act as

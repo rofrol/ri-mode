@@ -656,13 +656,30 @@ return a cancellation function.  ON-CLOSE receives non-nil after acceptance."
       (unless success
         (ri-pick--cleanup nil)))))
 
+(defun ri-pick--git-environment-p ()
+  "Return non-nil when an explicit Git repository environment is active."
+  (seq-some
+   (lambda (variable)
+     (let ((value (getenv variable)))
+       (and value (not (string-empty-p value)))))
+   '("GIT_DIR" "GIT_WORK_TREE")))
+
 (defun ri-pick--project-context ()
-  "Return (PROJECT . ROOT) for the current buffer."
-  (let ((project (project-current nil)))
-    (cons project
-          (file-name-as-directory
-           (expand-file-name
-            (if project (project-root project) default-directory))))))
+  "Return (PROJECT ROOT GIT-DIRECTORY) for the current buffer.
+GIT-DIRECTORY is non-nil when explicit Git environment variables select the
+candidate source instead of PROJECT."
+  (let* ((directory
+          (file-name-as-directory (expand-file-name default-directory)))
+         (git-root
+          (and (ri-pick--git-environment-p)
+               (ri-tabs-git-work-tree-root directory)))
+         (project (and (not git-root) (project-current nil)))
+         (root (or git-root
+                   (and project (project-root project))
+                   directory)))
+    (list project
+          (file-name-as-directory (expand-file-name root))
+          (and git-root directory))))
 
 (defun ri-pick--display-path (file root)
   "Return a concise display path for FILE relative to ROOT when possible."
@@ -693,7 +710,8 @@ return a cancellation function.  ON-CLOSE receives non-nil after acceptance."
 (defun ri-pick-open-buffers (&optional on-close)
   "Pick an open file buffer and call ON-CLOSE after the picker closes."
   (interactive)
-  (pcase-let ((`(,_project . ,root) (ri-pick--project-context)))
+  (pcase-let ((`(,_project ,root ,_git-directory)
+               (ri-pick--project-context)))
     (ri-pick-start "Buffer" (ri-pick--buffer-items root)
                    #'ri-pick--accept-buffer :on-close on-close)))
 
@@ -705,16 +723,37 @@ return a cancellation function.  ON-CLOSE receives non-nil after acceptance."
      (not (member (file-name-nondirectory (directory-file-name directory))
                   '(".git" ".hg" ".svn"))))))
 
-(defun ri-pick--file-items (project root)
-  "Return file picker items from PROJECT or fallback ROOT traversal."
+(defun ri-pick--git-files (directory)
+  "Return Git files across the work tree resolved from DIRECTORY."
+  (let ((default-directory directory))
+    (with-temp-buffer
+      (condition-case error
+          (let ((status
+                 (process-file
+                  "git" nil t nil
+                  "ls-files" "-z" "--full-name"
+                  "--cached" "--others" "--exclude-standard"
+                  "--" ":/")))
+            (unless (eq status 0)
+              (user-error "Could not list files in the Git work tree"))
+            (split-string (buffer-string) "\0" t))
+        (file-error
+         (user-error "Could not list files in the Git work tree: %s"
+                     (error-message-string error)))))))
+
+(defun ri-pick--file-items (project root git-directory)
+  "Return file picker items from PROJECT, Git, or fallback ROOT traversal.
+GIT-DIRECTORY selects direct Git enumeration when non-nil."
   (mapcar
    (lambda (file)
      (let* ((absolute (expand-file-name file root))
             (label (file-relative-name absolute root)))
        (ri-pick-item-create
         :label label :annotation "" :search label :target absolute)))
-   (if project (project-files project)
-     (ri-pick--fallback-files root))))
+   (cond
+    (git-directory (ri-pick--git-files git-directory))
+    (project (project-files project))
+    (t (ri-pick--fallback-files root)))))
 
 (defun ri-pick--accept-file (item)
   "Visit the file targeted by ITEM."
@@ -723,8 +762,10 @@ return a cancellation function.  ON-CLOSE receives non-nil after acceptance."
 (defun ri-pick-open-files (&optional on-close)
   "Pick a project file and call ON-CLOSE after the picker closes."
   (interactive)
-  (pcase-let ((`(,project . ,root) (ri-pick--project-context)))
-    (ri-pick-start "File" (ri-pick--file-items project root)
+  (pcase-let ((`(,project ,root ,git-directory)
+               (ri-pick--project-context)))
+    (ri-pick-start "File"
+                   (ri-pick--file-items project root git-directory)
                    #'ri-pick--accept-file :on-close on-close)))
 
 (provide 'ri-pick)

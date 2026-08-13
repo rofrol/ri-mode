@@ -216,11 +216,119 @@
         (progn
           (make-directory (file-name-directory file) t)
           (write-region "" nil file nil 'silent)
-          (let ((items (ri-pick--file-items nil root)))
+          (let ((items (ri-pick--file-items nil root nil)))
             (should (equal (mapcar #'ri-pick-item-label items)
                            '("src/main.el")))
             (should (equal (mapcar #'ri-pick-item-target items)
                            (list file)))))
+      (delete-directory root t))))
+
+(ert-deftest ri-pick-test-git-environment-files-cover-work-tree ()
+  (skip-unless (executable-find "git"))
+  (let* ((root (make-temp-file "ri-pick-git-environment-" t))
+         (work-tree (expand-file-name "work-tree" root))
+         (git-dir (expand-file-name "repository.git" root))
+         (nested (expand-file-name "nested/current" work-tree))
+         (global-config (expand-file-name "global.gitconfig" root))
+         (root-file (expand-file-name "root file.el" work-tree))
+         (nested-file (expand-file-name "nested/current/local.el" work-tree))
+         (ignored-file (expand-file-name "ignored.el" work-tree))
+         (process-environment (copy-sequence process-environment)))
+    (unwind-protect
+        (progn
+          (make-directory nested t)
+          (make-directory git-dir t)
+          (write-region "" nil global-config nil 'silent)
+          (write-region "" nil root-file nil 'silent)
+          (write-region "" nil nested-file nil 'silent)
+          (write-region "" nil ignored-file nil 'silent)
+          (write-region "ignored.el\n" nil
+                        (expand-file-name ".gitignore" work-tree)
+                        nil 'silent)
+          (let ((default-directory (file-name-as-directory work-tree)))
+            (unless
+                (eq 0
+                    (process-file
+                     "git" nil nil nil
+                     "--git-dir" git-dir
+                     "--work-tree" work-tree
+                     "init" "--quiet"))
+              (ert-fail "Could not initialize external Git directory")))
+          (setenv "GIT_DIR" git-dir)
+          (setenv "GIT_WORK_TREE" work-tree)
+          (setenv "GIT_CONFIG_GLOBAL" global-config)
+          (setenv "GIT_CONFIG_NOSYSTEM" "1")
+          (let ((default-directory (file-name-as-directory nested)))
+            (should-not (file-exists-p (expand-file-name ".git" work-tree)))
+            (pcase-let
+                ((`(,project ,resolved-root ,git-directory)
+                  (cl-letf (((symbol-function 'project-current)
+                             (lambda (&rest _arguments)
+                               (ert-fail
+                                "Explicit Git context consulted project.el"))))
+                    (ri-pick--project-context))))
+              (should-not project)
+              (should
+               (equal resolved-root
+                      (file-name-as-directory (file-truename work-tree))))
+              (should (equal git-directory default-directory))
+              (let* ((items
+                      (ri-pick--file-items
+                       project resolved-root git-directory))
+                     (labels
+                      (sort (mapcar #'ri-pick-item-label items)
+                            #'string-lessp))
+                     (targets (mapcar #'ri-pick-item-target items)))
+                (should
+                 (equal labels
+                        '(".gitignore"
+                          "nested/current/local.el"
+                          "root file.el")))
+                (should (member (file-truename root-file) targets))
+                (should (member (file-truename nested-file) targets))
+                (should-not (member (file-truename ignored-file) targets))
+                (should (seq-every-p #'file-name-absolute-p targets))))))
+      (delete-directory root t))))
+
+(ert-deftest ri-pick-test-ordinary-project-remains-project-backed ()
+  (let* ((root (make-temp-file "ri-pick-ordinary-project-" t))
+         (project 'ordinary-project)
+         (project-file (expand-file-name "src/main.el" root))
+         (process-environment (copy-sequence process-environment)))
+    (unwind-protect
+        (progn
+          (setenv "GIT_DIR" nil)
+          (setenv "GIT_WORK_TREE" nil)
+          (let ((default-directory (file-name-as-directory root)))
+            (cl-letf (((symbol-function 'project-current)
+                       (lambda (&rest _arguments) project))
+                      ((symbol-function 'project-root)
+                       (lambda (value)
+                         (should (eq value project))
+                         root))
+                      ((symbol-function 'ri-tabs-git-work-tree-root)
+                       (lambda (_directory)
+                         (ert-fail "Ordinary project consulted Git directly"))))
+              (should
+               (equal (ri-pick--project-context)
+                      (list project default-directory nil))))
+            (cl-letf (((symbol-function 'project-files)
+                       (lambda (value)
+                         (should (eq value project))
+                         '("src/main.el")))
+                      ((symbol-function 'ri-pick--git-files)
+                       (lambda (_directory)
+                         (ert-fail "Ordinary project used direct Git files")))
+                      ((symbol-function 'ri-pick--fallback-files)
+                       (lambda (_directory)
+                         (ert-fail "Ordinary project used directory fallback"))))
+              (let ((items (ri-pick--file-items project default-directory nil)))
+                (should
+                 (equal (mapcar #'ri-pick-item-label items)
+                        '("src/main.el")))
+                (should
+                 (equal (mapcar #'ri-pick-item-target items)
+                        (list project-file)))))))
       (delete-directory root t))))
 
 (provide 'ri-pick-test)
