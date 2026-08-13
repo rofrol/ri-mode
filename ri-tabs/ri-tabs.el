@@ -62,14 +62,14 @@
 
 (defface ri-tabs-tab
   '((t :inherit mode-line-inactive
-       :background "#c4c4c4"
+       :background "#989898"
        :box nil))
   "Face used for an inactive file tab."
   :group 'ri-tabs)
 
 (defface ri-tabs-visible-tab
   '((t :inherit mode-line-inactive
-       :background "#d8d8d8"
+       :background "#8faec7"
        :box nil))
   "Face used for an inactive tab visible in another window of the frame."
   :group 'ri-tabs)
