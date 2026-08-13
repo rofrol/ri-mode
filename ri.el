@@ -54,6 +54,7 @@
 (require 'modal-cursor)
 (require 'ri-tabs)
 (require 'ri-extend)
+(require 'ri-lsp)
 (require 'ri-duplicate)
 (require 'ri-edit)
 (require 'ri-transform)
@@ -168,7 +169,16 @@ including Eglot's project label."
 (defvar ri--space-layer-map
   (let ((map (make-sparse-keymap)))
     (define-key map "j" '(menu-item "Editor" ri-editor-menu))
-    (define-key map "v" '(menu-item "≡ Paste" ri-space-paste))
+    (define-key map "Z" '(menu-item "Out Calls" ri-find-outgoing-calls))
+    (define-key map "z" '(menu-item "In Calls" ri-find-incoming-calls))
+    (define-key map "x" '(menu-item "Def" ri-find-definition))
+    (define-key map "X" '(menu-item "Decl" ri-find-declaration))
+    (define-key map "c" '(menu-item "Type" ri-find-type-definition))
+    (define-key map "V"
+                '(menu-item "Ref+" ri-find-references-with-declaration))
+    (define-key map "v"
+                '(menu-item "Ref-" ri-find-references-without-declaration))
+    (define-key map "b" '(menu-item "Impl" ri-find-implementations))
     (define-key map (kbd "<escape>") #'ri--exit-menu)
     map)
   "Keymap for the Space menu.")
@@ -180,6 +190,7 @@ including Eglot's project label."
     (define-key map (kbd "<escape>") #'ri--exit-menu)
     map)
   "Keymap for the Editor submenu.")
+
 
 ;;;; Menu commands
 
@@ -218,19 +229,59 @@ including Eglot's project label."
      (when (eq ri--menu-state 'transform)
        (ri--close-menu)))))
 
+
+(defun ri--run-space-lsp-command (function)
+  "Close the Space layer and call Eglot-backed FUNCTION."
+  (set-transient-map nil)
+  (ri--close-menu)
+  (ri--call-preserving-user-error function))
+
+(defun ri-find-outgoing-calls ()
+  "Show callees of the symbol at point."
+  (interactive)
+  (ri--run-space-lsp-command #'ri-lsp--find-outgoing-calls))
+
+(defun ri-find-incoming-calls ()
+  "Show callers of the symbol at point."
+  (interactive)
+  (ri--run-space-lsp-command #'ri-lsp--find-incoming-calls))
+
+(defun ri-find-definition ()
+  "Find definitions of the symbol at point."
+  (interactive)
+  (ri--run-space-lsp-command #'ri-lsp--find-definition))
+
+(defun ri-find-declaration ()
+  "Find declarations of the symbol at point."
+  (interactive)
+  (ri--run-space-lsp-command #'ri-lsp--find-declaration))
+
+(defun ri-find-type-definition ()
+  "Find type definitions of the symbol at point."
+  (interactive)
+  (ri--run-space-lsp-command #'ri-lsp--find-type-definition))
+
+(defun ri-find-references-with-declaration ()
+  "Find references including the declaration."
+  (interactive)
+  (ri--run-space-lsp-command #'ri-lsp--find-references-with-declaration))
+
+(defun ri-find-references-without-declaration ()
+  "Find references excluding the declaration."
+  (interactive)
+  (ri--run-space-lsp-command #'ri-lsp--find-references-without-declaration))
+
+(defun ri-find-implementations ()
+  "Find implementations of the symbol at point."
+  (interactive)
+  (ri--run-space-lsp-command #'ri-lsp--find-implementations))
+
 (defun ri--finish-edit-command ()
   "Leave Extend after an edit command and refresh RI UI state."
   (ri--exit-extend)
   (ri--update-highlight)
   (force-mode-line-update))
 
-(defun ri-space-paste ()
-  "Paste, leave Extend, and exit the Space menu."
-  (interactive)
-  (set-transient-map nil)
-  (ri--close-menu)
-  (yank)
-  (ri--finish-edit-command))
 
 
 ;;;; Surround menu
