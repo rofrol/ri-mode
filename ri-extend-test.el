@@ -425,6 +425,7 @@
               (run-hooks 'find-file-hook)
               (should ri-tabs-mode)
               (should tab-bar-mode)
+              (should (= (frame-parameter nil 'tab-bar-lines) 1))
               (should-not tab-line-mode)
               (should
                (equal (default-value 'tab-bar-format)

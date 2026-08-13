@@ -2,7 +2,7 @@
 
 ;; Author: Roman Frolow
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "31.1"))
+;; Package-Requires: ((emacs "30.2"))
 ;; Keywords: convenience, files, tabs
 ;; URL: https://github.com/rofrol/ri-tabs
 
@@ -397,17 +397,14 @@ buffer."
       (frame-parameter frame 'no-accept-focus)
       (eq (frame-parameter frame 'minibuffer) 'only)))
 (defun ri-tabs--frame-eligible-p (frame)
-  "Return non-nil when FRAME should display an Ri file Tab Bar."
+  "Return non-nil when FRAME should display an Ri file Tab Bar.
+
+Ri owns the Tab Bar row of every ordinary top-level frame while the
+mode is active.  A pre-existing `tab-bar-lines-keep-state' value is
+saved and restored on disable, but must not suppress Ri's row on an
+otherwise ordinary frame.  Structural auxiliary frames are excluded."
   (and (frame-live-p frame)
-       (not (ri-tabs--structurally-ineligible-frame-p frame))
-       (not
-        (if-let* ((saved
-                   (seq-find
-                    (lambda (entry)
-                      (eq (car entry) frame))
-                    (plist-get ri-tabs--tab-bar-state :frames))))
-            (nth 2 saved)
-          (frame-parameter frame 'tab-bar-lines-keep-state)))))
+       (not (ri-tabs--structurally-ineligible-frame-p frame))))
 
 (defun ri-tabs--frame-selected-window (frame)
   "Return FRAME's selected ordinary window.
@@ -683,25 +680,29 @@ position falls back to the selected frame."
 
 (defun ri-tabs--configure-frame (frame &optional remember-temporary)
   "Apply the active Ri Tab Bar policy to FRAME.
-When REMEMBER-TEMPORARY is non-nil, save any protection Ri adds to a
-new structurally ineligible frame for mode disable."
+When REMEMBER-TEMPORARY is non-nil, remember FRAME's original Tab Bar
+parameters so a frame created while Ri is active can be restored
+exactly on disable."
   (when (frame-live-p frame)
     (let ((ineligible
            (ri-tabs--structurally-ineligible-frame-p frame)))
       (when (and remember-temporary
-                 ineligible
                  (not (assq frame ri-tabs--temporary-frame-states)))
         (push
          (ri-tabs--capture-frame-state frame)
          ri-tabs--temporary-frame-states))
-      (cond
-       (ineligible
-        (unless (frame-parameter frame 'tab-bar-lines-keep-state)
-          (set-frame-parameter frame 'tab-bar-lines 0)
-          (set-frame-parameter
-           frame 'tab-bar-lines-keep-state t)))
-       ((ri-tabs--frame-eligible-p frame)
-        (set-frame-parameter frame 'tab-bar-lines 1))))))
+      (if ineligible
+          (progn
+            (set-frame-parameter frame 'tab-bar-lines 0)
+            (set-frame-parameter
+             frame 'tab-bar-lines-keep-state t))
+        ;; Ri temporarily owns the visible row on ordinary frames.
+        ;; Pin the row while Ri is active: core Tab Bar code recalculates
+        ;; `tab-bar-lines' in several paths, and our file tabs intentionally
+        ;; are not represented by `tab-bar-tabs-function'.  The original
+        ;; keep-state value is already captured and is restored on disable.
+        (set-frame-parameter frame 'tab-bar-lines 1)
+        (set-frame-parameter frame 'tab-bar-lines-keep-state t)))))
 
 (defun ri-tabs--configure-new-frame (frame)
   "Configure newly created FRAME while `ri-tabs-mode' is active."
@@ -770,7 +771,10 @@ Return `ri-tabs--absent' when `default-frame-alist' has no such entry."
     (setq ri-tabs--tab-bar-state
           (ri-tabs--capture-tab-bar-state)))
   (setq-default tab-bar-format '(ri-tabs--format-tabs)
-                tab-bar-show 0)
+                ;; `t' is the documented unconditional visibility value.
+                ;; A numeric value is a threshold based on native workspace
+                ;; tabs, which Ri deliberately does not use for file tabs.
+                tab-bar-show t)
   (ri-tabs--install-event-bindings)
   (dolist (frame (frame-list))
     (ri-tabs--configure-frame frame))
@@ -821,11 +825,28 @@ Return `ri-tabs--absent' when `default-frame-alist' has no such entry."
       (kill-local-variable 'ri-tabs--marked-p)
       (kill-local-variable 'ri-tabs--file-id))))
 
+(defun ri-tabs--enforce-tab-bar ()
+  "Reassert the native Tab Bar state owned by active Ri tabs.
+
+This deliberately runs after initialization as well as during later
+refreshes.  `ri-enable' is commonly called before the rest of init.el has
+finished, so later user setup must not be able to leave `ri-tabs-mode' in
+a contradictory state where the mode is active but its rendering surface
+is disabled."
+  (when ri-tabs-mode
+    (setq-default tab-bar-format '(ri-tabs--format-tabs)
+                  tab-bar-show t)
+    (unless tab-bar-mode
+      (tab-bar-mode 1))
+    (dolist (frame (frame-list))
+      (ri-tabs--configure-frame frame))))
+
 (defun ri-tabs--refresh (&rest _ignored)
-  "Invalidate every frame-wide Ri file Tab Bar."
+  "Invalidate every frame-wide Ri file Tab Bar and keep it visible."
   (when ri-tabs-mode
     (if ri-tabs--refresh-batching-p
         (setq ri-tabs--refresh-pending-p t)
+      (ri-tabs--enforce-tab-bar)
       (force-mode-line-update t))))
 
 (defun ri-tabs--updated-state (state file-id marked)
@@ -1096,6 +1117,7 @@ including marks for files with no live buffer."
           (setq ri-tabs--activation-complete-p t))
         (when (and ri-tabs-mode
                    (or completed ri-tabs--refresh-pending-p))
+          (ri-tabs--enforce-tab-bar)
           (force-mode-line-update t))))))
 
 (defun ri-tabs--startup-activate ()
