@@ -8,14 +8,13 @@
 
 ;;; Commentary:
 
-;; `ri-tabs-mode' displays every persistently marked file in one native Tab
-;; Bar spanning each ordinary frame and appends that frame's selected buffer
-;; while it is unmarked.  On mode activation, available marked files without
-;; live buffers are reopened in the background.  Marked tabs stay in path
-;; order, use the shortest unique path suffix as their label, and show Ki's
-;; marked/modified state indicators.  Selecting a tab switches the selected
-;; window of its frame to the file buffer; closing a tab kills it without
-;; removing its persistent mark.
+;; `ri-tabs-mode' displays a repository-owned set of persistently marked files
+;; in one native Tab Bar spanning each ordinary frame and appends that frame's
+;; selected buffer while it is unmarked in the active owner set.  The repository
+;; of the first marked file owns the set, but files in that set may live in any
+;; repository or outside Git.  Opening such a file never changes the owner.
+;; Marked tabs stay in path order, use the shortest unique path suffix as their
+;; label, and show Ki's marked/modified state indicators.
 
 ;;; Code:
 
@@ -133,18 +132,19 @@ This variable is dynamically bound to the validated activation snapshot.")
   "Non-nil when a refresh was requested during the current batch.")
 
 
+(defvar ri-tabs--restored-owner-repos (make-hash-table :test #'equal)
+  "Owner repositories whose marked files were restored this enable.")
+
 (defvar-local ri-tabs--marked-p nil
-  "Render cache for whether the current file is marked as a Ki tab.")
+  "Deprecated local test/render hint; persistent state is the source of truth.")
 
 (defvar-local ri-tabs--file-id nil
   "File identity last synchronized with persistent Ki tab marks.")
 
-(defun ri-tabs-buffer-marked-p (&optional buffer)
-  "Return non-nil when BUFFER is marked as a Ki tab.
-BUFFER defaults to the current buffer."
-  (let ((buffer (or buffer (current-buffer))))
-    (and (buffer-live-p buffer)
-         (buffer-local-value 'ri-tabs--marked-p buffer))))
+(defun ri-tabs--canonical-directory (directory)
+  "Return DIRECTORY as a canonical absolute directory name."
+  (when directory
+    (file-name-as-directory (file-truename (expand-file-name directory)))))
 
 (defun ri-tabs--file-buffer-p (buffer)
   "Return non-nil when BUFFER is a live visible file buffer."
@@ -163,6 +163,21 @@ BUFFER defaults to the current buffer."
   (or (ri-tabs--buffer-file-id buffer)
       (user-error "Buffer is not visiting a visible file")))
 
+(defun ri-tabs--buffer-repo (buffer)
+  "Return BUFFER's canonical Git repository root, or nil."
+  (when-let* ((file-id (ri-tabs--buffer-file-id buffer))
+              (root (locate-dominating-file file-id ".git")))
+    (ri-tabs--canonical-directory root)))
+
+(defun ri-tabs--frame-owner-repo (&optional frame)
+  "Return FRAME's active marked-set owner repository."
+  (frame-parameter (or frame (selected-frame)) 'ri-tabs-owner-repo))
+
+(defun ri-tabs--set-frame-owner-repo (frame repo)
+  "Set FRAME's active marked-set owner repository to REPO."
+  (set-frame-parameter frame 'ri-tabs-owner-repo
+                       (and repo (ri-tabs--canonical-directory repo))))
+
 (defun ri-tabs--buffer-less-p (left right)
   "Return non-nil when file buffer LEFT sorts before RIGHT."
   (let ((left-file (buffer-file-name left))
@@ -176,37 +191,71 @@ BUFFER defaults to the current buffer."
   (sort (seq-filter #'ri-tabs--file-buffer-p (buffer-list))
         #'ri-tabs--buffer-less-p))
 
-(defun ri-tabs--make-state (files)
-  "Return a normalized version-1 persistent state for FILES."
-  (list :version 1
-        :files (delete-dups
-                (sort (copy-sequence files) #'string-lessp))))
+(defun ri-tabs--normalize-files (files)
+  "Return FILES deduplicated and sorted by canonical identity."
+  (delete-dups (sort (mapcar #'expand-file-name (copy-sequence files))
+                     #'string-lessp)))
+
+(defun ri-tabs--make-state (&optional repos unresolved)
+  "Return normalized version-2 state from REPOS and UNRESOLVED.
+REPOS is an alist of (OWNER . FILES)."
+  (let ((normalized-repos
+         (mapcar (lambda (entry)
+                   (cons (ri-tabs--canonical-directory (car entry))
+                         (ri-tabs--normalize-files (cdr entry))))
+                 repos)))
+    (list :version 2
+          :repos (sort normalized-repos
+                       (lambda (a b) (string-lessp (car a) (car b))))
+          :unresolved (ri-tabs--normalize-files unresolved))))
+
+(defun ri-tabs--migrate-v1-state (files)
+  "Convert legacy global marked FILES to one repository-owned set."
+  (let ((owner
+         (seq-some
+          (lambda (file)
+            (when-let* ((root (locate-dominating-file file ".git")))
+              (ri-tabs--canonical-directory root)))
+          files)))
+    (if owner
+        (ri-tabs--make-state (list (cons owner files)))
+      (ri-tabs--make-state nil files))))
 
 (defun ri-tabs--normalize-state (state)
   "Validate and normalize persistent Ki tab mark STATE.
-The uninitialized value nil is returned unchanged."
+The uninitialized value nil is returned unchanged.  Version 1 is
+migrated in memory to the repository-owned version-2 representation."
   (cond
    ((null state) nil)
-   ((not (and (proper-list-p state)
-              (= (length state) 4)
-              (eq (nth 0 state) :version)))
+   ((not (proper-list-p state))
     (error "Malformed persistent Ki tab marks: %S" state))
-   ((not (eql (nth 1 state) 1))
-    (error "Unsupported persistent Ki tab marks version: %S"
-           (nth 1 state)))
-   ((not (eq (nth 2 state) :files))
-    (error "Malformed persistent Ki tab marks: %S" state))
-   (t
-    (let ((files (nth 3 state)))
-      (unless (and (proper-list-p files)
-                   (seq-every-p #'stringp files))
+   ((eql (plist-get state :version) 1)
+    (let ((files (plist-get state :files)))
+      (unless (and (proper-list-p files) (seq-every-p #'stringp files))
         (error "Malformed persistent Ki tab marks: %S" state))
-      (ri-tabs--make-state files)))))
+      (ri-tabs--migrate-v1-state files)))
+   ((not (eql (plist-get state :version) 2))
+    (error "Unsupported persistent Ki tab marks version: %S"
+           (plist-get state :version)))
+   (t
+    (let ((repos (plist-get state :repos))
+          (unresolved (plist-get state :unresolved)))
+      (unless (and (proper-list-p repos)
+                   (seq-every-p
+                    (lambda (entry)
+                      (and (consp entry)
+                           (stringp (car entry))
+                           (proper-list-p (cdr entry))
+                           (seq-every-p #'stringp (cdr entry))))
+                    repos)
+                   (proper-list-p unresolved)
+                   (seq-every-p #'stringp unresolved))
+        (error "Malformed persistent Ki tab marks: %S" state))
+      (ri-tabs--make-state repos unresolved)))))
 
 (defun ri-tabs--read-state ()
   "Read and validate the latest persistent Ki tab mark state."
-  (ri-tabs--normalize-state
-   (multisession-value ri-tabs--marks-store)))
+  (ri-tabs--normalize-state (multisession-value ri-tabs--marks-store)))
 
 (defun ri-tabs--warn-persistence (operation err)
   "Warn that persistent mark OPERATION failed with ERR."
@@ -232,26 +281,39 @@ The uninitialized value nil is returned unchanged."
     (setf (multisession-value ri-tabs--marks-store) normalized)
     normalized))
 
-(defun ri-tabs--state-marked-p (state file-id)
-  "Return non-nil when FILE-ID is marked in validated STATE."
-  (and state (member file-id (nth 3 state))))
+(defun ri-tabs--state-owner-files (state owner)
+  "Return marked files belonging to OWNER in validated STATE."
+  (and state owner (cdr (assoc owner (plist-get state :repos)))))
 
-(defun ri-tabs--set-buffer-cache (buffer file-id state)
-  "Synchronize BUFFER's FILE-ID and render cache from STATE."
-  (with-current-buffer buffer
-    (setq ri-tabs--file-id file-id
-          ri-tabs--marked-p
-          (and (ri-tabs--state-marked-p state file-id) t))))
+(defun ri-tabs--state-has-owner-p (state owner)
+  "Return non-nil when STATE contains a marked set owned by OWNER."
+  (and state owner (assoc owner (plist-get state :repos))))
 
-(defun ri-tabs--sync-live-buffers (state &optional file-ids)
-  "Synchronize live file buffers from STATE.
-When FILE-IDS is non-nil, only synchronize buffers with those
-identities."
+(defun ri-tabs--state-marked-p (state owner file-id)
+  "Return non-nil when FILE-ID is marked in OWNER's set in STATE."
+  (and state owner file-id
+       (member file-id (ri-tabs--state-owner-files state owner))))
+
+(defun ri-tabs-buffer-marked-p (&optional buffer frame)
+  "Return non-nil when BUFFER is marked in FRAME's active owner set.
+BUFFER and FRAME default to the current buffer and selected frame."
+  (let* ((buffer (or buffer (current-buffer)))
+         (frame (or frame (selected-frame)))
+         (owner (ri-tabs--frame-owner-repo frame))
+         (state (ri-tabs--read-state-safely))
+         (file-id (and (buffer-live-p buffer)
+                       (ri-tabs--buffer-file-id buffer))))
+    (and (not (eq state ri-tabs--read-error))
+         (ri-tabs--state-marked-p state owner file-id))))
+
+(defun ri-tabs--sync-live-buffers (_state &optional file-ids)
+  "Synchronize live file identity caches.
+When FILE-IDS is non-nil, only synchronize buffers with those identities."
   (dolist (buffer (ri-tabs--file-buffer-list))
     (let ((file-id (ri-tabs--buffer-file-id buffer)))
-      (when (or (null file-ids)
-                (member file-id file-ids))
-        (ri-tabs--set-buffer-cache buffer file-id state)))))
+      (when (or (null file-ids) (member file-id file-ids))
+        (with-current-buffer buffer
+          (setq ri-tabs--file-id file-id))))))
 
 (defun ri-tabs--live-file-index ()
   "Return an index of canonical identities represented by live buffers."
@@ -276,57 +338,64 @@ identities."
        failures ""))
      :warning)))
 
-(defun ri-tabs--restore-marked-files (state)
-  "Restore missing marked file buffers from validated STATE.
-Return an ordered list of (FILE-ID . REASON) failures.  This function
-does not read or write persistent membership."
+(defun ri-tabs--restore-marked-files (state owner)
+  "Restore missing marked file buffers for OWNER from validated STATE."
   (let ((live-index (ri-tabs--live-file-index))
         failures)
-    (dolist (file-id (plist-get state :files))
-      (when (and ri-tabs-mode
-                 (not (gethash file-id live-index)))
+    (dolist (file-id (ri-tabs--state-owner-files state owner))
+      (when (and ri-tabs-mode (not (gethash file-id live-index)))
         (condition-case err
             (if (not (file-exists-p file-id))
                 (push (cons file-id "file does not exist") failures)
               (let* ((buffer (find-file-noselect file-id))
-                     (resolved
-                      (and (bufferp buffer)
-                           (buffer-live-p buffer)
-                           (ri-tabs--buffer-file-id buffer))))
+                     (resolved (and (bufferp buffer)
+                                    (buffer-live-p buffer)
+                                    (ri-tabs--buffer-file-id buffer))))
                 (if (equal resolved file-id)
                     (puthash file-id t live-index)
-                  (push
-                   (cons
-                    file-id
-                    (if resolved
-                        (format "opened buffer resolves to %s" resolved)
-                      "opening did not return a live visible file buffer"))
-                   failures))))
-          (error
-           (push (cons file-id (error-message-string err)) failures)))))
+                  (push (cons file-id
+                              (if resolved
+                                  (format "opened buffer resolves to %s" resolved)
+                                "opening did not return a live visible file buffer"))
+                        failures))))
+          (error (push (cons file-id (error-message-string err)) failures)))))
     (setq failures (nreverse failures))
     (ri-tabs--warn-restore-failures failures)
     failures))
 
-(defun ri-tabs--marked-buffer-list ()
-  "Return marked file buffers in stable path order."
-  (seq-filter #'ri-tabs-buffer-marked-p
-              (ri-tabs--file-buffer-list)))
+(defun ri-tabs--marked-buffer-list (&optional owner state)
+  "Return live buffers marked in OWNER's set in stable path order."
+  (setq owner (or owner (ri-tabs--frame-owner-repo)))
+  (setq state (or state (ri-tabs--read-state-safely)))
+  (cond
+   ((eq state ri-tabs--read-error) nil)
+   (owner
+    (seq-filter
+     (lambda (buffer)
+       (ri-tabs--state-marked-p state owner (ri-tabs--buffer-file-id buffer)))
+     (ri-tabs--file-buffer-list)))
+   (t
+    (seq-filter
+     (lambda (buffer)
+       (buffer-local-value 'ri-tabs--marked-p buffer))
+     (ri-tabs--file-buffer-list)))))
 
-(defun ri-tabs--navigation-buffer-list ()
-  "Return marked buffers followed by every open unmarked file buffer."
+(defun ri-tabs--navigation-buffer-list (&optional owner state)
+  "Return OWNER's marked buffers followed by all open owner-unmarked files."
+  (setq owner (or owner (ri-tabs--frame-owner-repo)))
+  (setq state (or state (ri-tabs--read-state-safely)))
   (let (marked unmarked)
     (dolist (buffer (ri-tabs--file-buffer-list))
-      (if (ri-tabs-buffer-marked-p buffer)
+      (if (and owner (not (eq state ri-tabs--read-error))
+               (ri-tabs--state-marked-p state owner
+                                        (ri-tabs--buffer-file-id buffer)))
           (push buffer marked)
         (push buffer unmarked)))
     (nconc (nreverse marked) (nreverse unmarked))))
 
-(defun ri-tabs--buffer-list (selected-buffer)
-  "Return marked buffers followed by SELECTED-BUFFER when unmarked.
-SELECTED-BUFFER is included only when it is a live visible file
-buffer."
-  (let ((marked (ri-tabs--marked-buffer-list)))
+(defun ri-tabs--buffer-list (selected-buffer &optional owner state)
+  "Return OWNER's marked buffers plus SELECTED-BUFFER when unmarked."
+  (let ((marked (ri-tabs--marked-buffer-list owner state)))
     (if (or (not (ri-tabs--file-buffer-p selected-buffer))
             (memq selected-buffer marked))
         marked
@@ -379,9 +448,12 @@ buffer."
   "Return the appropriate tab face for SELECTED state."
   (if selected 'ri-tabs-current-tab 'ri-tabs-tab))
 
-(defun ri-tabs--marker (buffer)
-  "Return BUFFER's marker for its marked and modified state."
-  (let ((marked (ri-tabs-buffer-marked-p buffer)))
+(defun ri-tabs--marker (buffer owner state)
+  "Return BUFFER's marker in OWNER's marked set from STATE."
+  (let ((marked (if (and state owner)
+                    (ri-tabs--state-marked-p
+                     state owner (ri-tabs--buffer-file-id buffer))
+                  (buffer-local-value 'ri-tabs--marked-p buffer))))
     (if (buffer-modified-p buffer)
         (if marked
             ri-tabs-marked-modified-marker
@@ -428,7 +500,7 @@ selected it.  Never return a minibuffer window."
                          (not (window-minibuffer-p window))))
                   (window-list frame 'nomini)))))))
 
-(defun ri-tabs--tab-label (buffer buffers selected-buffer)
+(defun ri-tabs--tab-label (buffer buffers selected-buffer &optional owner state)
   "Return BUFFER's Tab Bar label among BUFFERS.
 SELECTED-BUFFER determines the active face without consulting an
 ambient selected window."
@@ -439,7 +511,7 @@ ambient selected window."
                  (format "Switch to %s" file))))
     (propertize
      (format " %s %s "
-             (ri-tabs--marker buffer)
+             (ri-tabs--marker buffer owner state)
              (ri-tabs--tab-name buffer buffers))
      'face (ri-tabs--tab-face selected)
      'mouse-face 'ri-tabs-highlight
@@ -464,10 +536,11 @@ retain a stale window."
       (kill-buffer buffer)
     (ri-tabs--refresh)))
 
-(defun ri-tabs--toggle-buffer-from-tab (buffer)
-  "Toggle live BUFFER's persistent mark from a rendered tab action."
-  (if (buffer-live-p buffer)
-      (ri-tabs-toggle-buffer-mark buffer)
+(defun ri-tabs--toggle-buffer-from-tab (frame buffer)
+  "Toggle live BUFFER's persistent mark in FRAME's active owner set."
+  (if (and (frame-live-p frame) (buffer-live-p buffer))
+      (with-selected-frame frame
+        (ri-tabs-toggle-buffer-mark buffer))
     (ri-tabs--refresh)))
 
 (defun ri-tabs--format-tabs (&optional frame)
@@ -480,7 +553,9 @@ formatters without arguments."
         (set-frame-parameter frame 'ri-tabs--item-buffers nil))
     (let* ((window (ri-tabs--frame-selected-window frame))
            (selected-buffer (and window (window-buffer window)))
-           (buffers (ri-tabs--buffer-list selected-buffer))
+           (owner (ri-tabs--frame-owner-repo frame))
+           (state (ri-tabs--read-state-safely))
+           (buffers (ri-tabs--buffer-list selected-buffer owner state))
            (index 0)
            items
            mapping)
@@ -494,7 +569,7 @@ formatters without arguments."
                       (intern (format "tab-%d" index))))
                (label
                 (ri-tabs--tab-label
-                 item-buffer buffers selected-buffer))
+                 item-buffer buffers selected-buffer owner state))
                (help (get-text-property 0 'help-echo label))
                (command
                 (if selected
@@ -571,10 +646,10 @@ position falls back to the selected frame."
     (define-key-after
       menu [toggle-mark]
       `(menu-item
-        ,(if (ri-tabs-buffer-marked-p buffer) "Unmark" "Mark")
+        ,(if (ri-tabs-buffer-marked-p buffer frame) "Unmark" "Mark")
         ,(lambda ()
            (interactive)
-           (ri-tabs--toggle-buffer-from-tab buffer))
+           (ri-tabs--toggle-buffer-from-tab frame buffer))
         :help "Toggle this file's persistent tab mark"))
     (define-key-after
       menu [close]
@@ -849,57 +924,108 @@ is disabled."
       (ri-tabs--enforce-tab-bar)
       (force-mode-line-update t))))
 
-(defun ri-tabs--updated-state (state file-id marked)
-  "Return STATE with FILE-ID membership set to MARKED."
-  (let ((files (and state (nth 3 state))))
-    (ri-tabs--make-state
-     (if marked
-         (cons file-id files)
-       (remove file-id files)))))
+(defun ri-tabs--updated-state (state owner file-id marked)
+  "Return STATE with FILE-ID membership in OWNER set to MARKED."
+  (setq state (or state (ri-tabs--make-state)))
+  (let* ((repos (copy-tree (plist-get state :repos)))
+         (entry (assoc owner repos))
+         (files (and entry (cdr entry)))
+         (new-files (if marked
+                        (ri-tabs--normalize-files (cons file-id files))
+                      (remove file-id files))))
+    (if entry
+        (setcdr entry new-files)
+      (push (cons owner new-files) repos))
+    (ri-tabs--make-state repos (plist-get state :unresolved))))
+
+(defun ri-tabs--replace-file-id (state old-file-id new-file-id)
+  "Replace OLD-FILE-ID with NEW-FILE-ID in every marked set in STATE."
+  (if (or (null state) (equal old-file-id new-file-id))
+      state
+    (let ((repos
+           (mapcar
+            (lambda (entry)
+              (cons (car entry)
+                    (ri-tabs--normalize-files
+                     (mapcar (lambda (file)
+                               (if (equal file old-file-id) new-file-id file))
+                             (cdr entry)))))
+            (plist-get state :repos)))
+          (unresolved
+           (ri-tabs--normalize-files
+            (mapcar (lambda (file)
+                      (if (equal file old-file-id) new-file-id file))
+                    (plist-get state :unresolved)))))
+      (ri-tabs--make-state repos unresolved))))
 
 (defun ri-tabs--commit-state (state &optional file-ids)
-  "Persist STATE, synchronize FILE-IDS, and refresh file tabs once.
-When FILE-IDS is nil, synchronize every live file buffer."
+  "Persist STATE, synchronize FILE-IDS, and refresh file tabs once."
   (setq state (ri-tabs--write-state state))
   (ri-tabs--sync-live-buffers state file-ids)
-  (ri-tabs--refresh))
+  (ri-tabs--refresh)
+  state)
+
+(defun ri-tabs--owner-for-mark (buffer frame state)
+  "Return owner for marking BUFFER in FRAME, establishing it if needed."
+  (or (ri-tabs--frame-owner-repo frame)
+      (let ((repo (ri-tabs--buffer-repo buffer)))
+        (unless repo
+          (user-error "Cannot start a marked set outside a Git repository"))
+        (ri-tabs--set-frame-owner-repo frame repo)
+        ;; Existing persisted membership for this owner may need restoration.
+        (when (ri-tabs--state-has-owner-p state repo)
+          (ri-tabs--activate-owner repo state))
+        repo)))
 
 (defun ri-tabs-mark-buffer (&optional buffer)
-  "Persistently mark BUFFER as a Ki tab.
-BUFFER defaults to the current buffer.  All live buffers visiting the
-same file are synchronized."
+  "Persistently mark BUFFER in the active repository-owned marked set."
   (interactive)
   (let* ((buffer (or buffer (current-buffer)))
+         (frame (selected-frame))
          (file-id (ri-tabs--require-file-id buffer))
-         (state (ri-tabs--read-state)))
+         (state (or (ri-tabs--read-state) (ri-tabs--make-state)))
+         (owner (ri-tabs--owner-for-mark buffer frame state)))
     (ri-tabs--commit-state
-     (ri-tabs--updated-state state file-id t)
+     (ri-tabs--updated-state state owner file-id t)
      (list file-id))))
 
 (defun ri-tabs-unmark-buffer (&optional buffer)
-  "Persistently unmark BUFFER as a Ki tab.
-BUFFER defaults to the current buffer.  All live buffers visiting the
-same file are synchronized."
+  "Persistently unmark BUFFER in the active repository-owned marked set."
   (interactive)
   (let* ((buffer (or buffer (current-buffer)))
          (file-id (ri-tabs--require-file-id buffer))
-         (state (ri-tabs--read-state)))
+         (owner (ri-tabs--frame-owner-repo))
+         (state (or (ri-tabs--read-state) (ri-tabs--make-state))))
+    (unless owner (user-error "No active marked-set owner repository"))
     (ri-tabs--commit-state
-     (ri-tabs--updated-state state file-id nil)
+     (ri-tabs--updated-state state owner file-id nil)
      (list file-id))))
 
 (defun ri-tabs-toggle-buffer-mark (&optional buffer)
-  "Toggle BUFFER's persistent Ki tab mark.
-BUFFER defaults to the current buffer.  The latest persistent state,
-not the buffer-local render cache, determines the new mark."
+  "Toggle BUFFER's mark in the active repository-owned marked set."
   (interactive)
   (let* ((buffer (or buffer (current-buffer)))
+         (frame (selected-frame))
          (file-id (ri-tabs--require-file-id buffer))
-         (state (ri-tabs--read-state)))
+         (state (or (ri-tabs--read-state) (ri-tabs--make-state)))
+         (owner (or (ri-tabs--frame-owner-repo frame)
+                    (ri-tabs--owner-for-mark buffer frame state))))
     (ri-tabs--commit-state
      (ri-tabs--updated-state
-      state file-id (not (ri-tabs--state-marked-p state file-id)))
+      state owner file-id (not (ri-tabs--state-marked-p state owner file-id)))
      (list file-id))))
+
+(defun ri-tabs-switch-repository (&optional buffer)
+  "Switch this frame's marked-set owner to BUFFER's Git repository.
+Opening files never changes the owner implicitly; this command does."
+  (interactive)
+  (let* ((buffer (or buffer (current-buffer)))
+         (repo (ri-tabs--buffer-repo buffer)))
+    (unless repo (user-error "Buffer is not inside a Git repository"))
+    (ri-tabs--set-frame-owner-repo (selected-frame) repo)
+    (ri-tabs--activate-owner repo)
+    (ri-tabs--refresh)
+    repo))
 
 (defun ri-tabs--switch-to-marked-buffer (movement)
   "Switch to a marked buffer selected by MOVEMENT.
@@ -969,15 +1095,20 @@ file buffer."
   (ri-tabs--switch-to-relative-buffer 1))
 
 (defun ri-tabs-unmark-other-buffers ()
-  "Persistently unmark every file except the current marked file.
-If the current file is unmarked, remove every persistent mark,
-including marks for files with no live buffer."
+  "Unmark every file except the current marked file in the active owner set."
   (interactive)
   (let* ((file-id (ri-tabs--require-file-id (current-buffer)))
-         (state (ri-tabs--read-state))
-         (files (and (ri-tabs--state-marked-p state file-id)
+         (owner (ri-tabs--frame-owner-repo))
+         (state (or (ri-tabs--read-state) (ri-tabs--make-state))))
+    (unless owner (user-error "No active marked-set owner repository"))
+    (let ((repos (copy-tree (plist-get state :repos)))
+          (keep (and (ri-tabs--state-marked-p state owner file-id)
                      (list file-id))))
-    (ri-tabs--commit-state (ri-tabs--make-state files))))
+      (if-let* ((entry (assoc owner repos)))
+          (setcdr entry keep)
+        (push (cons owner keep) repos))
+      (ri-tabs--commit-state
+       (ri-tabs--make-state repos (plist-get state :unresolved))))))
 
 (defun ri-tabs-switch-to-alternate-buffer ()
   "Switch to the most recently used other visible file buffer."
@@ -998,52 +1129,31 @@ including marks for files with no live buffer."
     (ri-tabs--read-state-safely)))
 
 (defun ri-tabs--sync-visited-buffer ()
-  "Restore the current file buffer's persistent mark and refresh tabs."
+  "Synchronize current file identity and refresh tabs without changing owner."
   (when ri-tabs-mode
     (if (ri-tabs--file-buffer-p (current-buffer))
-        (let* ((file-id (ri-tabs--buffer-file-id (current-buffer)))
-               (state (ri-tabs--state-for-hook)))
-          (ri-tabs--set-buffer-cache
-           (current-buffer) file-id
-           (unless (eq state ri-tabs--read-error) state)))
+        (setq ri-tabs--file-id (ri-tabs--buffer-file-id (current-buffer)))
       (ri-tabs--clear-buffer-cache (current-buffer)))
     (ri-tabs--refresh)))
 
-
 (defun ri-tabs--sync-after-visited-file-name-change ()
-  "Synchronize or migrate marks after the visited filename changes."
+  "Migrate a changed file identity across every repository-owned marked set."
   (when ri-tabs-mode
     (let ((old-file-id ri-tabs--file-id)
           (new-file-id (ri-tabs--buffer-file-id (current-buffer))))
       (if (null new-file-id)
           (ri-tabs--clear-buffer-cache (current-buffer))
         (let ((state (ri-tabs--state-for-hook)))
-          (if (eq state ri-tabs--read-error)
-              (setq ri-tabs--file-id new-file-id
-                    ri-tabs--marked-p nil)
-            (let ((affected
-                   (delete-dups
-                    (delq nil (list old-file-id new-file-id)))))
-              (if (and old-file-id
-                       (not (equal old-file-id new-file-id))
-                       (ri-tabs--state-marked-p state old-file-id))
-                  (let ((new-state
-                         (ri-tabs--updated-state
-                          (ri-tabs--updated-state
-                           state old-file-id nil)
-                          new-file-id t)))
-                    (condition-case err
-                        (progn
-                          (setq new-state
-                                (ri-tabs--write-state new-state))
-                          (ri-tabs--sync-live-buffers
-                           new-state affected))
-                      (error
-                       (ri-tabs--warn-persistence "migrate" err)
-                       (ri-tabs--sync-live-buffers
-                        state affected))))
-                (ri-tabs--sync-live-buffers state affected))))
-          ))
+          (setq ri-tabs--file-id new-file-id)
+          (when (and old-file-id
+                     (not (equal old-file-id new-file-id))
+                     (not (eq state ri-tabs--read-error)))
+            (condition-case err
+                (ri-tabs--commit-state
+                 (ri-tabs--replace-file-id state old-file-id new-file-id)
+                 (list old-file-id new-file-id))
+              (error
+               (ri-tabs--warn-persistence "migrate" err))))))
       (ri-tabs--refresh))))
 
 (defun ri-tabs--install-infrastructure ()
@@ -1077,8 +1187,27 @@ including marks for files with no live buffer."
   (remove-hook 'emacs-startup-hook #'ri-tabs--startup-activate)
   (setq ri-tabs--activation-pending-p nil))
 
+(defun ri-tabs--activate-owner (owner &optional state)
+  "Restore OWNER's marked files once for this enable."
+  (when (and ri-tabs-mode owner (not (gethash owner ri-tabs--restored-owner-repos)))
+    (setq state (or state (ri-tabs--read-state-safely)))
+    (unless (eq state ri-tabs--read-error)
+      (puthash owner t ri-tabs--restored-owner-repos)
+      (when (ri-tabs--state-has-owner-p state owner)
+        (ri-tabs--restore-marked-files state owner))
+      (ri-tabs--sync-live-buffers state))))
+
+(defun ri-tabs--activate-existing-owner-for-frame (frame state)
+  "Activate FRAME's current repository only if STATE already owns a set there."
+  (when-let* ((window (ri-tabs--frame-selected-window frame))
+              (buffer (window-buffer window))
+              (repo (ri-tabs--buffer-repo buffer)))
+    (when (ri-tabs--state-has-owner-p state repo)
+      (ri-tabs--set-frame-owner-repo frame repo)
+      (ri-tabs--activate-owner repo state))))
+
 (defun ri-tabs--activate ()
-  "Activate persistent marks and restore their available file buffers."
+  "Activate repository-owned persistent marks without inventing a new owner."
   (when (and ri-tabs-mode
              (not ri-tabs--activation-active-p)
              (not ri-tabs--activation-complete-p))
@@ -1090,33 +1219,23 @@ including marks for files with no live buffer."
           completed)
       (unwind-protect
           (progn
-            (save-current-buffer
-              (save-window-excursion
-                (let ((state (ri-tabs--read-state-safely)))
-                  (when (null state)
-                    (condition-case err
-                        (setq state
-                              (ri-tabs--write-state
-                               (ri-tabs--make-state
-                                (mapcar
-                                 #'ri-tabs--buffer-file-id
-                                 (ri-tabs--file-buffer-list)))))
-                      (error
-                       (ri-tabs--warn-persistence "initialize" err)
-                       (setq state ri-tabs--read-error))))
-                  (setq ri-tabs--activation-state state)
-                  (when (and ri-tabs-mode
-                             (not (eq state ri-tabs--read-error)))
-                    (ri-tabs--restore-marked-files state))
-                  (when ri-tabs-mode
-                    (ri-tabs--sync-live-buffers
-                     (unless (eq state ri-tabs--read-error)
-                       state))))))
+            (let ((state (ri-tabs--read-state-safely)))
+              (when (null state)
+                (condition-case err
+                    (setq state (ri-tabs--write-state (ri-tabs--make-state)))
+                  (error
+                   (ri-tabs--warn-persistence "initialize" err)
+                   (setq state ri-tabs--read-error))))
+              (setq ri-tabs--activation-state state)
+              (when (and ri-tabs-mode (not (eq state ri-tabs--read-error)))
+                (dolist (frame (frame-list))
+                  (when (ri-tabs--frame-eligible-p frame)
+                    (ri-tabs--activate-existing-owner-for-frame frame state)))
+                (ri-tabs--sync-live-buffers state)))
             (setq completed t))
         (when (and completed ri-tabs-mode)
           (setq ri-tabs--activation-complete-p t))
-        (when (and ri-tabs-mode
-                   (or completed ri-tabs--refresh-pending-p))
+        (when (and ri-tabs-mode (or completed ri-tabs--refresh-pending-p))
           (ri-tabs--enforce-tab-bar)
           (force-mode-line-update t))))))
 
@@ -1141,6 +1260,7 @@ including marks for files with no live buffer."
 
 (defun ri-tabs--enable ()
   "Install frame-wide tabs and activate persistent marks."
+  (setq ri-tabs--restored-owner-repos (make-hash-table :test #'equal))
   (condition-case err
       (progn
         (ri-tabs--install-infrastructure)
@@ -1175,6 +1295,7 @@ including marks for files with no live buffer."
 
 (defun ri-tabs--disable ()
   "Remove frame-wide tabs and caches without changing persistent marks."
+  (setq ri-tabs--restored-owner-repos (make-hash-table :test #'equal))
   (let ((ri-tabs--refresh-batching-p t)
         (ri-tabs--refresh-pending-p nil))
     (ri-tabs--cancel-pending-activation)
@@ -1182,6 +1303,9 @@ including marks for files with no live buffer."
     (ri-tabs--remove-infrastructure)
     (dolist (buffer (buffer-list))
       (ri-tabs--clear-buffer-cache buffer))
+    (dolist (frame (frame-list))
+      (when (frame-live-p frame)
+        (set-frame-parameter frame 'ri-tabs-owner-repo nil)))
     (ri-tabs--restore-tab-bar-state))
   (setq ri-tabs--refresh-pending-p nil)
   (force-mode-line-update t))
@@ -1190,16 +1314,15 @@ including marks for files with no live buffer."
 (define-minor-mode ri-tabs-mode
   "Display one frame-wide native Tab Bar for Ri file buffers.
 
-Every ordinary frame shows the process-global set of live persistently
-marked files.  The selected window's current unmarked file is appended
-for that frame only, and selecting a tab changes only that window's
-buffer.
+Every ordinary frame has an active repository-owned marked set.  The
+first marked file establishes the owner repository.  Files subsequently
+marked may come from any repository or from outside Git, and opening such
+files never changes the owner.  Use `ri-tabs-switch-repository' to switch
+explicitly to the marked set owned by the current file's repository.
 
-On first activation, the mode marks and stores every visible file
-buffer at the activation boundary.  Later activations reopen each
-available persistently marked file that has no live buffer, without
-displaying it or changing the selected window.  Activation requested
-during initialization is deferred until `emacs-startup-hook'.
+Existing owner sets are restored lazily when their repository context is
+activated.  Activation requested during initialization is deferred until
+`emacs-startup-hook'.
 
 Closing a buffer never removes its mark or immediately reopens it; a
 still-marked file returns on the next mode activation.  Explicit
