@@ -142,6 +142,11 @@ including Eglot's project label."
   (interactive)
   (ri--call-preserving-user-error #'ri-extend-nav-parent-line))
 
+(defun ri-toggle-buffer-mark ()
+  "Toggle the current buffer mark and preserve any user error after key-up."
+  (interactive)
+  (ri--call-preserving-user-error #'ri-tabs-toggle-buffer-mark))
+
 
 (defun ri--close-menu ()
   "Hide any active menu and restore the status frame."
@@ -564,7 +569,7 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
                 '(menu-item "< Marked File"
                             ri-tabs-switch-to-next-buffer))
     (define-key map "k"
-                '(menu-item "Mark File" ri-tabs-toggle-buffer-mark))
+                '(menu-item "Mark File" ri-toggle-buffer-mark))
     (define-key map "n" '(menu-item "Close" kill-current-buffer))
     (define-key map "i"
                 '(menu-item "Unmark Others"
