@@ -75,7 +75,7 @@ In `ri-lsp.el`, preflight `:workspaceSymbolProvider`, then open the picker immed
 
 ## Space Layer integration
 
-Add `ri--pick-layer-map` and bind `k` in `ri--space-layer-map` to `ri-pick-menu`. Each picker wrapper changes `ri--menu-state` from `pick` to `picker` before clearing the transient map so the submenu exit callback cannot perform competing cleanup, then hides the menu legend before opening the picker. Picker cleanup returns the menu state to nil.
+Add `ri--pick-layer-map` and bind `k` in `ri--space-layer-map` to `ri-pick-menu`. Install the Pick submenu as a one-shot transient map. Emacs deactivates it and runs its exit callback before the selected picker command executes; the callback closes the submenu legend, then the picker wrapper changes `ri--menu-state` to `picker`, hides any remaining menu surface, and opens the picker. Picker cleanup returns the menu state to nil. Do not use `(set-transient-map nil)` as a clear operation: it installs an empty transient layer rather than deactivating the retained map.
 
 Add `SPC k` to the normal help map and document the four sequences in `README.md`.
 

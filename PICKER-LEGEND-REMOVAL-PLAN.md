@@ -16,10 +16,10 @@ is not a second help system. It is `keymap-legend` rendering the active picker k
 
 ## Root Cause
 
-The current call sequence deliberately keeps a legend alive:
+The original call sequence deliberately kept a legend alive:
 
 1. `ri-pick-menu` in `ri.el` calls `keymap-legend-show` for the `Pick` submenu.
-2. `ri--open-picker` changes `ri--menu-state` to `picker` before clearing the transient map. That ordering correctly prevents the `Pick` exit callback from closing the newly selected surface, but the function does not hide the menu legend on the successful path.
+2. At the time of this plan, `ri--open-picker` changed `ri--menu-state` to `picker` and attempted to clear the Pick map with `(set-transient-map nil)`, but did not hide the menu legend on the successful path. The corrected handoff makes the Pick map one-shot because installing a nil transient map does not deactivate a retained map.
 3. `ri-pick-start` in `ri-pick/ri-pick.el` calls `keymap-legend-show` again with the picker title and `ri-pick-mode-map`, replacing the `Pick` legend with a `File`, `Buffer`, or symbol-picker legend.
 4. Picker cleanup calls `keymap-legend-hide`, so the picker currently owns that replacement legend for its entire lifetime.
 
@@ -44,15 +44,15 @@ Do not change `keymap-legend` placement or overflow semantics to hide this sympt
 
 ### 1. End the menu legend before opening the picker
 
-Update `ri--open-picker` in `ri.el`:
+Update `ri-pick-menu` and `ri--open-picker` in `ri.el`:
 
-1. set `ri--menu-state` to `picker`;
-2. clear the transient map;
-3. call `keymap-legend-hide`;
-4. hide the status frame;
+1. install `ri--pick-layer-map` with a nil `KEEP-PRED`, making the submenu one-shot;
+2. let the transient map's exit callback close the Pick menu before the selected picker command runs;
+3. set `ri--menu-state` to `picker` in `ri--open-picker`;
+4. call `keymap-legend-hide` and hide the status frame;
 5. invoke the picker opener.
 
-Keep the state transition before `set-transient-map`. The existing `Pick` exit callback closes the menu only while the state is still `pick`; changing the order would let that callback perform competing cleanup during the handoff.
+Do not call `(set-transient-map nil)` during the handoff. It installs an empty transient layer and can fall through to a retained Pick map; it is not the exit operation returned by `set-transient-map`.
 
 On opener failure, reset `ri--menu-state` and re-signal the original error. Legend cleanup must already have happened before the opener runs, so success and failure have the same menu-to-picker ownership boundary.
 
@@ -97,10 +97,11 @@ Record the final boundary instead: menu code closes the menu legend, and the pic
 
 ### `ri-lsp-test.el`
 
-Add integration coverage around `ri--open-picker`:
+Add integration coverage around the Pick menu handoff:
 
+- the Pick map is one-shot and retains its exit callback;
 - the `Pick` legend is hidden before the picker opener is called;
-- the transient map is cleared while `ri--menu-state` is already `picker`;
+- `ri--open-picker` does not install a nil transient map;
 - successful opening leaves picker state active until the close callback clears it;
 - opener failure leaves no legend, resets menu state, and preserves the original error.
 

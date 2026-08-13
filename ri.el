@@ -240,7 +240,7 @@ including Eglot's project label."
   (setq ri--menu-state 'pick)
   (keymap-legend-show "Pick" ri--pick-layer-map '(:title "Pick"))
   (set-transient-map
-   ri--pick-layer-map t
+   ri--pick-layer-map nil
    (lambda ()
      (when (eq ri--menu-state 'pick)
        (ri--close-menu)))))
@@ -253,7 +253,6 @@ including Eglot's project label."
 (defun ri--open-picker (function)
   "Replace the Pick submenu with the picker opened by FUNCTION."
   (setq ri--menu-state 'picker)
-  (set-transient-map nil)
   (keymap-legend-hide)
   (ri--hide-frame)
   (condition-case error
