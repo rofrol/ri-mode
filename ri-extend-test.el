@@ -607,3 +607,49 @@
     (should-not (ri-extend-test--highlighted-p 7))
     (ri-extend-nav-up)
     (should (equal (sr--get-current-unit-bounds) (cons 1 8)))))
+
+;;; Mouse retargeting ---------------------------------------------------------
+
+(ert-deftest ri-mouse-test-norm-binds-only-primary-click ()
+  (let ((old-mouse (lookup-key mini-modal-map [mouse-1])))
+    (unwind-protect
+        (progn
+          (ri-mouse-setup)
+          (should (eq (lookup-key mini-modal-map [mouse-1])
+                      #'ri-mouse-set-point))
+          (should-not (lookup-key mini-modal-map [drag-mouse-1]))
+          (should-not (lookup-key mini-modal-map [wheel-up])))
+      (define-key mini-modal-map [mouse-1] old-mouse))))
+
+(ert-deftest ri-mouse-test-click-moves-before-retarget ()
+  (ri-extend-test--with-buffer "alpha beta\n"
+    (setq mini-modal-mode t
+          sr-mode t
+          sr-submode 'word)
+    (let (calls)
+      (cl-letf (((symbol-function 'mouse-set-point)
+                 (lambda (_event)
+                   (push 'mouse calls)
+                   (goto-char 8)))
+                ((symbol-function 'sr-retarget-at-position)
+                 (lambda (pos)
+                   (push (list 'retarget pos) calls))))
+        (ri-mouse-set-point '(mouse-1 dummy))
+        (should (= (point) 8))
+        (should (equal (nreverse calls)
+                       '(mouse (retarget 8))))))))
+
+(ert-deftest ri-mouse-test-click-exits-extend-and-starts-fresh-unit ()
+  (ri-extend-test--with-buffer "alpha beta\n"
+    (setq mini-modal-mode t
+          sr-mode t
+          sr-submode 'word)
+    (goto-char 2)
+    (should (ri--enter-extend))
+    (should (ri--selection-active-p))
+    (cl-letf (((symbol-function 'mouse-set-point)
+               (lambda (_event) (goto-char 8))))
+      (ri-mouse-set-point '(mouse-1 dummy)))
+    (should-not (ri--selection-active-p))
+    (should (= (point) 8))
+    (should (equal (sr--get-current-unit-bounds) (cons 7 11)))))

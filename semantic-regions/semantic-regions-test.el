@@ -875,3 +875,86 @@ pre-existing property of the old code, not something the
 
 (provide 'semantic-regions-test)
 ;;; semantic-regions-test.el ends here
+
+;;; Direct semantic retargeting ------------------------------------------------
+
+(ert-deftest semantic-region-test-retarget-ordinary-submodes ()
+  (semantic-region-test--with-buffer "  alpha beta\nsecond line\n\nthird para\n"
+    (dolist (case '((line 5 "alpha beta")
+                    (char 5 "p")
+                    (word 5 "alpha")
+                    (subword 5 "alpha")
+                    (paragraph 5 "  alpha beta\nsecond line\n")))
+      (pcase-let ((`(,submode ,pos ,expected) case))
+        (setq sr-submode submode)
+        (let ((bounds (sr-retarget-at-position pos)))
+          (should (= (point) pos))
+          (should bounds)
+          (should (equal (buffer-substring-no-properties
+                          (car bounds) (cdr bounds))
+                         expected)))))))
+
+(ert-deftest semantic-region-test-node-mouse-retarget-selects-lowest-node ()
+  (semantic-region-test--with-json-buffer
+      "{\"outer\": {\"value\": 123}}"
+    (setq sr-submode 'node)
+    (search-forward "123")
+    (let* ((click (- (point) 2))
+           (bounds (sr-retarget-at-position click)))
+      (should (= (point) click))
+      (should bounds)
+      (should (equal (buffer-substring-no-properties
+                      (car bounds) (cdr bounds))
+                     "123"))
+      (should (equal bounds (sr--node-bounds sr--node-current)))
+      (should (string= (treesit-node-type sr--node-current) "number")))))
+
+(ert-deftest semantic-region-test-node-mouse-retarget-selects-punctuation ()
+  (semantic-region-test--with-json-buffer
+      "{\"x\": 1}"
+    (setq sr-submode 'node)
+    (goto-char (point-min))
+    (let ((bounds (sr-retarget-at-position (point))))
+      (should bounds)
+      (should (equal (buffer-substring-no-properties
+                      (car bounds) (cdr bounds))
+                     "{"))
+      (should-not (treesit-node-check sr--node-current 'named)))))
+
+(ert-deftest semantic-region-test-node-mouse-retarget-replaces-cache ()
+  (semantic-region-test--with-json-buffer
+      "{\"a\": 1, \"b\": true}"
+    (setq sr-submode 'node)
+    (search-forward "1")
+    (let* ((first-pos (1- (point)))
+           (first (progn
+                    (sr-retarget-at-position first-pos)
+                    sr--node-current)))
+      (search-forward "true")
+      (let* ((second-pos (- (point) 2))
+             (bounds (sr-retarget-at-position second-pos)))
+        (should (not (eq first sr--node-current)))
+        (should (equal (buffer-substring-no-properties
+                        (car bounds) (cdr bounds))
+                       "true"))))))
+
+(ert-deftest semantic-region-test-node-mouse-retarget-eob-is-safe ()
+  (semantic-region-test--with-json-buffer "123"
+    (setq sr-submode 'node)
+    (goto-char (point-max))
+    (let ((bounds (sr-retarget-at-position (point-max))))
+      (should bounds)
+      (should (equal (buffer-substring-no-properties
+                      (car bounds) (cdr bounds))
+                     "123")))))
+
+(ert-deftest semantic-region-test-node-mouse-target-is-navigation-origin ()
+  (semantic-region-test--with-json-buffer
+      "{\"outer\": {\"value\": 123}}"
+    (setq sr-submode 'node)
+    (search-forward "123")
+    (let ((click (- (point) 2)))
+      (sr-retarget-at-position click)
+      (should (string= (treesit-node-type sr--node-current) "number"))
+      (sr-nav-up)
+      (should-not (string= (treesit-node-type sr--node-current) "number")))))
