@@ -213,9 +213,13 @@ Replace it with one global/frame lifecycle:
 1. `ri-tabs--enable` installs hooks, captures the pre-existing native Tab Bar
    state, installs the Ri format/input layer, enables `tab-bar-mode`, and then
    runs the existing persistent activation.
-2. `tab-bar-show` must keep the row visible even though Ri items are not counted
-   as native window-configuration tabs. Apply the value before enabling the
-   mode so all normal existing and future frames receive one line.
+2. Set `tab-bar-show` to `t`, the documented unconditional-visibility value,
+   because Ri items are not counted as native window-configuration tabs.  A
+   numeric value is a native-tab-count threshold and must not control Ri
+   visibility.  Apply it before enabling the mode so all normal existing and
+   future frames receive one line.  While Ri owns an ordinary frame, also pin
+   `tab-bar-lines-keep-state` to `t` and `tab-bar-lines` to `1`; restore both
+   captured values exactly on disable.
 3. `ri-tabs--disable` removes hooks, restores native Tab Bar state, and clears
    only `ri-tabs--marked-p` and `ri-tabs--file-id` from live buffers. It must not
    touch any Tab Line variable or mode.
@@ -247,10 +251,15 @@ parameters so global `tab-bar-mode` updates cannot turn the auxiliary status
 frame into a second tab bar. Keep its existing `after-make-frame-functions`
 isolation and all zero-line buffer/window settings.
 
-Apply the same eligibility rule to any Ri frame hook: normal top-level frames
-receive the bar; child, tooltip, no-focus, and explicitly keep-state frames do
-not. Do not identify the status frame by its display name when a structural
-frame parameter can express the rule.
+Apply the same structural eligibility rule to any Ri frame hook: normal
+top-level frames receive the bar; child, tooltip, no-focus, and minibuffer-only
+frames do not.  A pre-existing `tab-bar-lines-keep-state` on an otherwise
+ordinary frame is user state to save and restore, not an opt-out from Ri while
+Ri owns the frame-wide row.  Auxiliary frames such as `status-frame` combine
+structural ineligibility with `tab-bar-lines-keep-state` so native Tab Bar
+updates cannot turn their zero-line setting back on.  Do not identify the
+status frame by its display name when structural frame parameters can express
+the rule.
 
 ## Files to Change During Implementation
 

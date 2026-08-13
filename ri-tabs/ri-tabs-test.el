@@ -482,8 +482,9 @@
       (should tab-bar-mode)
       (should (equal (default-value 'tab-bar-format)
                      '(ri-tabs--format-tabs)))
-      (should (eql (default-value 'tab-bar-show) 0))
+      (should (eq (default-value 'tab-bar-show) t))
       (should (= (frame-parameter frame 'tab-bar-lines) 1))
+      (should (frame-parameter frame 'tab-bar-lines-keep-state))
       (should
        (eq (lookup-key tab-bar-map [mouse-2])
            #'ri-tabs--mouse-close))
@@ -523,6 +524,38 @@
         (should-not (local-variable-p 'ri-tabs--marked-p))
         (should-not (local-variable-p 'ri-tabs--file-id))))))
 
+
+(ert-deftest ri-tabs-test-restores-normal-frame-hidden-by-keep-state ()
+  (ri-tabs-test-with-persistence
+    (let ((frame (selected-frame)))
+      (tab-bar-mode -1)
+      (set-frame-parameter frame 'tab-bar-lines 0)
+      (set-frame-parameter frame 'tab-bar-lines-keep-state t)
+      (let ((before (ri-tabs--capture-frame-state frame)))
+        (ri-tabs-mode 1)
+        (should tab-bar-mode)
+        (should (= (frame-parameter frame 'tab-bar-lines) 1))
+        (should (frame-parameter frame 'tab-bar-lines-keep-state))
+        (ri-tabs-mode -1)
+        (should (equal (ri-tabs--capture-frame-state frame) before))))))
+
+(ert-deftest ri-tabs-test-refresh-reasserts-owned-tab-bar ()
+  (ri-tabs-test-with-persistence
+    (let ((frame (selected-frame)))
+      (ri-tabs-mode 1)
+      ;; Simulate configuration evaluated later in init.el.
+      (tab-bar-mode -1)
+      (setq-default tab-bar-format '(tab-bar-format-tabs)
+                    tab-bar-show nil)
+      (set-frame-parameter frame 'tab-bar-lines 0)
+      (set-frame-parameter frame 'tab-bar-lines-keep-state nil)
+      (ri-tabs--refresh)
+      (should tab-bar-mode)
+      (should (equal (default-value 'tab-bar-format)
+                     '(ri-tabs--format-tabs)))
+      (should (eq (default-value 'tab-bar-show) t))
+      (should (= (frame-parameter frame 'tab-bar-lines) 1))
+      (should (frame-parameter frame 'tab-bar-lines-keep-state)))))
 
 (ert-deftest ri-tabs-test-restores-enabled-custom-tab-bar-exactly ()
   (ri-tabs-test-with-persistence
@@ -1182,7 +1215,7 @@
 
 
 
-(ert-deftest ri-tabs-test-ineligible-frames-stay-line-free ()
+(ert-deftest ri-tabs-test-normal-frame-overrides-preexisting-keep-state ()
   (let ((ri-tabs--tab-bar-state nil)
         (ri-tabs--temporary-frame-states nil)
         (frame (selected-frame))
@@ -1194,20 +1227,40 @@
           (set-frame-parameter
            frame 'tab-bar-lines-keep-state t)
           (set-frame-parameter frame 'tab-bar-lines 0)
-          (should-not (ri-tabs--frame-eligible-p frame))
+          (should (ri-tabs--frame-eligible-p frame))
           (ri-tabs--configure-frame frame)
-          (should (= (frame-parameter frame 'tab-bar-lines) 0))
+          (should (= (frame-parameter frame 'tab-bar-lines) 1))
+          ;; Ri must not destroy the user's keep-state preference; the
+          ;; lifecycle snapshot restores the original line count later.
+          (should
+           (frame-parameter frame 'tab-bar-lines-keep-state)))
+      (set-frame-parameter frame 'tab-bar-lines original-lines)
+      (set-frame-parameter
+       frame 'tab-bar-lines-keep-state original-keep))))
+
+(ert-deftest ri-tabs-test-structurally-ineligible-frames-stay-line-free ()
+  (let ((ri-tabs--tab-bar-state nil)
+        (ri-tabs--temporary-frame-states nil)
+        (frame (selected-frame))
+        (original-lines (frame-parameter nil 'tab-bar-lines))
+        (original-keep
+         (frame-parameter nil 'tab-bar-lines-keep-state)))
+    (unwind-protect
+        (progn
           (set-frame-parameter
            frame 'tab-bar-lines-keep-state nil)
+          (set-frame-parameter frame 'tab-bar-lines 1)
           (cl-letf (((symbol-function
                       'ri-tabs--structurally-ineligible-frame-p)
                      (lambda (candidate)
                        (eq candidate frame))))
+            (should-not (ri-tabs--frame-eligible-p frame))
             (ri-tabs--configure-frame frame t))
           (should (= (frame-parameter frame 'tab-bar-lines) 0))
           (should
            (frame-parameter
-            frame 'tab-bar-lines-keep-state)))
+            frame 'tab-bar-lines-keep-state))
+          (should (assq frame ri-tabs--temporary-frame-states)))
       (set-frame-parameter frame 'tab-bar-lines original-lines)
       (set-frame-parameter
        frame 'tab-bar-lines-keep-state original-keep))))
