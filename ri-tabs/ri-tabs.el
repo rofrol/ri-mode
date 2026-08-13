@@ -119,6 +119,9 @@ This variable is dynamically bound to the validated activation snapshot.")
 (defvar-local ri-tabs--file-id nil
   "File identity last synchronized with persistent Ki tab marks.")
 
+(defvar-local ri-tabs--owner-context-cache nil
+  "Cached canonical owner context for the current visited file buffer.")
+
 (defun ri-tabs--canonical-directory (directory)
   "Return DIRECTORY as a canonical absolute directory name."
   (when directory
@@ -170,12 +173,23 @@ GIT_DIR and GIT_WORK_TREE are honored."
   (when (ri-tabs--file-buffer-p buffer)
     (ri-tabs--git-work-tree-root (ri-tabs--buffer-directory buffer))))
 
-(defun ri-tabs--buffer-owner-context (buffer)
-  "Return BUFFER's canonical marked-set owner context.
+(defun ri-tabs--compute-buffer-owner-context (buffer)
+  "Compute BUFFER's canonical marked-set owner context.
 Prefer the effective Git work-tree root; outside Git use BUFFER's effective
-current directory."
+current directory.  This function may invoke Git and therefore belongs only on
+model-synchronization paths, never presentation repaint paths."
   (let ((directory (ri-tabs--buffer-directory buffer)))
     (or (ri-tabs--git-work-tree-root directory) directory)))
+
+(defun ri-tabs--buffer-owner-context (buffer)
+  "Return BUFFER's cached canonical marked-set owner context.
+Populate the cache lazily for compatibility with buffers created before
+`ri-tabs-mode' was enabled."
+  (when (ri-tabs--file-buffer-p buffer)
+    (with-current-buffer buffer
+      (or ri-tabs--owner-context-cache
+          (setq ri-tabs--owner-context-cache
+                (ri-tabs--compute-buffer-owner-context buffer))))))
 
 (defun ri-tabs--frame-owner (&optional frame)
   "Return FRAME's active marked-set owner context."
@@ -335,7 +349,9 @@ When FILE-IDS is non-nil, only synchronize buffers with those identities."
     (let ((file-id (ri-tabs--buffer-file-id buffer)))
       (when (or (null file-ids) (member file-id file-ids))
         (with-current-buffer buffer
-          (setq ri-tabs--file-id file-id))))))
+          (setq ri-tabs--file-id file-id
+                ri-tabs--owner-context-cache
+                (ri-tabs--compute-buffer-owner-context buffer)))))))
 
 (defun ri-tabs--live-file-index ()
   "Return an index of canonical identities represented by live buffers."
@@ -569,10 +585,11 @@ window most recently used for editing on that frame."
         (set-frame-parameter frame 'ri-tabs-last-editing-window window))
       window)))
 
-(defun ri-tabs--tab-label (buffer buffers selected-buffer &optional owner state)
-  "Return BUFFER's final propertized tab label among BUFFERS.
+(defun ri-tabs--tab-label (buffer tab-name selected-buffer &optional owner state)
+  "Return BUFFER's final propertized tab label using TAB-NAME.
 SELECTED-BUFFER determines the active face without consulting an ambient
-selected window.  The returned string is presentation-ready and content-sized."
+selected window.  TAB-NAME is precomputed by the structural renderer so name
+resolution is performed only once per tab."
   (let* ((selected (eq buffer selected-buffer))
          (file (abbreviate-file-name (buffer-file-name buffer)))
          (help (if selected
@@ -581,7 +598,7 @@ selected window.  The returned string is presentation-ready and content-sized."
     (propertize
      (format " %s %s "
              (ri-tabs--marker buffer owner state)
-             (ri-tabs--tab-name buffer buffers owner))
+             tab-name)
      'face (ri-tabs--tab-face selected)
      'mouse-face 'ri-tabs-highlight
      'help-echo help)))
@@ -608,7 +625,7 @@ selected window.  The returned string is presentation-ready and content-sized."
                 (active (eq buffer selected-buffer))
                 (label (ri-tabs--tab-name buffer buffers owner))
                 (display (ri-tabs--tab-label
-                          buffer buffers selected-buffer owner state)))
+                          buffer label selected-buffer owner state)))
            (ri-tabs--make-item
             :buffer buffer
             :label label
@@ -807,7 +824,71 @@ item is split.  An item wider than AVAILABLE-WIDTH occupies a row by itself."
                             (with-current-buffer buffer (point-min)))
           (ri-tabs--set-surface-height window (max 1 (length rows)))
           (set-window-parameter window 'ri-tabs-rows rows)
+          (set-window-parameter window 'ri-tabs-selected-buffer
+                                (and (ri-tabs--frame-selected-window frame)
+                                     (window-buffer
+                                      (ri-tabs--frame-selected-window frame))))
           (set-window-parameter window 'ri-tabs-layout-width available))))))
+
+
+(defun ri-tabs--row-items (rows)
+  "Return a flat list of items from packed ROWS."
+  (apply #'append (copy-sequence rows)))
+
+(defun ri-tabs--surface-item-for-buffer (window buffer)
+  "Return WINDOW's cached rendered item for BUFFER, or nil."
+  (seq-find (lambda (item) (eq (ri-tabs--item-buffer item) buffer))
+            (ri-tabs--row-items (or (window-parameter window 'ri-tabs-rows) nil))))
+
+(defun ri-tabs--set-tab-face-in-surface (window buffer selected)
+  "Set BUFFER's tab face in WINDOW to SELECTED state in place."
+  (when (and (window-live-p window) (buffer-live-p buffer))
+    (with-current-buffer (window-buffer window)
+      (let ((inhibit-read-only t)
+            (pos (point-min)))
+        (while (< pos (point-max))
+          (let ((next (next-single-property-change
+                       pos 'ri-tabs-buffer nil (point-max))))
+            (when (eq (get-text-property pos 'ri-tabs-buffer) buffer)
+              (put-text-property pos next 'face (ri-tabs--tab-face selected)))
+            (setq pos next)))))))
+
+(defun ri-tabs--selection-update-frame (frame)
+  "Update only active-tab styling for FRAME when layout is unchanged.
+Fall back to a structural refresh when entering or leaving an unmarked
+temporary tab changes the visible tab set."
+  (when (and ri-tabs-mode
+             (frame-live-p frame)
+             (ri-tabs--frame-eligible-p frame)
+             (not ri-tabs--layout-in-progress-p))
+    (let* ((window (gethash frame ri-tabs--surface-windows))
+           (editing-window (ri-tabs--frame-selected-window frame))
+           (new (and editing-window (window-buffer editing-window)))
+           (old (and (window-live-p window)
+                     (window-parameter window 'ri-tabs-selected-buffer)))
+           (old-item (and (window-live-p window) old
+                          (ri-tabs--surface-item-for-buffer window old)))
+           (new-item (and (window-live-p window) new
+                          (ri-tabs--surface-item-for-buffer window new))))
+      (cond
+       ((or (not (window-live-p window))
+            (not new-item)
+            (and old-item (not (ri-tabs--item-marked old-item))
+                 (not (eq old new))))
+        (ri-tabs--surface-update frame))
+       ((not (eq old new))
+        (let ((ri-tabs--layout-in-progress-p t))
+          (when old-item
+            (setf (ri-tabs--item-active old-item) nil)
+            (ri-tabs--set-tab-face-in-surface window old nil))
+          (setf (ri-tabs--item-active new-item) t)
+          (ri-tabs--set-tab-face-in-surface window new t)
+          (set-window-parameter window 'ri-tabs-selected-buffer new)))))))
+
+(defun ri-tabs--selection-changed (&rest _ignored)
+  "Handle selected-window/buffer changes without rebuilding every frame."
+  (when ri-tabs-mode
+    (ri-tabs--selection-update-frame (selected-frame))))
 
 (defun ri-tabs--remove-surface (frame)
   "Remove every Ri-owned UI resource associated with FRAME."
@@ -879,10 +960,9 @@ Target identity comes directly from text properties rendered by Ri."
             ;; frame focused on the editing window, never on the UI surface.
             (select-window window)
             (switch-to-buffer buffer)
-            (set-frame-parameter frame 'ri-tabs-last-editing-window window)
-            (ri-tabs--refresh))
-        (ri-tabs--refresh))
-    (ri-tabs--refresh)))
+            (set-frame-parameter frame 'ri-tabs-last-editing-window window))
+        (ri-tabs--surface-update frame))
+    (ri-tabs--surface-update frame)))
 
 (defun ri-tabs--close-buffer (buffer)
   "Kill live BUFFER without changing its persistent Ri mark."
@@ -908,8 +988,7 @@ Target identity comes directly from text properties rendered by Ri."
     (when-let* ((window (ri-tabs--frame-selected-window frame)))
       (select-window window)
       (ri-tabs--switch-to-relative-buffer offset)
-      (set-frame-parameter frame 'ri-tabs-last-editing-window window)
-      (ri-tabs--refresh))))
+      (set-frame-parameter frame 'ri-tabs-last-editing-window window))))
 
 (defun ri-tabs--mouse-previous (event)
   "Switch to the previous file from Ri surface mouse EVENT."
@@ -1039,7 +1118,8 @@ Target identity comes directly from text properties rendered by Ri."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
       (kill-local-variable 'ri-tabs--marked-p)
-      (kill-local-variable 'ri-tabs--file-id))))
+      (kill-local-variable 'ri-tabs--file-id)
+      (kill-local-variable 'ri-tabs--owner-context-cache))))
 
 (defun ri-tabs--refresh (&rest _ignored)
   "Rebuild every eligible Ri-owned frame-wide tab surface."
@@ -1260,7 +1340,9 @@ file buffer."
   "Synchronize current file identity and refresh tabs without changing owner."
   (when ri-tabs-mode
     (if (ri-tabs--file-buffer-p (current-buffer))
-        (setq ri-tabs--file-id (ri-tabs--buffer-file-id (current-buffer)))
+        (setq ri-tabs--file-id (ri-tabs--buffer-file-id (current-buffer))
+              ri-tabs--owner-context-cache
+              (ri-tabs--compute-buffer-owner-context (current-buffer)))
       (ri-tabs--clear-buffer-cache (current-buffer)))
     (ri-tabs--refresh)))
 
@@ -1272,7 +1354,9 @@ file buffer."
       (if (null new-file-id)
           (ri-tabs--clear-buffer-cache (current-buffer))
         (let ((state (ri-tabs--state-for-hook)))
-          (setq ri-tabs--file-id new-file-id)
+          (setq ri-tabs--file-id new-file-id
+                ri-tabs--owner-context-cache
+                (ri-tabs--compute-buffer-owner-context (current-buffer)))
           (when (and old-file-id
                      (not (equal old-file-id new-file-id))
                      (not (eq state ri-tabs--read-error)))
@@ -1293,8 +1377,8 @@ file buffer."
   (add-hook 'first-change-hook #'ri-tabs--refresh)
   (add-hook 'after-save-hook #'ri-tabs--refresh)
   (add-hook 'after-revert-hook #'ri-tabs--refresh)
-  (add-hook 'window-selection-change-functions #'ri-tabs--refresh)
-  (add-hook 'window-buffer-change-functions #'ri-tabs--refresh)
+  (add-hook 'window-selection-change-functions #'ri-tabs--selection-changed)
+  (add-hook 'window-buffer-change-functions #'ri-tabs--selection-changed)
   (add-hook 'window-size-change-functions #'ri-tabs--window-size-changed)
   (add-hook 'after-make-frame-functions #'ri-tabs--configure-new-frame)
   (add-hook 'delete-frame-functions #'ri-tabs--frame-deleted))
@@ -1308,8 +1392,8 @@ file buffer."
   (remove-hook 'first-change-hook #'ri-tabs--refresh)
   (remove-hook 'after-save-hook #'ri-tabs--refresh)
   (remove-hook 'after-revert-hook #'ri-tabs--refresh)
-  (remove-hook 'window-selection-change-functions #'ri-tabs--refresh)
-  (remove-hook 'window-buffer-change-functions #'ri-tabs--refresh)
+  (remove-hook 'window-selection-change-functions #'ri-tabs--selection-changed)
+  (remove-hook 'window-buffer-change-functions #'ri-tabs--selection-changed)
   (remove-hook 'window-size-change-functions #'ri-tabs--window-size-changed)
   (remove-hook 'after-make-frame-functions #'ri-tabs--configure-new-frame)
   (remove-hook 'delete-frame-functions #'ri-tabs--frame-deleted))
