@@ -64,6 +64,63 @@
     (should (eq (cadr transient) t))
     (should (functionp (caddr transient)))))
 
+(ert-deftest ri-lsp-test-picker-handoff-hides-legend-before-opening ()
+  (let ((ri--menu-state 'pick)
+        events
+        close)
+    (cl-letf (((symbol-function 'set-transient-map)
+               (lambda (map &rest _)
+                 (push (list 'transient map ri--menu-state) events)))
+              ((symbol-function 'keymap-legend-hide)
+               (lambda ()
+                 (push (list 'legend-hidden ri--menu-state) events)))
+              ((symbol-function 'ri--hide-frame)
+               (lambda ()
+                 (push (list 'frame-hidden ri--menu-state) events))))
+      (ri--open-picker
+       (lambda (on-close)
+         (push (list 'opened ri--menu-state) events)
+         (setq close on-close))))
+    (should
+     (equal (nreverse events)
+            '((transient nil picker)
+              (legend-hidden picker)
+              (frame-hidden picker)
+              (opened picker))))
+    (should (eq ri--menu-state 'picker))
+    (funcall close nil)
+    (should-not ri--menu-state)))
+
+(ert-deftest ri-lsp-test-picker-handoff-cleans-up-opener-error ()
+  (let ((ri--menu-state 'pick)
+        events
+        caught)
+    (cl-letf (((symbol-function 'set-transient-map)
+               (lambda (map &rest _)
+                 (push (list 'transient map ri--menu-state) events)))
+              ((symbol-function 'keymap-legend-hide)
+               (lambda ()
+                 (push (list 'legend-hidden ri--menu-state) events)))
+              ((symbol-function 'ri--hide-frame)
+               (lambda ()
+                 (push (list 'frame-hidden ri--menu-state) events))))
+      (condition-case error
+          (ri--open-picker
+           (lambda (_on-close)
+             (push (list 'opened ri--menu-state) events)
+             (error "picker failed")))
+        (error
+         (setq caught error))))
+    (should
+     (equal (nreverse events)
+            '((transient nil picker)
+              (legend-hidden picker)
+              (frame-hidden picker)
+              (opened picker))))
+    (should-not ri--menu-state)
+    (should (eq (car caught) 'error))
+    (should (equal (error-message-string caught) "picker failed"))))
+
 (ert-deftest ri-lsp-test-space-opens-ki-layer-with-legend ()
   (let (shown transient)
     (cl-letf (((symbol-function 'keymap-legend-show)

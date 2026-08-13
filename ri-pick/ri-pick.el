@@ -7,12 +7,11 @@
 ;;; Commentary:
 
 ;; One-window fuzzy picker displayed through `display-buffer-in-child-frame'.
-;; The parent frame keeps `keymap-legend' visible in its bottom side window.
+;; It owns only that child-frame surface, not the surrounding menu UI.
 
 ;;; Code:
 
 (require 'cl-lib)
-(require 'keymap-legend)
 (require 'project)
 (require 'ri-tabs)
 (require 'seq)
@@ -415,7 +414,7 @@
     (define-key map (kbd "C-g") '(menu-item "Cancel" ri-pick-cancel))
     (define-key map (kbd "<escape>") '(menu-item "Cancel" ri-pick-cancel))
     map)
-  "Keymap used by an active picker and its keymap legend.")
+  "Keymap used by an active picker.")
 
 (define-derived-mode ri-pick-mode special-mode "Ri-Pick"
   "Major mode for the editable query and read-only results of an Ri picker."
@@ -444,15 +443,12 @@
     top))
 
 (defun ri-pick--bottom-usable-edge (frame)
-  "Return the bottom usable row in FRAME above the active legend."
-  (if-let* ((legend (keymap-legend-window))
-            ((eq (window-frame legend) frame)))
-      (nth 1 (window-edges legend))
-    (- (frame-height frame)
-       (if-let* ((minibuffer (minibuffer-window frame))
-                 ((window-live-p minibuffer)))
-           (window-total-height minibuffer)
-         0))))
+  "Return the bottom usable row in FRAME above its minibuffer."
+  (- (frame-height frame)
+     (if-let* ((minibuffer (minibuffer-window frame))
+               ((window-live-p minibuffer)))
+         (window-total-height minibuffer)
+       0)))
 
 (defun ri-pick--geometry (frame)
   "Return (LEFT TOP WIDTH HEIGHT) for a picker inside FRAME."
@@ -562,7 +558,6 @@ When BUFFER-ALREADY-KILLING is non-nil, do not ask `quit-window' to kill it."
         (ri-pick--cancel-pending session)
         (remove-hook 'window-size-change-functions #'ri-pick--update-geometry)
         (remove-hook 'delete-frame-functions #'ri-pick--frame-deleted)
-        (keymap-legend-hide)
         (when (window-live-p window)
           (ignore-errors (quit-window (not buffer-already-killing) window)))
         (when (and (not buffer-already-killing) (buffer-live-p buffer))
@@ -634,7 +629,6 @@ return a cancellation function.  ON-CLOSE receives non-nil after acceptance."
               (erase-buffer))
             (add-hook 'kill-buffer-hook
                       #'ri-pick--picker-buffer-killed nil t))
-          (keymap-legend-show title ri-pick-mode-map (list :title title))
           (let ((window
                  (display-buffer
                   buffer

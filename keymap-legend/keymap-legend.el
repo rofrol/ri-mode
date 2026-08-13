@@ -916,16 +916,6 @@ When INDENT-FIRST is non-nil, use INDENT on the first line as well."
                (eq (window-buffer window) buffer))
       window)))
 
-;;;###autoload
-(defun keymap-legend-window ()
-  "Return the live window displaying the active keymap legend, or nil."
-  (when-let* ((state keymap-legend--state)
-              (window (plist-get state :window))
-              (buffer (plist-get state :buffer)))
-    (and (window-live-p window)
-         (buffer-live-p buffer)
-         (eq (window-buffer window) buffer)
-         window)))
 
 (defun keymap-legend--restore-source-state (source-state)
   "Restore the source mode line and face remappings from SOURCE-STATE."

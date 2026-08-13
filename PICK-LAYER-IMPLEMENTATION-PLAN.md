@@ -11,11 +11,11 @@ Add Ki-compatible `Pick` under `SPC k` with four complete pickers:
 | `s` | Symbol (Document) |
 | `S` | Symbol (Workspace) |
 
-The picker must be a centered floating surface while `keymap-legend` remains visible at the bottom. Opening, filtering, and cancelling a picker must preserve the exact source point and any active Extend bounds and active edge.
+The picker must be a centered floating surface after the `Pick` menu legend closes. Opening, filtering, and cancelling a picker must preserve the exact source point and any active Extend bounds and active edge.
 
 ## UI decision
 
-Use the same Emacs buffer-display primitives as `keymap-legend`.
+Use Emacs' buffer-display primitives for both menu legends and pickers.
 
 - `keymap-legend` displays its owned buffer with `display-buffer-in-side-window`.
 - `ri-pick` displays its owned buffer with `display-buffer-in-child-frame`.
@@ -23,7 +23,6 @@ Use the same Emacs buffer-display primitives as `keymap-legend`.
 - `ri-pick` must not call `make-frame` directly or introduce a second low-level frame manager.
 - Cleanup uses the window's `quit-restore` data through `quit-window`; child-frame creation and deletion remain implementation details of `display-buffer`.
 
-Add one public read-only integration point, `keymap-legend-window`, so the picker can reserve the exact rows occupied by the bottom legend without reading private legend state.
 
 ## Picker surface
 
@@ -37,15 +36,11 @@ Use one buffer and one child-frame window:
 │ src/ri-lsp.el                                │
 │ ri-pick/ri-pick.el                           │
 ╰──────────────────────────────────────────────╯
-
-┌──────────────── keymap legend ───────────────┐
-│ C-k Prev  C-j Next  RET Open  Esc Cancel     │
-└──────────────────────────────────────────────┘
 ```
 
 The first buffer line is editable query text. Remaining lines are read-only rendered results. Point stays in the query; selection movement changes an index rather than moving point into the result list.
 
-Default geometry is configurable and centered in the parent frame's usable rectangle. The usable bottom edge is the top edge of `keymap-legend-window`. Geometry is recomputed after the legend is shown and whenever the parent frame changes size. The child frame is clamped rather than allowed to cover the legend on small terminals.
+Default geometry is configurable and centered in the parent frame's usable rectangle. The usable bottom edge is the frame edge above its live minibuffer. Geometry is recomputed whenever the parent frame changes size. The child frame is clamped on small terminals.
 
 ## Shared picker engine
 
@@ -58,7 +53,7 @@ Create `ri-pick/ri-pick.el` with:
 - idempotent cleanup for accept, cancel, external buffer/frame deletion, and provider errors;
 - a dynamic provider contract for workspace symbols with debounce, cancellation, and stale-response rejection.
 
-The picker-specific keymap is also passed to `keymap-legend-show`, so the bottom legend describes the active surface for its entire lifetime.
+The picker-specific keymap remains active only for input and navigation. It is not passed to `keymap-legend-show`; the picker owns only its child-frame surface.
 
 ## Sources
 
@@ -80,7 +75,7 @@ In `ri-lsp.el`, preflight `:workspaceSymbolProvider`, then open the picker immed
 
 ## Space Layer integration
 
-Add `ri--pick-layer-map` and bind `k` in `ri--space-layer-map` to `ri-pick-menu`. Each picker wrapper changes `ri--menu-state` from `pick` to `picker` before clearing the transient map so the submenu exit callback cannot hide the new picker legend. Picker cleanup returns the menu state to nil.
+Add `ri--pick-layer-map` and bind `k` in `ri--space-layer-map` to `ri-pick-menu`. Each picker wrapper changes `ri--menu-state` from `pick` to `picker` before clearing the transient map so the submenu exit callback cannot perform competing cleanup, then hides the menu legend before opening the picker. Picker cleanup returns the menu state to nil.
 
 Add `SPC k` to the normal help map and document the four sequences in `README.md`.
 
@@ -92,7 +87,7 @@ Add `SPC k` to the normal help map and document the four sequences in `README.md
 - Document and Workspace symbol selection exit Extend only immediately before the accepted jump.
 - Unsupported or unmanaged Eglot buffers fail before opening the picker and preserve Extend exactly.
 - A stale asynchronous response cannot update a newer or closed picker.
-- Cleanup leaves no child frame, picker buffer, timer, request, hook, legend, or menu state behind.
+- Cleanup leaves no child frame, picker buffer, timer, request, hook, or menu state behind; picker startup and cleanup never own a keymap legend.
 
 ## Files
 
@@ -114,7 +109,7 @@ Add `SPC k` to the normal help map and document the four sequences in `README.md
 
 ## Implementation order
 
-1. Add `keymap-legend-window` and the public Ri Tabs buffer query.
+1. Add the public Ri Tabs buffer query and establish the menu-to-picker legend handoff.
 2. Implement the one-window picker engine and display-buffer lifecycle.
 3. Add Buffer and File providers.
 4. Add document and asynchronous workspace symbol providers.
@@ -127,13 +122,13 @@ Add `SPC k` to the normal help map and document the four sequences in `README.md
 ERT coverage must defend:
 
 - exact `SPC k f/d/s/S` bindings and menu labels;
-- side-window legend plus child-frame picker display actions;
+- the `Pick` side-window legend closing before the child-frame picker display action;
 - cancel preserving exact Extend bounds, point, submode, and active edge;
 - accepted document/workspace jumps leaving Extend before movement;
 - file target identity despite duplicate display names;
 - buffer candidate filtering and switching;
 - workspace debounce, cancellation, stale responses, errors, and cleanup;
-- geometry that never overlaps the live legend;
+- geometry that uses the full parent area above the live minibuffer;
 - external picker buffer/frame deletion and repeated cleanup.
 
-The final smoke check must run `emacs -Q -nw` with `tty-child-frames`, invoke the four pickers through real key sequences, keep the legend visible below the floating picker, select and cancel candidates, and resize the terminal while the picker is open.
+The final smoke check must run `emacs -Q -nw` with `tty-child-frames`, invoke the four pickers through real key sequences, confirm that no legend remains below the floating picker, select and cancel candidates, and resize the terminal while the picker is open.
