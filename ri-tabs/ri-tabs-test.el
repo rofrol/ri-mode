@@ -369,8 +369,12 @@
           (with-current-buffer long
             (setq buffer-file-name "/tmp/a-very-long-file-name.el"))
           (let* ((buffers (list short long))
-                 (short-label (ri-tabs--tab-label short buffers short))
-                 (long-label (ri-tabs--tab-label long buffers short)))
+                 (short-label (ri-tabs--tab-label
+                               short (ri-tabs--tab-name short buffers nil)
+                               'active))
+                 (long-label (ri-tabs--tab-label
+                              long (ri-tabs--tab-name long buffers nil)
+                              'inactive)))
             (should (< (string-width short-label)
                        (string-width long-label)))
             (should (equal (substring-no-properties short-label)
@@ -379,9 +383,42 @@
                            " [ ] a-very-long-file-name.el "))))
       (mapc #'kill-buffer (list short long)))))
 
-(ert-deftest ri-tabs-test-tab-face-follows-tab-selection ()
-  (should (eq (ri-tabs--tab-face t) 'ri-tabs-current-tab))
-  (should (eq (ri-tabs--tab-face nil) 'ri-tabs-tab)))
+(ert-deftest ri-tabs-test-tab-face-follows-semantic-state ()
+  (should (eq (ri-tabs--tab-face 'active) 'ri-tabs-current-tab))
+  (should (eq (ri-tabs--tab-face 'visible) 'ri-tabs-visible-tab))
+  (should (eq (ri-tabs--tab-face 'inactive) 'ri-tabs-tab)))
+
+(ert-deftest ri-tabs-test-color-hierarchy-has-explicit-backgrounds ()
+  (should (equal (face-background 'ri-tabs-current-tab nil t) "#ffffff"))
+  (should (equal (face-background 'ri-tabs-bar nil t) "#f4f4f4"))
+  (should (equal (face-background 'ri-tabs-visible-tab nil t) "#d8d8d8"))
+  (should (equal (face-background 'ri-tabs-tab nil t) "#c4c4c4")))
+
+(ert-deftest ri-tabs-test-surface-buffer-uses-bar-background-face ()
+  (let ((ri-tabs--surface-buffers (make-hash-table :test #'eq))
+        (buffer nil))
+    (unwind-protect
+        (progn
+          (setq buffer (ri-tabs--surface-buffer (selected-frame)))
+          (with-current-buffer buffer
+            (should buffer-face-mode)
+            (should (eq buffer-face-mode-face 'ri-tabs-bar))))
+      (when (buffer-live-p buffer)
+        (kill-buffer buffer)))))
+
+(ert-deftest ri-tabs-test-buffer-state-prefers-active-over-visible ()
+  (let ((active (generate-new-buffer "ri-tabs-state-active"))
+        (visible (generate-new-buffer "ri-tabs-state-visible"))
+        (inactive (generate-new-buffer "ri-tabs-state-inactive")))
+    (unwind-protect
+        (let ((visible-buffers (list active visible)))
+          (should (eq (ri-tabs--buffer-state active active visible-buffers)
+                      'active))
+          (should (eq (ri-tabs--buffer-state visible active visible-buffers)
+                      'visible))
+          (should (eq (ri-tabs--buffer-state inactive active visible-buffers)
+                      'inactive)))
+      (mapc #'kill-buffer (list active visible inactive)))))
 
 (ert-deftest ri-tabs-test-current-tab-face-is-black-on-white ()
   (should (equal (face-foreground 'ri-tabs-current-tab nil t) "black"))
@@ -1391,6 +1428,8 @@
 (ert-deftest ri-tabs-test-faces-are-independent-of-native-tab-bar-faces ()
   (should (eq (face-attribute 'ri-tabs-tab :inherit nil t)
               'mode-line-inactive))
+  (should (eq (face-attribute 'ri-tabs-visible-tab :inherit nil t)
+              'mode-line-inactive))
   (should (eq (face-attribute 'ri-tabs-current-tab :inherit nil t)
               'mode-line-active)))
 
@@ -1400,12 +1439,10 @@
         (progn
           (with-current-buffer buffer
             (setq buffer-file-name "/tmp/hover.el"))
-          (dolist (selected-buffer (list buffer nil))
-            (let ((label (ri-tabs--tab-label buffer "hover.el" selected-buffer)))
+          (dolist (tab-state '(active visible inactive))
+            (let ((label (ri-tabs--tab-label buffer "hover.el" tab-state)))
               (should (eq (get-text-property 0 'face label)
-                          (if selected-buffer
-                              'ri-tabs-current-tab
-                            'ri-tabs-tab)))
+                          (ri-tabs--tab-face tab-state)))
               (should (stringp (get-text-property 0 'help-echo label)))
               (should-not (text-property-not-all
                            0 (length label) 'mouse-face nil label)))))
@@ -1448,8 +1485,8 @@
                           marked-modified))
               (should (ri-tabs--item-marked (nth 0 items)))
               (should (ri-tabs--item-modified (nth 0 items)))
-              (should-not (ri-tabs--item-active (nth 0 items)))
-              (should (ri-tabs--item-active (nth 1 items)))
+              (should (eq (ri-tabs--item-state (nth 0 items)) 'inactive))
+              (should (eq (ri-tabs--item-state (nth 1 items)) 'active))
               (should (equal (substring-no-properties
                               (ri-tabs--item-display (nth 0 items)))
                              " [÷] marked.el "))
@@ -1610,12 +1647,12 @@
                         ((symbol-function 'ri-tabs--file-buffer-list)
                          (lambda () (list first second))))
                 (let ((items (ri-tabs--visible-items (selected-frame))))
-                  (should (ri-tabs--item-active (nth 0 items)))
-                  (should-not (ri-tabs--item-active (nth 1 items))))
+                  (should (eq (ri-tabs--item-state (nth 0 items)) 'active))
+                  (should (eq (ri-tabs--item-state (nth 1 items)) 'visible)))
                 (select-window other-window)
                 (let ((items (ri-tabs--visible-items (selected-frame))))
-                  (should-not (ri-tabs--item-active (nth 0 items)))
-                  (should (ri-tabs--item-active (nth 1 items)))))))
+                  (should (eq (ri-tabs--item-state (nth 0 items)) 'visible))
+                  (should (eq (ri-tabs--item-state (nth 1 items)) 'active))))))
         (mapc #'kill-buffer (list first second))))))
 
 (ert-deftest ri-tabs-test-tab-action-preserves-editing-split-and-native-workspaces ()
