@@ -291,13 +291,22 @@
                ("p" . ,#'ri-tabs-switch-to-last-marked-buffer)
                ("u" . ,#'ri-tabs-switch-to-previous-buffer)
                ("o" . ,#'ri-tabs-switch-to-next-buffer)
-               ("k" . ,#'ri-tabs-toggle-buffer-mark)
+               ("k" . ,#'ri-toggle-buffer-mark)
                ("n" . ,#'kill-current-buffer)
                ("i" . ,#'ri-tabs-unmark-other-buffers)
                ("m" . ,#'ri-tabs-switch-to-alternate-buffer)))
           (should (eq (lookup-key ri--buffer-layer-map (car binding))
                       (cdr binding))))
         (should (eq (lookup-key ri--normal-help-map "e") #'ignore))))))
+
+(ert-deftest ri-chord-test-mark-user-error-is-preserved-for-key-release ()
+  (let ((ri--restore-message-after-release nil)
+        (ri--restore-message-until-command-end nil))
+    (cl-letf (((symbol-function 'ri-tabs-toggle-buffer-mark)
+               (lambda () (user-error "Buffer is not visiting a visible file"))))
+      (should-error (ri-toggle-buffer-mark) :type 'user-error)
+      (should (equal ri--restore-message-after-release
+                     "Buffer is not visiting a visible file")))))
 
 (ert-deftest ri-chord-test-help-key-prompt-survives-shift-release ()
   (let ((ri--help-prefix-active t)

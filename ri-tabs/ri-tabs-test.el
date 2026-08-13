@@ -1621,24 +1621,87 @@
         (ri-tabs-mode 1))
       (should (= global-refreshes 1)))))
 
+
+
+(ert-deftest ri-tabs-test-git-environment-owner-uses-external-git-dir ()
+  (ri-tabs-test-with-persistence
+    (ri-tabs-test-with-owner-frame
+      (let* ((work-tree (expand-file-name "dotfiles-home" ri-tabs-test-root))
+             (git-dir (expand-file-name "dotfiles.git" ri-tabs-test-root))
+             (file (ri-tabs-test--make-file work-tree "config/test.el"))
+             (buffer (ri-tabs-test--visit-file file))
+             (process-environment (copy-sequence process-environment)))
+        (make-directory git-dir t)
+        (let ((default-directory (file-name-as-directory work-tree)))
+          (unless (eq 0 (process-file "git" nil nil nil
+                                      "--git-dir" git-dir
+                                      "--work-tree" work-tree
+                                      "init" "--quiet"))
+            (error "Could not initialize external Git directory")))
+        (setenv "GIT_DIR" git-dir)
+        (setenv "GIT_WORK_TREE" work-tree)
+        (set-frame-parameter (selected-frame) 'ri-tabs-owner nil)
+        (with-current-buffer buffer
+          (setq default-directory (file-name-as-directory work-tree)))
+        (ri-tabs-mark-buffer buffer)
+        (should (equal (ri-tabs--frame-owner)
+                       (ri-tabs--canonical-directory work-tree)))))))
+
+(ert-deftest ri-tabs-test-directory-owner-remains-first-owner-across-contexts ()
+  (ri-tabs-test-with-persistence
+    (ri-tabs-test-with-owner-frame
+      (let* ((plain-root (expand-file-name "plain" ri-tabs-test-root))
+             (repo (ri-tabs-test--make-git-repo ri-tabs-test-root "repo-after-plain"))
+             (plain-file (ri-tabs-test--make-file plain-root "a.txt"))
+             (repo-file (ri-tabs-test--make-file repo "b.el"))
+             (plain-buffer (ri-tabs-test--visit-file plain-file))
+             (repo-buffer (ri-tabs-test--visit-file repo-file)))
+        (set-frame-parameter (selected-frame) 'ri-tabs-owner nil)
+        (with-current-buffer plain-buffer
+          (setq default-directory (file-name-as-directory plain-root)))
+        (ri-tabs-mark-buffer plain-buffer)
+        (let ((owner (ri-tabs--frame-owner)))
+          (ri-tabs-mark-buffer repo-buffer)
+          (should (equal (ri-tabs--frame-owner) owner))
+          (should (equal (ri-tabs--state-owner-files (ri-tabs--read-state) owner)
+                         (sort (list (ri-tabs-test--file-id plain-file)
+                                     (ri-tabs-test--file-id repo-file))
+                               #'string-lessp))))))))
+
+(ert-deftest ri-tabs-test-v2-state-migrates-to-v3-owners ()
+  (ri-tabs-test-with-persistence
+    (let* ((owner (ri-tabs--canonical-directory ri-tabs-test-root))
+           (file (ri-tabs-test--make-file ri-tabs-test-root "v2.el"))
+           (file-id (ri-tabs-test--file-id file))
+           (state (ri-tabs--normalize-state
+                   (list :version 2
+                         :repos (list (cons owner (list file-id)))
+                         :unresolved nil))))
+      (should (eql (plist-get state :version) 3))
+      (should (equal (plist-get state :owners)
+                     (list (cons owner (list file-id))))))))
+
 (provide 'ri-tabs-test)
 
 ;;; ri-tabs-test.el ends here
 
 (defun ri-tabs-test--make-git-repo (root name)
-  "Create a minimal Git repository directory NAME below ROOT."
+  "Create a real Git repository directory NAME below ROOT."
   (let ((repo (expand-file-name name root)))
-    (make-directory (expand-file-name ".git" repo) t)
+    (make-directory repo t)
+    (let ((default-directory (file-name-as-directory repo)))
+      (unless (eq 0 (process-file "git" nil nil nil "init" "--quiet"))
+        (error "Could not initialize test Git repository: %s" repo)))
     repo))
 
 (defmacro ri-tabs-test-with-owner-frame (&rest body)
   "Run BODY while restoring the selected frame's Ri owner parameter."
   (declare (indent 0) (debug t))
   `(let* ((frame (selected-frame))
-          (saved-owner (frame-parameter frame 'ri-tabs-owner-repo)))
+          (saved-owner (frame-parameter frame 'ri-tabs-owner)))
      (unwind-protect
          (progn ,@body)
-       (set-frame-parameter frame 'ri-tabs-owner-repo saved-owner))))
+       (set-frame-parameter frame 'ri-tabs-owner saved-owner))))
 
 (ert-deftest ri-tabs-test-first-mark-owns-cross-repository-set ()
   (ri-tabs-test-with-persistence
@@ -1649,9 +1712,9 @@
              (file-b (ri-tabs-test--make-file repo-b "b.el"))
              (buffer-a (ri-tabs-test--visit-file file-a))
              (buffer-b (ri-tabs-test--visit-file file-b)))
-        (set-frame-parameter (selected-frame) 'ri-tabs-owner-repo nil)
+        (set-frame-parameter (selected-frame) 'ri-tabs-owner nil)
         (ri-tabs-mark-buffer buffer-a)
-        (let ((owner (ri-tabs--frame-owner-repo)))
+        (let ((owner (ri-tabs--frame-owner)))
           (should (equal owner (ri-tabs--canonical-directory repo-a)))
           (ri-tabs-mark-buffer buffer-b)
           (let ((state (ri-tabs--read-state)))
@@ -1673,14 +1736,14 @@
              (file-b (ri-tabs-test--make-file repo-b "b.el"))
              (buffer-a (ri-tabs-test--visit-file file-a))
              (buffer-b (ri-tabs-test--visit-file file-b)))
-        (set-frame-parameter (selected-frame) 'ri-tabs-owner-repo nil)
+        (set-frame-parameter (selected-frame) 'ri-tabs-owner nil)
         (ri-tabs-mark-buffer buffer-a)
-        (let ((owner (ri-tabs--frame-owner-repo)))
+        (let ((owner (ri-tabs--frame-owner)))
           (set-window-buffer (selected-window) buffer-b)
           (ri-tabs--sync-visited-buffer)
-          (should (equal (ri-tabs--frame-owner-repo) owner)))))))
+          (should (equal (ri-tabs--frame-owner) owner)))))))
 
-(ert-deftest ri-tabs-test-explicit-repository-switch-selects-independent-set ()
+(ert-deftest ri-tabs-test-explicit-owner-context-switch-selects-independent-set ()
   (ri-tabs-test-with-persistence
     (ri-tabs-test-with-owner-frame
       (let* ((repo-a (ri-tabs-test--make-git-repo ri-tabs-test-root "repo-a"))
@@ -1689,9 +1752,9 @@
              (file-b (ri-tabs-test--make-file repo-b "b.el"))
              (buffer-a (ri-tabs-test--visit-file file-a))
              (buffer-b (ri-tabs-test--visit-file file-b)))
-        (set-frame-parameter (selected-frame) 'ri-tabs-owner-repo nil)
+        (set-frame-parameter (selected-frame) 'ri-tabs-owner nil)
         (ri-tabs-mark-buffer buffer-a)
-        (ri-tabs-switch-repository buffer-b)
+        (ri-tabs-switch-owner-context buffer-b)
         (ri-tabs-mark-buffer buffer-b)
         (let* ((state (ri-tabs--read-state))
                (owner-a (ri-tabs--canonical-directory repo-a))
@@ -1700,7 +1763,7 @@
                          (list (ri-tabs-test--file-id file-a))))
           (should (equal (ri-tabs--state-owner-files state owner-b)
                          (list (ri-tabs-test--file-id file-b))))
-          (should (equal (ri-tabs--frame-owner-repo) owner-b)))))))
+          (should (equal (ri-tabs--frame-owner) owner-b)))))))
 
 (ert-deftest ri-tabs-test-existing-owner-allows-mark-outside-git ()
   (ri-tabs-test-with-persistence
@@ -1711,22 +1774,28 @@
              (outside (ri-tabs-test--make-file outside-root "notes.txt"))
              (buffer-a (ri-tabs-test--visit-file file-a))
              (outside-buffer (ri-tabs-test--visit-file outside)))
-        (set-frame-parameter (selected-frame) 'ri-tabs-owner-repo nil)
+        (set-frame-parameter (selected-frame) 'ri-tabs-owner nil)
         (ri-tabs-mark-buffer buffer-a)
-        (let ((owner (ri-tabs--frame-owner-repo)))
+        (let ((owner (ri-tabs--frame-owner)))
           (ri-tabs-mark-buffer outside-buffer)
           (should
            (member (ri-tabs-test--file-id outside)
                    (ri-tabs--state-owner-files (ri-tabs--read-state) owner))))))))
 
-(ert-deftest ri-tabs-test-cannot-start-marked-set-outside-git ()
+(ert-deftest ri-tabs-test-first-mark-outside-git-uses-current-directory-owner ()
   (ri-tabs-test-with-persistence
     (ri-tabs-test-with-owner-frame
       (let* ((outside-root (expand-file-name "outside" ri-tabs-test-root))
              (outside (ri-tabs-test--make-file outside-root "notes.txt"))
              (buffer (ri-tabs-test--visit-file outside)))
-        (set-frame-parameter (selected-frame) 'ri-tabs-owner-repo nil)
-        (should-error (ri-tabs-mark-buffer buffer) :type 'user-error)))))
+        (set-frame-parameter (selected-frame) 'ri-tabs-owner nil)
+        (with-current-buffer buffer
+          (setq default-directory (file-name-as-directory outside-root)))
+        (ri-tabs-mark-buffer buffer)
+        (let ((owner (ri-tabs--canonical-directory outside-root)))
+          (should (equal (ri-tabs--frame-owner) owner))
+          (should (equal (ri-tabs--state-owner-files (ri-tabs--read-state) owner)
+                         (list (ri-tabs-test--file-id outside)))))))))
 
 (ert-deftest ri-tabs-test-rename-migrates-file-through-all-owner-sets ()
   (ri-tabs-test-with-persistence
@@ -1760,4 +1829,4 @@
            (owner-a (ri-tabs--canonical-directory repo-a)))
       (should (equal (ri-tabs--state-owner-files state owner-a)
                      (sort (list id-a id-b) #'string-lessp)))
-      (should (= (length (plist-get state :repos)) 1)))))
+      (should (= (length (plist-get state :owners)) 1)))))
