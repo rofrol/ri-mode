@@ -62,13 +62,12 @@
   :group 'ri-tabs)
 
 (defface ri-tabs-current-tab
-  '((t :inherit tab-line-tab-current :weight bold :box nil))
-  "Face used for the current tab in the selected window."
-  :group 'ri-tabs)
-
-(defface ri-tabs-current-tab-inactive-window
-  '((t :inherit tab-line-tab :weight bold :box nil))
-  "Face used for the current tab in an unselected window."
+  '((t :inherit tab-line-tab-current
+       :foreground "black"
+       :background "#ffffff"
+       :weight bold
+       :box nil))
+  "Face used for the current file tab."
   :group 'ri-tabs)
 
 (defface ri-tabs-highlight
@@ -361,10 +360,7 @@ does not read or write persistent membership."
 
 (defun ri-tabs--tab-face (selected)
   "Return the appropriate tab face for SELECTED state."
-  (cond
-   ((not selected) 'ri-tabs-tab)
-   ((mode-line-window-selected-p) 'ri-tabs-current-tab)
-   (t 'ri-tabs-current-tab-inactive-window)))
+  (if selected 'ri-tabs-current-tab 'ri-tabs-tab))
 
 (defun ri-tabs--marker (buffer)
   "Return BUFFER's marker for its marked and modified state."

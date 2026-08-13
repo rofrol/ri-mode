@@ -159,6 +159,27 @@
                            (buffer-name second)))))
       (mapc #'kill-buffer (list first second)))))
 
+(ert-deftest ri-tabs-test-tab-face-follows-tab-selection ()
+  (should (eq (ri-tabs--tab-face t) 'ri-tabs-current-tab))
+  (should (eq (ri-tabs--tab-face nil) 'ri-tabs-tab)))
+
+(ert-deftest ri-tabs-test-current-tab-face-is-black-on-white ()
+  (should (equal (face-foreground 'ri-tabs-current-tab nil t) "black"))
+  (should (equal (face-background 'ri-tabs-current-tab nil t) "#ffffff"))
+  (should (eq (face-attribute 'ri-tabs-current-tab :weight nil t) 'bold))
+  (should-not (face-attribute 'ri-tabs-current-tab :box nil t)))
+
+(ert-deftest ri-tabs-test-current-tab-tty-background-is-pure-white ()
+  (skip-unless
+   (and (not noninteractive)
+        (not (display-graphic-p))
+        (terminal-live-p (frame-terminal))
+        (= (display-color-cells) 16777216)))
+  (let* ((background (face-background 'ri-tabs-current-tab nil t))
+         (description (tty-color-desc background)))
+    (should (equal background "#ffffff"))
+    (should (equal (nthcdr 2 description) '(65535 65535 65535)))))
+
 (ert-deftest ri-tabs-test-format-shows-marked-and-modified-states ()
   (let ((current (generate-new-buffer "ri-tabs-current"))
         (unmarked (generate-new-buffer "ri-tabs-unmarked"))
@@ -201,6 +222,10 @@
               (should
                (equal (substring-no-properties marked-modified-tab)
                       " [÷] marked-modified.el "))
+              (should (eq (get-text-property 0 'face current-tab)
+                          'ri-tabs-current-tab))
+              (should (eq (get-text-property 0 'face unmarked-tab)
+                          'ri-tabs-tab))
               (should (eq (get-text-property 0 'tab current-tab) current))
               (should (get-text-property 0 'selected current-tab))
               (should-not
