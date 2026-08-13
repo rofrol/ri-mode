@@ -1,4 +1,5 @@
 ;;; ri-extend-test.el --- Tests for ri-extend.el -*- lexical-binding: t; -*-
+(require 'tab-line)
 
 (require 'cl-lib)
 (require 'ert)
@@ -395,11 +396,13 @@
         (minor-mode-alist nil)
         (find-file-hook nil)
         (after-set-visited-file-name-hook nil)
-        (after-change-major-mode-hook nil)
         (kill-buffer-hook nil)
         (first-change-hook nil)
         (after-save-hook nil)
         (after-revert-hook nil)
+        (window-selection-change-functions nil)
+        (window-buffer-change-functions nil)
+        (after-make-frame-functions nil)
         (kkp-chord-after-release-hook nil)
         (sr-highlight-predicate nil)
         (status-frame-height 0)
@@ -421,19 +424,20 @@
               (setq buffer-file-name "/tmp/ri-tabs-after-enable.el")
               (run-hooks 'find-file-hook)
               (should ri-tabs-mode)
-              (should tab-line-mode)
-              (should (eq tab-line-tabs-function
-                          #'ri-tabs--buffer-list))
+              (should tab-bar-mode)
+              (should-not tab-line-mode)
               (should
-               (equal
-                (mapconcat
-                 (lambda (part)
-                   (if (stringp part)
-                       (substring-no-properties part)
-                     ""))
-                 (tab-line-format)
-                 "")
-                " [ ] ri-tabs-after-enable.el ")))))
+               (equal (default-value 'tab-bar-format)
+                      '(ri-tabs--format-tabs)))
+              (let ((items
+                     (ri-tabs--format-tabs (selected-frame))))
+                (should (= (length items) 1))
+                (should (eq (caar items) 'current-tab))
+                (should
+                 (equal
+                  (substring-no-properties
+                   (nth 2 (car items)))
+                  " [ ] ri-tabs-after-enable.el "))))))
       (when ri-tabs-mode
         (ri-tabs-mode -1))
       (when (buffer-live-p buffer)

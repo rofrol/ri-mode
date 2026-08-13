@@ -3,6 +3,7 @@
 (require 'cl-lib)
 (require 'ert)
 (require 'ri-tabs)
+(require 'tab-line)
 
 (defvar ri-tabs-test--buffers nil)
 
@@ -68,28 +69,113 @@
      (equal (ri-tabs--buffer-file-id buffer) file-id))
    (ri-tabs--file-buffer-list)))
 
-(defmacro ri-tabs-test-with-persistence (&rest body)
-  "Run BODY with isolated file-backed persistent mark storage."
+(defun ri-tabs-test--capture-frame-state (frame)
+  "Capture Tab Bar parameters of FRAME for fixture cleanup."
+  (list frame
+        (frame-parameter frame 'tab-bar-lines)
+        (frame-parameter frame 'tab-bar-lines-keep-state)
+        (frame-parameter frame 'ri-tabs--item-buffers)))
+
+(defun ri-tabs-test--restore-frame-state (state)
+  "Restore one frame from captured fixture STATE."
+  (when (frame-live-p (car state))
+    (set-frame-parameter (car state) 'tab-bar-lines (nth 1 state))
+    (set-frame-parameter
+     (car state) 'tab-bar-lines-keep-state (nth 2 state))
+    (set-frame-parameter
+     (car state) 'ri-tabs--item-buffers (nth 3 state))))
+
+(defun ri-tabs-test--tab-line-state (buffer)
+  "Return every Tab Line-local setting in BUFFER."
+  (with-current-buffer buffer
+    (sort
+     (seq-filter
+      (lambda (entry)
+        (string-prefix-p
+         "tab-line-" (symbol-name (car entry))))
+      (copy-tree (buffer-local-variables)))
+     (lambda (left right)
+       (string-lessp
+        (symbol-name (car left))
+        (symbol-name (car right)))))))
+
+(defmacro ri-tabs-test-with-tab-bar-state (&rest body)
+  "Run BODY while restoring all global Tab Bar state afterward."
   (declare (indent 0) (debug t))
-  `(let* ((ri-tabs-test-root
-           (make-temp-file "ri-tabs-persistence-" t))
-          (multisession-directory
-           (expand-file-name "multisession/" ri-tabs-test-root))
-          (user-init-file
-           (expand-file-name "synthetic-init.el" ri-tabs-test-root))
-          (ri-tabs--marks-store (ri-tabs-test--make-store))
-          (ri-tabs-test--buffers nil))
+  `(let ((ri-tabs-test--saved-tab-bar-mode (and tab-bar-mode t))
+         (ri-tabs-test--saved-tab-bar-format
+          (copy-tree (default-value 'tab-bar-format)))
+         (ri-tabs-test--saved-tab-bar-show
+          (default-value 'tab-bar-show))
+         (ri-tabs-test--saved-tab-bar-map
+          (copy-keymap tab-bar-map))
+         (ri-tabs-test--saved-tab-bar-mode-map
+          (copy-keymap tab-bar-mode-map))
+         (ri-tabs-test--saved-default-frame-alist
+          (copy-tree default-frame-alist))
+         (ri-tabs-test--saved-frame-states
+          (mapcar #'ri-tabs-test--capture-frame-state (frame-list))))
      (unwind-protect
-         (progn
+         (progn ,@body)
+       (condition-case nil
            (when ri-tabs-mode
              (ri-tabs-mode -1))
-           ,@body)
-       (when ri-tabs-mode
-         (ri-tabs-mode -1))
-       (ri-tabs-test--track-root-buffers ri-tabs-test-root)
-       (mapc #'ri-tabs-test--kill-buffer ri-tabs-test--buffers)
-       (when (file-directory-p ri-tabs-test-root)
-         (delete-directory ri-tabs-test-root t)))))
+         (error nil))
+       (setq ri-tabs-mode nil
+             ri-tabs--activation-complete-p nil
+             ri-tabs--refresh-pending-p nil)
+       (ri-tabs--cancel-pending-activation)
+       (ri-tabs--remove-infrastructure)
+       (dolist (buffer (buffer-list))
+         (ri-tabs--clear-buffer-cache buffer))
+       (setq-default
+        tab-bar-format
+        (copy-tree ri-tabs-test--saved-tab-bar-format)
+        tab-bar-show ri-tabs-test--saved-tab-bar-show)
+       (condition-case nil
+           (tab-bar-mode
+            (if ri-tabs-test--saved-tab-bar-mode 1 -1))
+         (error
+          (setq tab-bar-mode
+                ri-tabs-test--saved-tab-bar-mode)))
+       (setcdr tab-bar-map
+               (cdr (copy-keymap
+                     ri-tabs-test--saved-tab-bar-map)))
+       (setcdr tab-bar-mode-map
+               (cdr (copy-keymap
+                     ri-tabs-test--saved-tab-bar-mode-map)))
+       (setq default-frame-alist
+             (copy-tree
+              ri-tabs-test--saved-default-frame-alist))
+       (mapc #'ri-tabs-test--restore-frame-state
+             ri-tabs-test--saved-frame-states)
+       (setq ri-tabs--tab-bar-state nil
+             ri-tabs--temporary-frame-states nil)
+       (force-mode-line-update t))))
+
+(defmacro ri-tabs-test-with-persistence (&rest body)
+  "Run BODY with isolated persistence and Tab Bar state."
+  (declare (indent 0) (debug t))
+  `(ri-tabs-test-with-tab-bar-state
+     (let* ((ri-tabs-test-root
+             (make-temp-file "ri-tabs-persistence-" t))
+            (multisession-directory
+             (expand-file-name "multisession/" ri-tabs-test-root))
+            (user-init-file
+             (expand-file-name "synthetic-init.el" ri-tabs-test-root))
+            (ri-tabs--marks-store (ri-tabs-test--make-store))
+            (ri-tabs-test--buffers nil))
+       (unwind-protect
+           (progn
+             (when ri-tabs-mode
+               (ri-tabs-mode -1))
+             ,@body)
+         (when ri-tabs-mode
+           (ri-tabs-mode -1))
+         (ri-tabs-test--track-root-buffers ri-tabs-test-root)
+         (mapc #'ri-tabs-test--kill-buffer ri-tabs-test--buffers)
+         (when (file-directory-p ri-tabs-test-root)
+           (delete-directory ri-tabs-test-root t))))))
 
 (ert-deftest ri-tabs-test-buffer-list-keeps-marked-files-plus-current ()
   (let ((alpha (generate-new-buffer "ri-tabs-alpha"))
@@ -117,8 +203,18 @@
           (cl-letf (((symbol-function 'buffer-list)
                      (lambda (&optional _frame)
                        (list special zeta unmarked hidden current alpha))))
-            (should (equal (ri-tabs--buffer-list)
-                           (list alpha zeta current)))))
+            (should
+             (equal (ri-tabs--buffer-list current)
+                    (list alpha zeta current)))
+            (should
+             (equal (ri-tabs--buffer-list unmarked)
+                    (list alpha zeta unmarked)))
+            (should
+             (equal (ri-tabs--buffer-list special)
+                    (list alpha zeta)))
+            (should
+             (equal (ri-tabs--buffer-list hidden)
+                    (list alpha zeta)))))
       (mapc #'kill-buffer
             (list alpha zeta current unmarked special hidden)))))
 
@@ -163,6 +259,17 @@
   (should (eq (ri-tabs--tab-face t) 'ri-tabs-current-tab))
   (should (eq (ri-tabs--tab-face nil) 'ri-tabs-tab)))
 
+(ert-deftest ri-tabs-test-faces-inherit-native-tab-bar-faces ()
+  (should
+   (eq (face-attribute 'ri-tabs-tab :inherit nil t)
+       'tab-bar-tab-inactive))
+  (should
+   (eq (face-attribute 'ri-tabs-current-tab :inherit nil t)
+       'tab-bar-tab))
+  (should
+   (eq (face-attribute 'ri-tabs-highlight :inherit nil t)
+       'tab-bar-tab-highlight)))
+
 (ert-deftest ri-tabs-test-current-tab-face-is-black-on-white ()
   (should (equal (face-foreground 'ri-tabs-current-tab nil t) "black"))
   (should (equal (face-background 'ri-tabs-current-tab nil t) "#ffffff"))
@@ -180,7 +287,7 @@
     (should (equal background "#ffffff"))
     (should (equal (nthcdr 2 description) '(65535 65535 65535)))))
 
-(ert-deftest ri-tabs-test-format-shows-marked-and-modified-states ()
+(ert-deftest ri-tabs-test-native-format-shows-file-state-and-menu-items ()
   (let ((current (generate-new-buffer "ri-tabs-current"))
         (unmarked (generate-new-buffer "ri-tabs-unmarked"))
         (unmarked-modified
@@ -202,36 +309,66 @@
                   ri-tabs--marked-p t)
             (set-buffer-modified-p t))
           (set-window-buffer (selected-window) current)
-          (with-current-buffer current
-            (setq-local tab-line-tab-name-function #'ri-tabs--tab-name)
+          (cl-letf (((symbol-function 'buffer-list)
+                     (lambda (&optional _frame)
+                       (list unmarked-modified marked-modified
+                             unmarked current))))
             (let* ((buffers
-                    (list current unmarked unmarked-modified marked-modified))
-                   (current-tab (ri-tabs--format-tab current buffers))
-                   (unmarked-tab (ri-tabs--format-tab unmarked buffers))
-                   (unmarked-modified-tab
-                    (ri-tabs--format-tab unmarked-modified buffers))
-                   (marked-modified-tab
-                    (ri-tabs--format-tab marked-modified buffers)))
-              (should (equal (substring-no-properties current-tab)
-                             " [-] 100%%.el "))
-              (should (equal (substring-no-properties unmarked-tab)
-                             " [ ] unmarked.el "))
+                    (list current unmarked unmarked-modified
+                          marked-modified))
+                   (current-label
+                    (ri-tabs--tab-label current buffers current))
+                   (unmarked-label
+                    (ri-tabs--tab-label unmarked buffers current))
+                   (unmarked-modified-label
+                    (ri-tabs--tab-label
+                     unmarked-modified buffers current))
+                   (marked-modified-label
+                    (ri-tabs--tab-label
+                     marked-modified buffers current))
+                   (items (ri-tabs--format-tabs (selected-frame)))
+                   (current-item (assq 'current-tab items))
+                   (inactive-item (assq 'tab-2 items)))
               (should
-               (equal (substring-no-properties unmarked-modified-tab)
-                      " [:] unmarked-modified.el "))
+               (equal (substring-no-properties current-label)
+                      " [-] 100%.el "))
               (should
-               (equal (substring-no-properties marked-modified-tab)
-                      " [÷] marked-modified.el "))
-              (should (eq (get-text-property 0 'face current-tab)
-                          'ri-tabs-current-tab))
-              (should (eq (get-text-property 0 'face unmarked-tab)
-                          'ri-tabs-tab))
-              (should (eq (get-text-property 0 'tab current-tab) current))
-              (should (get-text-property 0 'selected current-tab))
-              (should-not
-               (get-text-property 0 'selected unmarked-modified-tab))
-              (should (eq (get-text-property 0 'keymap current-tab)
-                          tab-line-tab-map)))))
+               (equal (substring-no-properties unmarked-label)
+                      " [ ] unmarked.el "))
+              (should
+               (equal
+                (substring-no-properties unmarked-modified-label)
+                " [:] unmarked-modified.el "))
+              (should
+               (equal
+                (substring-no-properties marked-modified-label)
+                " [÷] marked-modified.el "))
+              (should (equal (mapcar #'car items)
+                             '(current-tab tab-2)))
+              (should (eq (nth 1 current-item) 'menu-item))
+              (should (eq (nth 3 current-item) #'ignore))
+              (should (functionp (nth 3 inactive-item)))
+              (should
+               (equal
+                (plist-get (nthcdr 4 current-item) :help)
+                "Current file: /tmp/100%.el"))
+              (should
+               (eq (get-text-property 0 'face (nth 2 current-item))
+                   'ri-tabs-current-tab))
+              (should
+               (eq (get-text-property 0 'mouse-face
+                                      (nth 2 inactive-item))
+                   'ri-tabs-highlight))
+              (dolist (property '(tab selected keymap))
+                (should-not
+                 (get-text-property
+                  0 property (nth 2 current-item))))
+              (should
+               (equal
+                (frame-parameter
+                 nil 'ri-tabs--item-buffers)
+                `((current-tab . ,current)
+                  (tab-2 . ,marked-modified)))))))
       (dolist (buffer (list unmarked-modified marked-modified))
         (when (buffer-live-p buffer)
           (with-current-buffer buffer
@@ -314,7 +451,7 @@
           (ri-tabs-switch-to-alternate-buffer)
           (should (eq (current-buffer) alternate)))))))
 
-(ert-deftest ri-tabs-test-mode-installs-for-files-and-restores-state ()
+(ert-deftest ri-tabs-test-mode-owns-and-restores-native-tab-bar ()
   (ri-tabs-test-with-persistence
     (let* ((file
             (ri-tabs-test--visit-file
@@ -322,39 +459,102 @@
            (late-path
             (ri-tabs-test--make-file ri-tabs-test-root "late.el"))
            (late-file nil)
-           (special (generate-new-buffer "ri-tabs-special")))
+           (special (generate-new-buffer "ri-tabs-special"))
+           (frame (selected-frame))
+           (before-format '(tab-bar-format-history tab-bar-format-tabs))
+           (before-show 2)
+           (before-lines (frame-parameter frame 'tab-bar-lines))
+           (before-keep
+            (frame-parameter frame 'tab-bar-lines-keep-state))
+           (before-default (copy-tree default-frame-alist))
+           (before-mouse-2 (lookup-key tab-bar-map [mouse-2]))
+           before-tab-line-state)
       (push special ri-tabs-test--buffers)
       (with-current-buffer file
-        (setq-local tab-line-separator "before"))
+        (tab-line-mode 1)
+        (setq-local tab-line-separator "before"
+                    tab-line-tabs-function #'buffer-list)
+        (setq before-tab-line-state
+              (ri-tabs-test--tab-line-state file)))
+      (setq-default tab-bar-format before-format
+                    tab-bar-show before-show)
       (ri-tabs-mode 1)
+      (should tab-bar-mode)
+      (should (equal (default-value 'tab-bar-format)
+                     '(ri-tabs--format-tabs)))
+      (should (eql (default-value 'tab-bar-show) 0))
+      (should (= (frame-parameter frame 'tab-bar-lines) 1))
+      (should
+       (eq (lookup-key tab-bar-map [mouse-2])
+           #'ri-tabs--mouse-close))
       (with-current-buffer file
         (should (ri-tabs-buffer-marked-p))
         (should tab-line-mode)
-        (should (eq tab-line-tabs-function #'ri-tabs--buffer-list))
-        (should (eq tab-line-tab-name-format-function
-                    #'ri-tabs--format-tab))
-        (should (eq tab-line-close-tab-function 'kill-buffer))
-        (should (equal tab-line-separator "")))
+        (should (equal tab-line-separator "before"))
+        (should (eq tab-line-tabs-function #'buffer-list)))
       (with-current-buffer special
         (should-not tab-line-mode))
       (setq late-file (ri-tabs-test--visit-file late-path))
       (with-current-buffer late-file
         (should-not (ri-tabs-buffer-marked-p))
-        (should tab-line-mode)
-        (should (eq tab-line-tabs-function #'ri-tabs--buffer-list)))
+        (should-not tab-line-mode))
       (ri-tabs-mode -1)
+      (should (equal (default-value 'tab-bar-format) before-format))
+      (should (eql (default-value 'tab-bar-show) before-show))
+      (should (eql (frame-parameter frame 'tab-bar-lines)
+                   before-lines))
+      (should (eql
+               (frame-parameter frame 'tab-bar-lines-keep-state)
+               before-keep))
+      (should (equal default-frame-alist before-default))
+      (should (eq (lookup-key tab-bar-map [mouse-2])
+                  before-mouse-2))
       (with-current-buffer file
-        (should-not tab-line-mode)
-        (should (local-variable-p 'tab-line-separator))
+        (should tab-line-mode)
         (should (equal tab-line-separator "before"))
-        (should-not (local-variable-p 'tab-line-tabs-function))
+        (should (eq tab-line-tabs-function #'buffer-list))
+        (should
+         (equal (ri-tabs-test--tab-line-state file)
+                before-tab-line-state))
         (should-not (local-variable-p 'ri-tabs--marked-p))
         (should-not (local-variable-p 'ri-tabs--file-id)))
       (with-current-buffer late-file
         (should-not tab-line-mode)
-        (should-not (local-variable-p 'tab-line-format))
         (should-not (local-variable-p 'ri-tabs--marked-p))
         (should-not (local-variable-p 'ri-tabs--file-id))))))
+
+
+(ert-deftest ri-tabs-test-restores-enabled-custom-tab-bar-exactly ()
+  (ri-tabs-test-with-persistence
+    (let ((frame (selected-frame))
+          (custom-format
+           '(tab-bar-format-menu-bar tab-bar-format-history))
+          (custom-show 3))
+      (tab-bar-mode 1)
+      (setq-default tab-bar-format custom-format
+                    tab-bar-show custom-show)
+      (setq default-frame-alist
+            '((width . 91)
+              (tab-bar-lines . 0)
+              (height . 37)))
+      (set-frame-parameter frame 'tab-bar-lines 1)
+      (set-frame-parameter
+       frame 'tab-bar-lines-keep-state nil)
+      (define-key tab-bar-map [mouse-2] #'forward-char)
+      (define-key
+       tab-bar-mode-map [(control tab)] #'backward-char)
+      (let ((before (ri-tabs--capture-tab-bar-state))
+            (before-default (copy-tree default-frame-alist)))
+        (ri-tabs-mode 1)
+        (should tab-bar-mode)
+        (should
+         (equal (default-value 'tab-bar-format)
+                '(ri-tabs--format-tabs)))
+        (ri-tabs-mode -1)
+        (should tab-bar-mode)
+        (should
+         (equal (ri-tabs--capture-tab-bar-state) before))
+        (should (equal default-frame-alist before-default))))))
 
 (ert-deftest ri-tabs-test-mark-survives-kill-and-reopen ()
   (ri-tabs-test-with-persistence
@@ -731,7 +931,10 @@
                (other-window (split-window-below)))
           (set-window-buffer other-window other-buffer)
           (set-window-start selected-window 80)
-          (let ((configuration (current-window-configuration))
+          (let ((window-count
+                 (length (window-list nil 'nomini)))
+                (other-displayed-buffer
+                 (window-buffer other-window))
                 (selected-point (point))
                 (selected-start (window-start selected-window))
                 (displayed-buffer (window-buffer selected-window)))
@@ -744,8 +947,390 @@
             (should (= (window-start selected-window)
                        selected-start))
             (should
-             (compare-window-configurations
-              configuration (current-window-configuration)))))))))
+             (= (length (window-list nil 'nomini))
+                window-count))
+            (should
+             (eq (window-buffer other-window)
+                 other-displayed-buffer))))))))
+
+(ert-deftest ri-tabs-test-renderer-follows-selected-window-across-split ()
+  (ri-tabs-test-with-tab-bar-state
+    (let ((first (generate-new-buffer "ri-tabs-split-first"))
+          (second (generate-new-buffer "ri-tabs-split-second")))
+      (unwind-protect
+          (save-window-excursion
+            (with-current-buffer first
+              (setq buffer-file-name "/tmp/ri-tabs-split-first.el"
+                    ri-tabs--marked-p t))
+            (with-current-buffer second
+              (setq buffer-file-name "/tmp/ri-tabs-split-second.el"
+                    ri-tabs--marked-p t))
+            (delete-other-windows)
+            (set-window-buffer (selected-window) first)
+            (let ((other-window (split-window-below)))
+              (set-window-buffer other-window second)
+              (setq ri-tabs-mode t
+                    ri-tabs--tab-bar-state
+                    (list :frames
+                          (list
+                           (ri-tabs--capture-frame-state
+                            (selected-frame)))))
+              (set-frame-parameter nil 'tab-bar-lines 1)
+              (should (= (length (window-list nil 'nomini)) 2))
+              (should
+               (equal
+                (mapcar
+                 (lambda (item)
+                   (cons
+                    (car item)
+                    (substring-no-properties (nth 2 item))))
+                 (ri-tabs--format-tabs (selected-frame)))
+                '((current-tab . " [-] ri-tabs-split-first.el ")
+                  (tab-2 . " [-] ri-tabs-split-second.el "))))
+              (select-window other-window)
+              (should
+               (equal
+                (mapcar
+                 (lambda (item)
+                   (cons
+                    (car item)
+                    (substring-no-properties (nth 2 item))))
+                 (ri-tabs--format-tabs (selected-frame)))
+                '((tab-1 . " [-] ri-tabs-split-first.el ")
+                  (current-tab . " [-] ri-tabs-split-second.el "))))
+              (dolist (buffer (list first second))
+                (with-current-buffer buffer
+                  (should-not tab-line-mode)))))
+        (setq ri-tabs-mode nil
+              ri-tabs--tab-bar-state nil)
+        (mapc #'kill-buffer (list first second))))))
+
+(ert-deftest ri-tabs-test-tab-action-preserves-split-and-workspace-state ()
+  (ri-tabs-test-with-tab-bar-state
+    (let ((marked (generate-new-buffer "ri-tabs-action-marked"))
+          (current (generate-new-buffer "ri-tabs-action-current"))
+          (other (generate-new-buffer "ri-tabs-action-other")))
+      (unwind-protect
+          (save-window-excursion
+            (with-current-buffer marked
+              (setq buffer-file-name "/tmp/ri-tabs-action-marked.el"
+                    ri-tabs--marked-p t))
+            (with-current-buffer current
+              (setq buffer-file-name "/tmp/ri-tabs-action-current.el"))
+            (delete-other-windows)
+            (set-window-buffer (selected-window) current)
+            (let* ((selected-window (selected-window))
+                   (other-window (split-window-below)))
+              (set-window-buffer other-window other)
+              (setq ri-tabs--tab-bar-state
+                    (list :frames
+                          (list
+                           (ri-tabs--capture-frame-state
+                            (selected-frame)))))
+              (let* ((window-count
+                      (length (window-list nil 'nomini)))
+                     (other-buffer (window-buffer other-window))
+                     (native-tabs
+                      (copy-tree (frame-parameter nil 'tabs)))
+                     (window-tree (copy-tree (window-tree)))
+                     (items (ri-tabs--format-tabs (selected-frame)))
+                     (action (nth 3 (assq 'tab-1 items))))
+                (funcall action)
+                (should (eq (selected-window) selected-window))
+                (should (eq (window-buffer selected-window) marked))
+                (should (eq (window-buffer other-window) other-buffer))
+                (should
+                 (= (length (window-list nil 'nomini))
+                    window-count))
+                (should (equal (window-tree) window-tree))
+                (should
+                 (equal (frame-parameter nil 'tabs)
+                        native-tabs)))))
+        (setq ri-tabs--tab-bar-state nil)
+        (mapc #'kill-buffer (list marked current other))))))
+
+(ert-deftest ri-tabs-test-dead-tab-actions-are-harmless ()
+  (ri-tabs-test-with-tab-bar-state
+    (let ((dead (generate-new-buffer "ri-tabs-dead"))
+          (survivor (generate-new-buffer "ri-tabs-survivor"))
+          (refreshes 0))
+      (with-current-buffer dead
+        (setq buffer-file-name "/tmp/ri-tabs-dead.el"))
+      (set-window-buffer (selected-window) survivor)
+      (kill-buffer dead)
+      (cl-letf (((symbol-function 'ri-tabs--refresh)
+                 (lambda (&rest _)
+                   (cl-incf refreshes))))
+        (ri-tabs--select-buffer (selected-frame) dead)
+        (ri-tabs--close-buffer dead)
+        (should (= refreshes 2))
+        (should (eq (window-buffer (selected-window)) survivor)))
+      (kill-buffer survivor))))
+
+(ert-deftest ri-tabs-test-frame-selected-window-routes-minibuffer-origin ()
+  (let ((frame (selected-frame))
+        (origin (selected-window))
+        (minibuffer (minibuffer-window)))
+    (cl-letf (((symbol-function 'active-minibuffer-window)
+               (lambda () minibuffer))
+              ((symbol-function 'minibuffer-selected-window)
+               (lambda () origin)))
+      (should (eq (ri-tabs--frame-selected-window frame) origin)))))
+
+(ert-deftest ri-tabs-test-event-decoder-supports-gui-and-tty-positions ()
+  (ri-tabs-test-with-tab-bar-state
+    (let ((buffer (generate-new-buffer "ri-tabs-event"))
+          (frame (selected-frame)))
+      (unwind-protect
+          (progn
+            (set-frame-parameter
+             frame 'ri-tabs--item-buffers
+             `((tab-1 . ,buffer)))
+            (cl-letf (((symbol-function 'tab-bar--event-to-item)
+                       (lambda (_position)
+                         '(tab-1 ignore nil))))
+              (should
+               (equal
+                (ri-tabs--event-target
+                 '(mouse-1 (nil tab-bar (3 . 0) 0)))
+                (list frame 'tab-1 buffer nil)))
+              (should
+               (equal
+                (ri-tabs--event-target
+                 `(mouse-1 (,frame tab-bar (3 . 0) 0)))
+                (list frame 'tab-1 buffer nil)))))
+        (kill-buffer buffer)))))
+
+(ert-deftest ri-tabs-test-close-action-preserves-persistent-mark ()
+  (ri-tabs-test-with-persistence
+    (let* ((file
+            (ri-tabs-test--make-file
+             ri-tabs-test-root "rendered-close.el"))
+           (file-id (ri-tabs-test--file-id file))
+           buffer)
+      (ri-tabs-test--store-files file)
+      (ri-tabs-mode 1)
+      (setq buffer (car (ri-tabs-test--buffers-for-id file-id)))
+      (ri-tabs--close-buffer buffer)
+      (should-not (buffer-live-p buffer))
+      (should
+       (member file-id
+               (plist-get (ri-tabs--read-state) :files))))))
+(ert-deftest ri-tabs-test-input-bindings-route-only-to-ri-commands ()
+  (ri-tabs-test-with-tab-bar-state
+    (let ((before
+           (ri-tabs--capture-bindings
+            tab-bar-map
+            (mapcar #'car ri-tabs--tab-bar-event-bindings))))
+      (ri-tabs--install-event-bindings)
+      (should
+       (eq (lookup-key tab-bar-map [down-mouse-1])
+           #'ri-tabs--mouse-select))
+      (should
+       (eq (lookup-key tab-bar-map [mouse-2])
+           #'ri-tabs--mouse-close))
+      (should
+       (eq (lookup-key tab-bar-map [down-mouse-3])
+           #'ri-tabs--mouse-context-menu))
+      (should
+       (eq (lookup-key tab-bar-map [touchscreen-begin])
+           #'ri-tabs--touchscreen-begin))
+      (dolist (key '([mouse-4] [wheel-up] [wheel-left]))
+        (should
+         (eq (lookup-key tab-bar-map key)
+             #'ri-tabs-switch-to-previous-buffer)))
+      (dolist (key '([mouse-5] [wheel-down] [wheel-right]))
+        (should
+         (eq (lookup-key tab-bar-map key)
+             #'ri-tabs-switch-to-next-buffer)))
+      (dolist (key '([drag-mouse-1]
+                     [S-mouse-4] [S-mouse-5]
+                     [S-wheel-up] [S-wheel-down]
+                     [S-wheel-left] [S-wheel-right]))
+        (should (eq (lookup-key tab-bar-map key) #'ignore)))
+      (ri-tabs--restore-bindings tab-bar-map before)
+      (should
+       (equal
+        (ri-tabs--capture-bindings
+         tab-bar-map
+         (mapcar #'car ri-tabs--tab-bar-event-bindings))
+        before)))))
+
+(ert-deftest ri-tabs-test-context-menu-targets-file-buffer ()
+  (ri-tabs-test-with-persistence
+    (let ((buffer
+           (ri-tabs-test--visit-file
+            (ri-tabs-test--make-file
+             ri-tabs-test-root "context-menu.el"))))
+      (ri-tabs-test--store-files)
+      (ri-tabs-mode 1)
+      (let* ((menu
+              (ri-tabs--context-menu (selected-frame) buffer))
+             (select (assq 'select (cdr menu)))
+             (toggle (assq 'toggle-mark (cdr menu)))
+             (close (assq 'close (cdr menu))))
+        (should (equal (nth 1 (cdr select)) "Select"))
+        (should (equal (nth 1 (cdr toggle)) "Mark"))
+        (funcall (nth 2 (cdr toggle)))
+        (should (ri-tabs-buffer-marked-p buffer))
+        (setq menu
+              (ri-tabs--context-menu (selected-frame) buffer)
+              toggle (assq 'toggle-mark (cdr menu)))
+        (should (equal (nth 1 (cdr toggle)) "Unmark"))
+        (funcall (nth 2 (cdr close)))
+        (should-not (buffer-live-p buffer))))))
+
+
+
+(ert-deftest ri-tabs-test-ineligible-frames-stay-line-free ()
+  (let ((ri-tabs--tab-bar-state nil)
+        (ri-tabs--temporary-frame-states nil)
+        (frame (selected-frame))
+        (original-lines (frame-parameter nil 'tab-bar-lines))
+        (original-keep
+         (frame-parameter nil 'tab-bar-lines-keep-state)))
+    (unwind-protect
+        (progn
+          (set-frame-parameter
+           frame 'tab-bar-lines-keep-state t)
+          (set-frame-parameter frame 'tab-bar-lines 0)
+          (should-not (ri-tabs--frame-eligible-p frame))
+          (ri-tabs--configure-frame frame)
+          (should (= (frame-parameter frame 'tab-bar-lines) 0))
+          (set-frame-parameter
+           frame 'tab-bar-lines-keep-state nil)
+          (cl-letf (((symbol-function
+                      'ri-tabs--structurally-ineligible-frame-p)
+                     (lambda (candidate)
+                       (eq candidate frame))))
+            (ri-tabs--configure-frame frame t))
+          (should (= (frame-parameter frame 'tab-bar-lines) 0))
+          (should
+           (frame-parameter
+            frame 'tab-bar-lines-keep-state)))
+      (set-frame-parameter frame 'tab-bar-lines original-lines)
+      (set-frame-parameter
+       frame 'tab-bar-lines-keep-state original-keep))))
+
+
+(ert-deftest ri-tabs-test-multiple-frames-render-independent-active-files ()
+  (skip-unless
+   (and (display-graphic-p) (display-multi-frame-p)))
+  (ri-tabs-test-with-persistence
+    (let* ((first-file
+            (ri-tabs-test--make-file
+             ri-tabs-test-root "frame-a.el"))
+           (second-file
+            (ri-tabs-test--make-file
+             ri-tabs-test-root "frame-b.el"))
+           (first (ri-tabs-test--visit-file first-file))
+           (second (ri-tabs-test--visit-file second-file))
+           (first-frame (selected-frame))
+           second-frame)
+      (unwind-protect
+          (progn
+            (ri-tabs-test--store-files first-file second-file)
+            (set-window-buffer
+             (frame-selected-window first-frame) first)
+            (ri-tabs-mode 1)
+            (setq second-frame
+                  (make-frame
+                   '((name . "ri-tabs-multiple-frame-test")
+                     (visibility . nil))))
+            (set-window-buffer
+             (frame-selected-window second-frame) second)
+            (let ((first-items
+                   (ri-tabs--format-tabs first-frame))
+                  (second-items
+                   (ri-tabs--format-tabs second-frame)))
+              (should
+               (equal
+                (mapcar
+                 (lambda (item)
+                   (cons
+                    (car item)
+                    (substring-no-properties (nth 2 item))))
+                 first-items)
+                '((current-tab . " [-] frame-a.el ")
+                  (tab-2 . " [-] frame-b.el "))))
+              (should
+               (equal
+                (mapcar
+                 (lambda (item)
+                   (cons
+                    (car item)
+                    (substring-no-properties (nth 2 item))))
+                 second-items)
+                '((tab-1 . " [-] frame-a.el ")
+                  (current-tab . " [-] frame-b.el "))))
+              (should
+               (eq
+                (cdr
+                 (assq
+                  'current-tab
+                  (frame-parameter
+                   first-frame 'ri-tabs--item-buffers)))
+                first))
+              (should
+               (eq
+                (cdr
+                 (assq
+                  'current-tab
+                  (frame-parameter
+                   second-frame 'ri-tabs--item-buffers)))
+                second)))
+            (should (= (frame-parameter first-frame 'tab-bar-lines) 1))
+            (should (= (frame-parameter second-frame 'tab-bar-lines) 1))
+            (dolist (buffer (list first second))
+              (with-current-buffer buffer
+                (should-not tab-line-mode))))
+        (when (frame-live-p second-frame)
+          (delete-frame second-frame t))))))
+
+(ert-deftest ri-tabs-test-new-normal-and-child-frame-policy ()
+  (skip-unless
+   (and (display-graphic-p) (display-multi-frame-p)))
+  (ri-tabs-test-with-persistence
+    (let ((parent (selected-frame))
+          normal
+          child)
+      (unwind-protect
+          (progn
+            (tab-bar-mode -1)
+            (setq default-frame-alist
+                  (assq-delete-all
+                   'tab-bar-lines default-frame-alist))
+            (ri-tabs-test--store-files)
+            (ri-tabs-mode 1)
+            (setq normal
+                  (make-frame
+                   '((name . "ri-tabs-new-normal-test")
+                     (visibility . nil))))
+            (should (= (frame-parameter normal 'tab-bar-lines) 1))
+            (setq child
+                  (make-frame
+                   `((name . "ri-tabs-new-child-test")
+                     (parent-frame . ,parent)
+                     (minibuffer . ,(minibuffer-window parent))
+                     (visibility . nil)
+                     (no-accept-focus . t)
+                     (width . 20)
+                     (height . 2)
+                     (tab-bar-lines . 0))))
+            (should (= (frame-parameter child 'tab-bar-lines) 0))
+            (should
+             (frame-parameter child 'tab-bar-lines-keep-state))
+            (should-not (ri-tabs--format-tabs child))
+            (ri-tabs-mode -1)
+            (should-not tab-bar-mode)
+            (should (= (frame-parameter normal 'tab-bar-lines) 0))
+            (should (= (frame-parameter child 'tab-bar-lines) 0))
+            (should-not
+             (frame-parameter child 'tab-bar-lines-keep-state)))
+        (when (frame-live-p child)
+          (delete-frame child t))
+        (when (frame-live-p normal)
+          (delete-frame normal t))))))
 
 (ert-deftest ri-tabs-test-close-does-not-immediately-reopen-mark ()
   (ri-tabs-test-with-persistence
@@ -976,9 +1561,9 @@
            (ri-tabs-test--make-file ri-tabs-test-root "refresh-b.el"))
           (global-refreshes 0))
       (ri-tabs-test--store-files first second)
-      (cl-letf (((symbol-function 'tab-line-force-update)
-                 (lambda (&optional all-frames)
-                   (when all-frames
+      (cl-letf (((symbol-function 'force-mode-line-update)
+                 (lambda (&optional all)
+                   (when all
                      (cl-incf global-refreshes)))))
         (ri-tabs-mode 1))
       (should (= global-refreshes 1)))))
