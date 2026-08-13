@@ -14,6 +14,8 @@
 ;; The package deliberately separates transport from semantics:
 ;;
 ;; - terminal Emacs uses the standard `xterm-mouse-mode' decoder;
+;; - RI consumes the primary-button press in editable NORM text so point is
+;;   not moved before semantic targeting is ready;
 ;; - a completed primary click is positioned by `mouse-set-point';
 ;; - only after native point movement succeeds does RI retarget the current
 ;;   semantic unit (including direct lowest-node targeting in NODE mode).
@@ -70,6 +72,25 @@ itself."
           (bound-and-true-p xterm-mouse-mode))
     ri-mouse--terminal-support-enabled)))
 
+
+(defun ri-mouse-primary-down (event)
+  "Stage primary-button press EVENT without moving point in RI NORM text.
+
+The completed `mouse-1' event owns point movement and semantic retargeting.
+Consuming the press here prevents Emacs' ordinary `down-mouse-1' command from
+moving point first, which would let `post-command-hook' publish a transient
+keyboard-oriented NODE highlight before the direct mouse target is installed.
+
+Non-text UI positions are not expected to reach this buffer keymap; if they
+do, this command deliberately makes no semantic changes."
+  (interactive "e")
+  (when (and (ri-mouse--ri-norm-buffer-p)
+             (ri-mouse--target-window event)
+             (ri-mouse--text-position event))
+    ;; Intentionally do nothing.  In particular, do not call
+    ;; `mouse-set-point' during the press phase.
+    t))
+
 (defun ri-mouse-set-point (event)
   "Move point for completed primary-click EVENT and retarget RI semantics.
 
@@ -124,14 +145,13 @@ the failing frontend to see the event that reaches command lookup."
 (defun ri-mouse-setup ()
   "Install RI primary-click positioning and terminal mouse support.
 
-Only the completed `mouse-1' event is owned by RI.  Press, drag, wheel, and
-other mouse gestures keep their normal Emacs bindings."
+RI owns the text-buffer primary press only to keep it semantically inert
+until release.  The completed `mouse-1' event performs native point movement
+and semantic retargeting.  Drag, wheel, and other mouse gestures remain
+unbound in RI and therefore keep their normal Emacs dispatch."
   (ri-mouse-enable-terminal-support)
-  (define-key mini-modal-map [mouse-1] #'ri-mouse-set-point)
-  ;; Undo the previous implementation if it was loaded in this Emacs session.
-  ;; A press must not run the full semantic click action.
-  (when (eq (lookup-key mini-modal-map [down-mouse-1]) #'ri-mouse-set-point)
-    (define-key mini-modal-map [down-mouse-1] nil)))
+  (define-key mini-modal-map [down-mouse-1] #'ri-mouse-primary-down)
+  (define-key mini-modal-map [mouse-1] #'ri-mouse-set-point))
 
 (provide 'ri-mouse)
 ;;; ri-mouse.el ends here

@@ -3,24 +3,74 @@
 (require 'cl-lib)
 (require 'ri-mouse)
 
-(ert-deftest ri-mouse-setup-binds-only-completed-primary-click ()
+(ert-deftest ri-mouse-setup-stages-press-and-retargets-on-release ()
   (let ((old-mouse (lookup-key mini-modal-map [mouse-1]))
         (old-down (lookup-key mini-modal-map [down-mouse-1])))
     (unwind-protect
         (progn
-          ;; Simulate an old loaded version to prove setup removes it.
-          (define-key mini-modal-map [down-mouse-1] #'ri-mouse-set-point)
           (cl-letf (((symbol-function 'ri-mouse-enable-terminal-support)
                      (lambda () t)))
             (ri-mouse-setup))
+          (should (eq (lookup-key mini-modal-map [down-mouse-1])
+                      #'ri-mouse-primary-down))
           (should (eq (lookup-key mini-modal-map [mouse-1])
                       #'ri-mouse-set-point))
-          (should-not (eq (lookup-key mini-modal-map [down-mouse-1])
-                          #'ri-mouse-set-point))
           (should-not (lookup-key mini-modal-map [drag-mouse-1]))
           (should-not (lookup-key mini-modal-map [wheel-up])))
       (define-key mini-modal-map [mouse-1] old-mouse)
       (define-key mini-modal-map [down-mouse-1] old-down))))
+
+(ert-deftest ri-mouse-primary-down-does-not-move-or-retarget ()
+  (with-temp-buffer
+    (insert "alpha beta\n")
+    (setq-local mini-modal-mode t)
+    (setq-local sr-mode t)
+    (goto-char 1)
+    (let (called)
+      (cl-letf (((symbol-function 'ri-mouse--target-window) (lambda (_e) t))
+                ((symbol-function 'ri-mouse--text-position) (lambda (_e) 8))
+                ((symbol-function 'mouse-set-point)
+                 (lambda (_event) (setq called 'mouse)))
+                ((symbol-function 'sr-retarget-at-position)
+                 (lambda (_pos) (setq called 'retarget))))
+        (should (ri-mouse-primary-down '(down-mouse-1 dummy)))
+        (should (= (point) 1))
+        (should-not called)))))
+
+(ert-deftest ri-mouse-node-press-release-never-publishes-top-node-bounds ()
+  (with-temp-buffer
+    (insert "player_run_texture := rl.LoadTexture(\"monk.png\")\n")
+    (setq-local mini-modal-mode t)
+    (setq-local sr-mode t)
+    (setq-local sr-submode 'node)
+    (goto-char 1)
+    (let ((leaf '(1 . 19))
+          (top '(1 . 48))
+          rendered)
+      (cl-letf (((symbol-function 'ri-mouse--target-window) (lambda (_e) t))
+                ((symbol-function 'ri-mouse--text-position) (lambda (_e) 5))
+                ((symbol-function 'mouse-set-point)
+                 (lambda (_event) (goto-char 5)))
+                ((symbol-function 'ri--exit-extend) #'ignore)
+                ((symbol-function 'sr--node-lowest-at) (lambda (_pos) 'leaf-node))
+                ((symbol-function 'sr--node-bounds)
+                 (lambda (node)
+                   (pcase node
+                     ('leaf-node leaf)
+                     ('top-node top))))
+                ((symbol-function 'sr--node-top-at) (lambda (_pos) 'top-node))
+                ((symbol-function 'sr--render-highlight-bounds)
+                 (lambda (bounds) (push bounds rendered))))
+        ;; Press must leave point at the old location, so even a normal
+        ;; post-command repaint cannot resolve the clicked position via
+        ;; `sr--node-top-at'.
+        (ri-mouse-primary-down '(down-mouse-1 dummy))
+        (should (= (point) 1))
+        ;; Release moves point and installs the direct lowest-node target
+        ;; before rendering.
+        (ri-mouse-set-point '(mouse-1 dummy))
+        (should (equal (car rendered) leaf))
+        (should-not (member top rendered))))))
 
 (ert-deftest ri-mouse-setup-enables-standard-tty-mouse-support ()
   (let (enabled)
