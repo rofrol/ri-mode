@@ -92,6 +92,16 @@ Surround submenu, `;` prompts for an HTML/XML tag. For example, `, s ,` wraps
 the current unit/selection in square brackets, and `, f m .` changes `()` to
 `{}`. Select Inside/Around enters Extend with exact enclosure bounds.
 
+The Space layer includes Ki's global LSP key positions: `SPC Z` shows
+outgoing calls, `SPC z` incoming calls, `SPC x` definitions, `SPC X`
+declarations, `SPC c` type definitions, `SPC V` references including the
+declaration, `SPC v` references excluding the declaration, and `SPC b`
+implementations. These commands require an active Eglot server and the
+corresponding server capability. Results use Emacs's native Xref or Eglot
+hierarchy UI and do not require tree-sitter. When invoked during Extend, a
+supported navigation exits Extend before moving; an unavailable server or
+capability leaves the exact selection unchanged.
+
 The `c`, `r`, `e`, `g`, `t`, `v`, `x`, and `z` keys also act as
 momentary layers. Hold one of them to display its available actions,
 press the shown key while still holding it, then release. These layers
