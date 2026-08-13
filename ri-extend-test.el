@@ -582,3 +582,28 @@
 
 (provide 'ri-extend-test)
 ;;; ri-extend-test.el ends here
+
+(ert-deftest ri-extend-test-node-down-enters-elisp-string-content ()
+  (ri-extend-test--with-buffer "\"melpa\""
+    (unless (and (treesit-available-p)
+                 (treesit-language-available-p 'elisp))
+      (ert-skip "Elisp tree-sitter grammar unavailable"))
+    (emacs-lisp-mode)
+    (treesit-parser-create 'elisp)
+    (setq sr-submode 'node
+          sr--node-current nil)
+    (sr--node-clear-virtual)
+    (goto-char (point-min))
+    (sr--update-highlight)
+    (ri-extend-nav-down)
+    (should (equal (sr--get-current-unit-bounds) (cons 2 7)))
+    (should (equal (buffer-substring-no-properties
+                    (car (sr--get-current-unit-bounds))
+                    (cdr (sr--get-current-unit-bounds)))
+                   "melpa"))
+    (dolist (pos '(2 3 4 5 6))
+      (should (ri-extend-test--highlighted-p pos)))
+    (should-not (ri-extend-test--highlighted-p 1))
+    (should-not (ri-extend-test--highlighted-p 7))
+    (ri-extend-nav-up)
+    (should (equal (sr--get-current-unit-bounds) (cons 1 8)))))

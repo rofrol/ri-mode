@@ -120,6 +120,26 @@ Supported values are `line', `line-star', `paragraph', `char', `word',
 (defvar-local sr--node-current nil
   "Current tree-sitter node while `sr-submode' is `node'.")
 
+(defvar-local sr--node-virtual-bounds nil
+  "Bounds of a synthetic NODE child, or nil.
+This is used only when the grammar exposes meaningful editable contents as
+one atomic token, as tree-sitter-elisp does for strings.")
+
+(defvar-local sr--node-virtual-parent nil
+  "Real tree-sitter parent node for `sr--node-virtual-bounds'.")
+
+(defun sr--node-clear-virtual ()
+  "Forget any synthetic NODE child selection."
+  (setq sr--node-virtual-bounds nil
+        sr--node-virtual-parent nil))
+
+(defun sr--node-bounds-at-edge-p (bounds pos)
+  "Return non-nil when POS is on either selectable edge of BOUNDS."
+  (and bounds
+       (< (car bounds) (cdr bounds))
+       (or (= pos (car bounds))
+           (= pos (1- (cdr bounds))))))
+
 (defun sr--node-existing-language-at (pos)
   "Return the tree-sitter language already parsing POS."
   (when (treesit-available-p)
@@ -227,9 +247,13 @@ FEATURE names the tree-sitter-backed feature and defaults to NODE."
     (setq sr--node-current (sr--node-top-at pos))))
 
 (defun semantic-region--node-bounds-at (pos)
-  "Return bounds of the Ki-style tree-sitter node at POS."
-  (when-let* ((node (sr--node-current-at pos)))
-    (sr--node-bounds node)))
+  "Return bounds of the Ki-style tree-sitter node at POS.
+A virtual NODE is retained while POS remains on one of its selectable edges."
+  (if (sr--node-bounds-at-edge-p sr--node-virtual-bounds pos)
+      sr--node-virtual-bounds
+    (sr--node-clear-virtual)
+    (when-let* ((node (sr--node-current-at pos)))
+      (sr--node-bounds node))))
 
 (defun semantic-region--node-for-region (region)
   "Return the tree-sitter node represented by node REGION."
@@ -316,6 +340,21 @@ retaining named nodes and word-like anonymous grammar tokens."
       (setq target (funcall step target)))
     target))
 
+(defun sr--node-atomic-string-content-bounds (node)
+  "Return editable content bounds for atomic string NODE, or nil.
+The fallback is deliberately restricted to a tree-sitter node whose type is
+`string'.  tree-sitter-elisp defines strings as one token, so there is no
+real child node corresponding to the text between the quote delimiters."
+  (when (and (sr--node-live-p node)
+             (string= (treesit-node-type node) "string"))
+    (when-let* ((bounds (sr--node-bounds node)))
+      (let ((beg (car bounds))
+            (end (cdr bounds)))
+        (when (and (> (- end beg) 2)
+                   (eq (char-after beg) ?\")
+                   (eq (char-before end) ?\"))
+          (cons (1+ beg) (1- end)))))))
+
 (defun sr--node-target (node movement)
   "Return the tree-sitter node reached from NODE by MOVEMENT."
   (pcase movement
@@ -336,14 +375,44 @@ retaining named nodes and word-like anonymous grammar tokens."
        (treesit-node-child parent -1 t)))))
 
 (defun sr--goto-node-target (movement)
-  "Move to the tree-sitter node reached by MOVEMENT."
+  "Move to the tree-sitter node reached by MOVEMENT.
+For an atomic string token, Down may enter a synthetic child representing
+only the editable text between its quote delimiters; Up returns to the real
+string node."
   (condition-case nil
-      (when-let* ((node (sr--node-current-at (point)))
-                  (target (sr--node-target node movement))
-                  (bounds (sr--node-bounds target)))
-        (setq sr--node-current target)
-        (goto-char (car bounds))
-        t)
+      (cond
+       ((and (eq movement 'up)
+             sr--node-virtual-bounds
+             (sr--node-live-p sr--node-virtual-parent))
+        (let ((parent sr--node-virtual-parent))
+          (sr--node-clear-virtual)
+          (setq sr--node-current parent)
+          (goto-char (car (sr--node-bounds parent)))
+          t))
+       (sr--node-virtual-bounds
+        nil)
+       (t
+        (when-let* ((node (sr--node-current-at (point))))
+          (if (eq movement 'down)
+              (if-let* ((bounds (sr--node-atomic-string-content-bounds node)))
+                  (progn
+                    (setq sr--node-virtual-bounds bounds
+                          sr--node-virtual-parent node
+                          sr--node-current node)
+                    (goto-char (car bounds))
+                    t)
+                (when-let* ((target (sr--node-target node movement))
+                            (bounds (sr--node-bounds target)))
+                  (sr--node-clear-virtual)
+                  (setq sr--node-current target)
+                  (goto-char (car bounds))
+                  t))
+            (when-let* ((target (sr--node-target node movement))
+                        (bounds (sr--node-bounds target)))
+              (sr--node-clear-virtual)
+              (setq sr--node-current target)
+              (goto-char (car bounds))
+              t)))))
     (error nil)))
 
 (defun sr--parent-line-position ()
@@ -1328,7 +1397,8 @@ adjacent empty line is a target; otherwise empty lines are skipped."
 (defun sr--set-submode (submode human-name)
   "Set `sr-submode' to SUBMODE and show HUMAN-NAME in the echo area."
   (unless (eq sr-submode submode)
-    (setq sr--node-current nil))
+    (setq sr--node-current nil)
+    (sr--node-clear-virtual))
   (setq sr-submode submode)
   (sr--update-highlight)
   (message "semantic-regions: %s" human-name))
