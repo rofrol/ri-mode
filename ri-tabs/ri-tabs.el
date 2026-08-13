@@ -22,6 +22,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'face-remap)
 (require 'multisession)
 (require 'seq)
 (require 'subr-x)
@@ -60,8 +61,22 @@
   :group 'ri-tabs)
 
 (defface ri-tabs-tab
-  '((t :inherit mode-line-inactive :box nil))
+  '((t :inherit mode-line-inactive
+       :background "#c4c4c4"
+       :box nil))
   "Face used for an inactive file tab."
+  :group 'ri-tabs)
+
+(defface ri-tabs-visible-tab
+  '((t :inherit mode-line-inactive
+       :background "#d8d8d8"
+       :box nil))
+  "Face used for an inactive tab visible in another window of the frame."
+  :group 'ri-tabs)
+
+(defface ri-tabs-bar
+  '((t :background "#f4f4f4"))
+  "Face used for the Ri-owned tab surface background."
   :group 'ri-tabs)
 
 (defface ri-tabs-current-tab
@@ -506,9 +521,13 @@ remain unambiguous."
           (ri-tabs--shortest-distinguishing-suffix
            buffer same-base 2)))))))
 
-(defun ri-tabs--tab-face (selected)
-  "Return the appropriate tab face for SELECTED state."
-  (if selected 'ri-tabs-current-tab 'ri-tabs-tab))
+(defun ri-tabs--tab-face (state)
+  "Return the tab face for semantic STATE."
+  (pcase state
+    ('active 'ri-tabs-current-tab)
+    ('visible 'ri-tabs-visible-tab)
+    ('inactive 'ri-tabs-tab)
+    (_ (error "Unknown Ri tab state: %S" state))))
 
 (defun ri-tabs--marker (buffer owner state)
   "Return BUFFER's marker in OWNER's marked set from STATE."
@@ -580,26 +599,41 @@ window most recently used for editing on that frame."
         (set-frame-parameter frame 'ri-tabs-last-editing-window window))
       window)))
 
-(defun ri-tabs--tab-label (buffer tab-name selected-buffer &optional owner state)
-  "Return BUFFER's final propertized tab label using TAB-NAME.
-SELECTED-BUFFER determines the active face without consulting an ambient
-selected window.  TAB-NAME is precomputed by the structural renderer so name
-resolution is performed only once per tab."
-  (let* ((selected (eq buffer selected-buffer))
-         (file (abbreviate-file-name (buffer-file-name buffer)))
-         (help (if selected
+(defun ri-tabs--ordinary-window-buffers (frame)
+  "Return buffers displayed in live ordinary editing windows of FRAME."
+  (let (buffers)
+    (dolist (window (window-list frame 'nomini))
+      (when (and (window-live-p window)
+                 (not (window-minibuffer-p window))
+                 (not (ri-tabs--surface-window-p window)))
+        (cl-pushnew (window-buffer window) buffers :test #'eq)))
+    buffers))
+
+(defun ri-tabs--buffer-state (buffer selected-buffer visible-buffers)
+  "Classify BUFFER relative to SELECTED-BUFFER and VISIBLE-BUFFERS."
+  (cond
+   ((eq buffer selected-buffer) 'active)
+   ((memq buffer visible-buffers) 'visible)
+   (t 'inactive)))
+
+(defun ri-tabs--tab-label (buffer tab-name tab-state &optional owner state)
+  "Return BUFFER's final propertized tab label using TAB-NAME and TAB-STATE.
+TAB-NAME is precomputed by the structural renderer so name resolution is
+performed only once per tab."
+  (let* ((file (abbreviate-file-name (buffer-file-name buffer)))
+         (help (if (eq tab-state 'active)
                    (format "Current file: %s" file)
                  (format "Switch to %s" file))))
     (propertize
      (format " %s %s "
              (ri-tabs--marker buffer owner state)
              tab-name)
-     'face (ri-tabs--tab-face selected)
+     'face (ri-tabs--tab-face tab-state)
      'help-echo help)))
 
 (cl-defstruct (ri-tabs--item (:constructor ri-tabs--make-item))
   "Renderer-independent description of one visible Ri tab."
-  buffer label display active marked modified)
+  buffer label display state marked modified)
 
 (defun ri-tabs--visible-items (&optional frame)
   "Return ordered renderer-independent visible tab items for FRAME."
@@ -607,6 +641,7 @@ resolution is performed only once per tab."
   (when (ri-tabs--frame-eligible-p frame)
     (let* ((window (ri-tabs--frame-selected-window frame))
            (selected-buffer (and window (window-buffer window)))
+           (visible-buffers (ri-tabs--ordinary-window-buffers frame))
            (owner (ri-tabs--frame-owner frame))
            (state (ri-tabs--read-state-safely))
            (buffers (ri-tabs--buffer-list selected-buffer owner state)))
@@ -616,15 +651,16 @@ resolution is performed only once per tab."
                 (marked (if (and owner (not (eq state ri-tabs--read-error)))
                             (ri-tabs--state-marked-p state owner file-id)
                           (buffer-local-value 'ri-tabs--marked-p buffer)))
-                (active (eq buffer selected-buffer))
+                (tab-state (ri-tabs--buffer-state
+                            buffer selected-buffer visible-buffers))
                 (label (ri-tabs--tab-name buffer buffers owner))
                 (display (ri-tabs--tab-label
-                          buffer label selected-buffer owner state)))
+                          buffer label tab-state owner state)))
            (ri-tabs--make-item
             :buffer buffer
             :label label
             :display display
-            :active active
+            :state tab-state
             :marked marked
             :modified (buffer-modified-p buffer))))
        buffers))))
@@ -677,7 +713,9 @@ resolution is performed only once per tab."
                       header-line-format nil
                       tab-line-format nil
                       truncate-lines t
-                      word-wrap nil)
+                      word-wrap nil
+                      buffer-face-mode-face 'ri-tabs-bar)
+          (buffer-face-mode 1)
           (buffer-disable-undo)
           (use-local-map ri-tabs--surface-mode-map))
         (puthash frame buffer ri-tabs--surface-buffers)
@@ -834,8 +872,8 @@ item is split.  An item wider than AVAILABLE-WIDTH occupies a row by itself."
   (seq-find (lambda (item) (eq (ri-tabs--item-buffer item) buffer))
             (ri-tabs--row-items (or (window-parameter window 'ri-tabs-rows) nil))))
 
-(defun ri-tabs--set-tab-face-in-surface (window buffer selected)
-  "Set BUFFER's tab face in WINDOW to SELECTED state in place."
+(defun ri-tabs--set-tab-face-in-surface (window buffer state)
+  "Set BUFFER's tab face in WINDOW to semantic STATE in place."
   (when (and (window-live-p window) (buffer-live-p buffer))
     (with-current-buffer (window-buffer window)
       (let ((inhibit-read-only t)
@@ -844,43 +882,68 @@ item is split.  An item wider than AVAILABLE-WIDTH occupies a row by itself."
           (let ((next (next-single-property-change
                        pos 'ri-tabs-buffer nil (point-max))))
             (when (eq (get-text-property pos 'ri-tabs-buffer) buffer)
-              (put-text-property pos next 'face (ri-tabs--tab-face selected)))
+              (put-text-property pos next 'face (ri-tabs--tab-face state)))
             (setq pos next)))))))
 
+(defun ri-tabs--reconcile-frame-tab-states (frame)
+  "Reconcile cached semantic tab states for FRAME without relayout."
+  (let* ((window (gethash frame ri-tabs--surface-windows))
+         (editing-window (ri-tabs--frame-selected-window frame))
+         (selected-buffer (and editing-window (window-buffer editing-window)))
+         (old-selected (and (window-live-p window)
+                            (window-parameter window 'ri-tabs-selected-buffer)))
+         (old-selected-item
+          (and (window-live-p window) old-selected
+               (ri-tabs--surface-item-for-buffer window old-selected)))
+         (selected-item
+          (and (window-live-p window) selected-buffer
+               (ri-tabs--surface-item-for-buffer window selected-buffer))))
+    (cond
+     ((or (not (window-live-p window))
+          (not selected-item)
+          (and old-selected-item
+               (not (ri-tabs--item-marked old-selected-item))
+               (not (eq old-selected selected-buffer))))
+      nil)
+     (t
+      (let ((visible-buffers (ri-tabs--ordinary-window-buffers frame))
+            (ri-tabs--layout-in-progress-p t))
+        (dolist (item (ri-tabs--row-items
+                       (or (window-parameter window 'ri-tabs-rows) nil)))
+          (let* ((buffer (ri-tabs--item-buffer item))
+                 (desired (ri-tabs--buffer-state
+                           buffer selected-buffer visible-buffers)))
+            (unless (eq desired (ri-tabs--item-state item))
+              (setf (ri-tabs--item-state item) desired)
+              (ri-tabs--set-tab-face-in-surface window buffer desired))))
+        (set-window-parameter window 'ri-tabs-selected-buffer selected-buffer)
+        t)))))
+
 (defun ri-tabs--selection-update-frame (frame)
-  "Update only active-tab styling for FRAME when layout is unchanged.
-Fall back to a structural refresh when entering or leaving an unmarked
-temporary tab changes the visible tab set."
+  "Update FRAME tab states in place, falling back to structural refresh."
   (when (and ri-tabs-mode
              (frame-live-p frame)
              (ri-tabs--frame-eligible-p frame)
              (not ri-tabs--layout-in-progress-p))
-    (let* ((window (gethash frame ri-tabs--surface-windows))
-           (editing-window (ri-tabs--frame-selected-window frame))
-           (new (and editing-window (window-buffer editing-window)))
-           (old (and (window-live-p window)
-                     (window-parameter window 'ri-tabs-selected-buffer)))
-           (old-item (and (window-live-p window) old
-                          (ri-tabs--surface-item-for-buffer window old)))
-           (new-item (and (window-live-p window) new
-                          (ri-tabs--surface-item-for-buffer window new))))
-      (cond
-       ((or (not (window-live-p window))
-            (not new-item)
-            (and old-item (not (ri-tabs--item-marked old-item))
-                 (not (eq old new))))
-        (ri-tabs--surface-update frame))
-       ((not (eq old new))
-        (let ((ri-tabs--layout-in-progress-p t))
-          (when old-item
-            (setf (ri-tabs--item-active old-item) nil)
-            (ri-tabs--set-tab-face-in-surface window old nil))
-          (setf (ri-tabs--item-active new-item) t)
-          (ri-tabs--set-tab-face-in-surface window new t)
-          (set-window-parameter window 'ri-tabs-selected-buffer new)))))))
+    (unless (ri-tabs--reconcile-frame-tab-states frame)
+      (ri-tabs--surface-update frame))))
 
-(defun ri-tabs--selection-changed (&rest _ignored)
+(defun ri-tabs--change-frame (args)
+  "Return the frame affected by hook ARGS, defaulting to selected frame."
+  (or (seq-some (lambda (arg)
+                  (cond
+                   ((framep arg) arg)
+                   ((windowp arg) (window-frame arg))))
+                args)
+      (selected-frame)))
+
+(defun ri-tabs--selection-changed (&rest args)
   "Handle selected-window/buffer changes without rebuilding every frame."
+  (when ri-tabs-mode
+    (ri-tabs--selection-update-frame (ri-tabs--change-frame args))))
+
+(defun ri-tabs--window-configuration-changed ()
+  "Reconcile tab states after an editing-window layout change."
   (when ri-tabs-mode
     (ri-tabs--selection-update-frame (selected-frame))))
 
@@ -1374,6 +1437,8 @@ file buffer."
   (add-hook 'window-selection-change-functions #'ri-tabs--selection-changed)
   (add-hook 'window-buffer-change-functions #'ri-tabs--selection-changed)
   (add-hook 'window-size-change-functions #'ri-tabs--window-size-changed)
+  (add-hook 'window-configuration-change-hook
+            #'ri-tabs--window-configuration-changed)
   (add-hook 'after-make-frame-functions #'ri-tabs--configure-new-frame)
   (add-hook 'delete-frame-functions #'ri-tabs--frame-deleted))
 
@@ -1389,6 +1454,8 @@ file buffer."
   (remove-hook 'window-selection-change-functions #'ri-tabs--selection-changed)
   (remove-hook 'window-buffer-change-functions #'ri-tabs--selection-changed)
   (remove-hook 'window-size-change-functions #'ri-tabs--window-size-changed)
+  (remove-hook 'window-configuration-change-hook
+               #'ri-tabs--window-configuration-changed)
   (remove-hook 'after-make-frame-functions #'ri-tabs--configure-new-frame)
   (remove-hook 'delete-frame-functions #'ri-tabs--frame-deleted))
 
