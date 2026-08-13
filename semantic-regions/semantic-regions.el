@@ -120,6 +120,11 @@ Supported values are `line', `line-star', `paragraph', `char', `word',
 (defvar-local sr--node-current nil
   "Current tree-sitter node while `sr-submode' is `node'.")
 
+(defvar-local sr--node-direct-target-p nil
+  "Non-nil while NODE is retaining a direct spatial target.
+This is set by mouse-style retargeting so point may remain inside the selected
+node without changing the keyboard NODE entry semantics globally.")
+
 (defvar-local sr--node-virtual-bounds nil
   "Bounds of a synthetic NODE child, or nil.
 This is used only when the grammar exposes meaningful editable contents as
@@ -220,6 +225,51 @@ FEATURE names the tree-sitter-backed feature and defaults to NODE."
     (or (= pos (car bounds))
         (= pos (1- (cdr bounds))))))
 
+(defun sr--node-lowest-at (pos)
+  "Return the lowest real tree-sitter node covering POS.
+This resolver is for direct spatial targeting, such as mouse clicks.  It
+deliberately does not apply the Ki-style top-node promotion used by keyboard
+NODE entry.  At end of buffer, probe the preceding character when possible."
+  (condition-case nil
+      (let* ((min (point-min))
+             (max (point-max))
+             (pos (max min (min pos max)))
+             (probe
+              (cond
+               ((< pos max) pos)
+               ((> pos min) (1- pos))
+               (t nil))))
+        (when probe
+          (when-let* ((language (sr--ensure-node-parser probe))
+                      (leaf (treesit-node-at probe language))
+                      (parser (treesit-node-parser leaf))
+                      (root (treesit-parser-root-node parser))
+                      (end (min max (1+ probe)))
+                      (node (treesit-node-descendant-for-range root probe end)))
+            ;; `treesit-node-descendant-for-range' already returns the
+            ;; smallest covering node.  Descend once more through any
+            ;; equal-range wrapper children so direct clicks retain the
+            ;; deepest grammar node when several nodes share bounds.
+            (let ((keep-going t))
+              (while keep-going
+                (setq keep-going nil)
+                (let ((bounds (sr--node-bounds node))
+                      equal-child)
+                  (when bounds
+                    (dotimes (i (treesit-node-child-count node))
+                      (let ((child (treesit-node-child node i)))
+                        (when (and (not equal-child)
+                                   (sr--node-live-p child)
+                                   (equal (sr--node-bounds child) bounds))
+                          (setq equal-child child))))
+                    (when equal-child
+                      (setq node equal-child
+                            keep-going t))))))
+            (when (and (sr--node-live-p node)
+                       (treesit-node-parent node))
+              node))))
+    (error nil)))
+
 (defun sr--node-top-at (pos)
   "Return Ki-style top tree-sitter node at or after POS."
   (condition-case nil
@@ -240,11 +290,21 @@ FEATURE names the tree-sitter-backed feature and defaults to NODE."
     (error nil)))
 
 (defun sr--node-current-at (pos)
-  "Return the selected syntax node at POS, refreshing stale state."
-  (if (and (sr--node-live-p sr--node-current)
-           (sr--node-at-edge-p sr--node-current pos))
-      sr--node-current
-    (setq sr--node-current (sr--node-top-at pos))))
+  "Return the selected syntax node at POS, refreshing stale state.
+Keyboard-selected nodes keep the existing edge-based cache rule.  A direct
+spatial target may additionally retain its node while POS is inside its range
+(or exactly at its end when that is end of buffer)."
+  (let ((bounds (sr--node-bounds sr--node-current)))
+    (if (and bounds
+             (or (sr--node-bounds-at-edge-p bounds pos)
+                 (and sr--node-direct-target-p
+                      (<= (car bounds) pos)
+                      (or (< pos (cdr bounds))
+                          (and (= pos (cdr bounds))
+                               (= pos (point-max)))))))
+        sr--node-current
+      (setq sr--node-direct-target-p nil
+            sr--node-current (sr--node-top-at pos)))))
 
 (defun semantic-region--node-bounds-at (pos)
   "Return bounds of the Ki-style tree-sitter node at POS.
@@ -393,6 +453,9 @@ string node."
         nil)
        (t
         (when-let* ((node (sr--node-current-at (point))))
+          ;; The direct target has now served as the navigation origin.  From
+          ;; here on, resume the existing keyboard edge-cache semantics.
+          (setq sr--node-direct-target-p nil)
           (if (eq movement 'down)
               (if-let* ((bounds (sr--node-atomic-string-content-bounds node)))
                   (progn
@@ -844,6 +907,28 @@ Return REGION unchanged when it has no previous unit."
 (defun sr--get-current-unit-bounds ()
   "Return (START . END) of the current unit based on `sr-submode' and point."
   (sr--unit-bounds-at (point) sr-submode))
+
+(defun sr-retarget-at-position (pos)
+  "Retarget the current semantic unit to buffer position POS.
+This is direct positioning rather than keyboard navigation.  NODE therefore
+selects the lowest real tree-sitter node at POS instead of applying the
+Ki-style top-node entry rule.  Return the resulting unit bounds, or nil."
+  (setq pos (max (point-min) (min pos (point-max))))
+  (goto-char pos)
+  (sr--node-clear-virtual)
+  (let ((bounds
+         (if (eq sr-submode 'node)
+             (let ((node (sr--node-lowest-at pos)))
+               (setq sr--node-current node
+                     sr--node-direct-target-p (and node t))
+               (sr--node-bounds node))
+           (setq sr--node-current nil
+                 sr--node-direct-target-p nil)
+           (sr--get-current-unit-bounds))))
+    ;; Keep point where the user clicked.  For NODE, `sr--node-current-at'
+    ;; honors the direct target while point remains anywhere inside it.
+    (sr--update-highlight)
+    bounds))
 
 (defun sr--meaningful-unit-bounds-at (pos &optional submode)
   "Return bounds of the traversable unit at or after POS.
@@ -1397,7 +1482,8 @@ adjacent empty line is a target; otherwise empty lines are skipped."
 (defun sr--set-submode (submode human-name)
   "Set `sr-submode' to SUBMODE and show HUMAN-NAME in the echo area."
   (unless (eq sr-submode submode)
-    (setq sr--node-current nil)
+    (setq sr--node-current nil
+          sr--node-direct-target-p nil)
     (sr--node-clear-virtual))
   (setq sr-submode submode)
   (sr--update-highlight)

@@ -40,7 +40,8 @@
                    "modal-cursor"
                    "ri-tabs"
                    "ri-surround"
-                   "ri-pairs"))
+                   "ri-pairs"
+                   "ri-mouse"))
       (let ((path (expand-file-name dir ri-root)))
         (when (file-directory-p path)
           (add-to-list 'load-path path))))))
@@ -58,6 +59,7 @@
 (require 'ri-transform)
 (require 'ri-surround)
 (require 'ri-pairs)
+(require 'ri-mouse)
 (require 'cl-lib)
 (require 'face-remap)
 
@@ -963,6 +965,7 @@ keymap lookups during that command must keep their resolved binding."
         map)
     binding))
 
+
 ;;;; Semantic regions auto-enable
 
 (defun ri--maybe-enable-semantic-regions ()
@@ -1004,6 +1007,10 @@ keymap lookups during that command must keep their resolved binding."
   (push '(t (:eval (ri--mode-line-text))) minor-mode-alist)
   (define-key mini-modal-map "/" #'ri-swap-cursor)
   (define-key mini-modal-map "?" #'ri--show-help)
+  ;; `mini-modal-map' suppresses ordinary self-insert in NORM.  Give the
+  ;; primary click an explicit RI path without taking over drags, wheels,
+  ;; mode-line clicks, or other mouse gestures.
+  (ri-mouse-setup)
   ;; Semantic regions setup.  Unit highlighting belongs to NORM only; in
   ;; INST the insertion bar is the sole cursor indication.
   (setq sr-highlight-predicate
