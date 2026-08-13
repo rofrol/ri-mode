@@ -8,20 +8,21 @@
 
 ;;; Commentary:
 
-;; `ri-tabs-mode' displays every persistently marked file in a tab line above
-;; file windows and appends the current buffer while it is unmarked.  On mode
-;; activation, available marked files without live buffers are reopened in the
-;; background.  Marked tabs stay in path order, use the shortest unique path
-;; suffix as their label, and show Ki's marked/modified state indicators.
-;; Selecting a tab switches the current window to its buffer; closing a tab
-;; kills it without removing its persistent mark.
+;; `ri-tabs-mode' displays every persistently marked file in one native Tab
+;; Bar spanning each ordinary frame and appends that frame's selected buffer
+;; while it is unmarked.  On mode activation, available marked files without
+;; live buffers are reopened in the background.  Marked tabs stay in path
+;; order, use the shortest unique path suffix as their label, and show Ki's
+;; marked/modified state indicators.  Selecting a tab switches the selected
+;; window of its frame to the file buffer; closing a tab kills it without
+;; removing its persistent mark.
 
 ;;; Code:
 
 (require 'multisession)
 (require 'seq)
 (require 'subr-x)
-(require 'tab-line)
+(require 'tab-bar)
 
 (defgroup ri-tabs nil
   "Ki-style tabs for open file buffers."
@@ -57,12 +58,12 @@
   :group 'ri-tabs)
 
 (defface ri-tabs-tab
-  '((t :inherit tab-line-tab-inactive :box nil))
+  '((t :inherit tab-bar-tab-inactive :box nil))
   "Face used for an inactive file tab."
   :group 'ri-tabs)
 
 (defface ri-tabs-current-tab
-  '((t :inherit tab-line-tab-current
+  '((t :inherit tab-bar-tab
        :foreground "black"
        :background "#ffffff"
        :weight bold
@@ -71,23 +72,43 @@
   :group 'ri-tabs)
 
 (defface ri-tabs-highlight
-  '((t :inherit tab-line-highlight :box nil))
+  '((t :inherit tab-bar-tab-highlight :box nil))
   "Face used when the pointer is over a file tab."
   :group 'ri-tabs)
 
-(defconst ri-tabs--managed-variables
-  '(tab-line-format
-    tab-line-tabs-function
-    tab-line-tab-name-function
-    tab-line-tab-name-format-function
-    tab-line-cache-key-function
-    tab-line-new-button-show
-    tab-line-close-button-show
-    tab-line-close-tab-function
-    tab-line-tab-face-functions
-    tab-line-separator
-    tab-line-auto-hscroll)
-  "Buffer-local tab-line variables managed by `ri-tabs-mode'.")
+(defconst ri-tabs--tab-bar-event-bindings
+  '(([down-mouse-1] . ri-tabs--mouse-select)
+    ([drag-mouse-1] . ignore)
+    ([mouse-1] . ignore)
+    ([mouse-2] . ri-tabs--mouse-close)
+    ([down-mouse-3] . ri-tabs--mouse-context-menu)
+    ([mouse-4] . ri-tabs-switch-to-previous-buffer)
+    ([mouse-5] . ri-tabs-switch-to-next-buffer)
+    ([wheel-up] . ri-tabs-switch-to-previous-buffer)
+    ([wheel-down] . ri-tabs-switch-to-next-buffer)
+    ([wheel-left] . ri-tabs-switch-to-previous-buffer)
+    ([wheel-right] . ri-tabs-switch-to-next-buffer)
+    ([S-mouse-4] . ignore)
+    ([S-mouse-5] . ignore)
+    ([S-wheel-up] . ignore)
+    ([S-wheel-down] . ignore)
+    ([S-wheel-left] . ignore)
+    ([S-wheel-right] . ignore)
+    ([touchscreen-begin] . ri-tabs--touchscreen-begin))
+  "Tab Bar event bindings owned while `ri-tabs-mode' is active.")
+
+(defconst ri-tabs--workspace-shortcut-commands
+  '(tab-recent tab-bar-select-tab tab-last tab-next tab-previous)
+  "Native workspace commands hidden while Ri file tabs are visible.")
+
+(defconst ri-tabs--absent (make-symbol "ri-tabs-absent")
+  "Sentinel representing an absent saved alist entry.")
+
+(defvar ri-tabs--tab-bar-state nil
+  "Pre-existing native Tab Bar state saved by `ri-tabs-mode'.")
+
+(defvar ri-tabs--temporary-frame-states nil
+  "Tab Bar state of frames created while Ri is active.")
 
 (defvar ri-tabs-mode nil
   "Non-nil when Ki tabs are enabled globally.")
@@ -111,11 +132,6 @@ This variable is dynamically bound to the validated activation snapshot.")
 (defvar ri-tabs--refresh-pending-p nil
   "Non-nil when a refresh was requested during the current batch.")
 
-(defvar-local ri-tabs--saved-state nil
-  "Tab-line state saved before `ri-tabs-mode' configured this buffer.")
-
-(defvar-local ri-tabs--tab-line-was-active nil
-  "Whether `tab-line-mode' was active before Ki tabs were installed.")
 
 (defvar-local ri-tabs--marked-p nil
   "Render cache for whether the current file is marked as a Ki tab.")
@@ -306,14 +322,15 @@ does not read or write persistent membership."
         (push buffer unmarked)))
     (nconc (nreverse marked) (nreverse unmarked))))
 
-(defun ri-tabs--buffer-list ()
-  "Return marked file buffers followed by the current unmarked file."
-  (let ((current (window-buffer))
-        (marked (ri-tabs--marked-buffer-list)))
-    (if (or (not (ri-tabs--file-buffer-p current))
-            (memq current marked))
+(defun ri-tabs--buffer-list (selected-buffer)
+  "Return marked buffers followed by SELECTED-BUFFER when unmarked.
+SELECTED-BUFFER is included only when it is a live visible file
+buffer."
+  (let ((marked (ri-tabs--marked-buffer-list)))
+    (if (or (not (ri-tabs--file-buffer-p selected-buffer))
+            (memq selected-buffer marked))
         marked
-      (append marked (list current)))))
+      (append marked (list selected-buffer)))))
 
 (defun ri-tabs--path-parts (file)
   "Return the non-empty path components of FILE."
@@ -373,99 +390,443 @@ does not read or write persistent membership."
           ri-tabs-marked-marker
         ri-tabs-unmarked-marker))))
 
-(defun ri-tabs--format-tab (buffer buffers)
-  "Format BUFFER as a Ki-style tab among BUFFERS."
-  (let* ((selected (eq buffer (window-buffer)))
-         (marker (ri-tabs--marker buffer))
-         (name (funcall tab-line-tab-name-function buffer buffers))
-         (label (string-replace "%" "%%"
-                                (format " %s %s " marker name)))
-         (file (abbreviate-file-name (buffer-file-name buffer))))
-    (apply #'propertize label
-           `(face ,(ri-tabs--tab-face selected)
-             tab ,buffer
-             ,@(when selected '(selected t))
-             keymap ,tab-line-tab-map
-             mouse-face ri-tabs-highlight
-             help-echo ,(if selected
-                            (format "Current file: %s" file)
-                          (format "Switch to %s" file))
-             follow-link ignore
-             rear-nonsticky nil))))
+(defun ri-tabs--structurally-ineligible-frame-p (frame)
+  "Return non-nil when FRAME is not an ordinary top-level frame."
+  (or (frame-parameter frame 'parent-frame)
+      (frame-parameter frame 'tooltip)
+      (frame-parameter frame 'no-accept-focus)
+      (eq (frame-parameter frame 'minibuffer) 'only)))
+(defun ri-tabs--frame-eligible-p (frame)
+  "Return non-nil when FRAME should display an Ri file Tab Bar."
+  (and (frame-live-p frame)
+       (not (ri-tabs--structurally-ineligible-frame-p frame))
+       (not
+        (if-let* ((saved
+                   (seq-find
+                    (lambda (entry)
+                      (eq (car entry) frame))
+                    (plist-get ri-tabs--tab-bar-state :frames))))
+            (nth 2 saved)
+          (frame-parameter frame 'tab-bar-lines-keep-state)))))
 
-(defun ri-tabs--cache-key (tabs)
-  "Return a tab-line cache key for TABS and their file state."
-  (append
-   (tab-line-cache-key-default tabs)
-   (list ri-tabs-unmarked-marker
-         ri-tabs-marked-marker
-         ri-tabs-unmarked-modified-marker
-         ri-tabs-marked-modified-marker
-         (mapcar (lambda (buffer)
-                   (list (buffer-name buffer)
-                         (buffer-file-name buffer)
-                         (buffer-modified-p buffer)
-                         (ri-tabs-buffer-marked-p buffer)))
-                 tabs))))
+(defun ri-tabs--frame-selected-window (frame)
+  "Return FRAME's selected ordinary window.
+While FRAME's minibuffer is active, return the live window that
+selected it.  Never return a minibuffer window."
+  (when (frame-live-p frame)
+    (let* ((minibuffer (active-minibuffer-window))
+           (origin (and minibuffer (minibuffer-selected-window)))
+           (selected (frame-selected-window frame)))
+      (cond
+       ((and (window-live-p origin)
+             (eq (window-frame origin) frame)
+             (not (window-minibuffer-p origin)))
+        origin)
+       ((and (window-live-p selected)
+             (not (window-minibuffer-p selected)))
+        selected)
+       (t
+        (seq-find (lambda (window)
+                    (and (window-live-p window)
+                         (not (window-minibuffer-p window))))
+                  (window-list frame 'nomini)))))))
 
-(defun ri-tabs--capture-state ()
-  "Capture the tab-line variables managed in the current buffer."
-  (mapcar (lambda (variable)
-            (list variable
-                  (local-variable-p variable)
-                  (symbol-value variable)))
-          ri-tabs--managed-variables))
+(defun ri-tabs--tab-label (buffer buffers selected-buffer)
+  "Return BUFFER's Tab Bar label among BUFFERS.
+SELECTED-BUFFER determines the active face without consulting an
+ambient selected window."
+  (let* ((selected (eq buffer selected-buffer))
+         (file (abbreviate-file-name (buffer-file-name buffer)))
+         (help (if selected
+                   (format "Current file: %s" file)
+                 (format "Switch to %s" file))))
+    (propertize
+     (format " %s %s "
+             (ri-tabs--marker buffer)
+             (ri-tabs--tab-name buffer buffers))
+     'face (ri-tabs--tab-face selected)
+     'mouse-face 'ri-tabs-highlight
+     'help-echo help)))
 
-(defun ri-tabs--set-local-configuration ()
-  "Install the Ki tab-line configuration in the current buffer."
-  (setq-local tab-line-format '(:eval (tab-line-format))
-              tab-line-tabs-function #'ri-tabs--buffer-list
-              tab-line-tab-name-function #'ri-tabs--tab-name
-              tab-line-tab-name-format-function #'ri-tabs--format-tab
-              tab-line-cache-key-function #'ri-tabs--cache-key
-              tab-line-new-button-show nil
-              tab-line-close-button-show nil
-              tab-line-close-tab-function 'kill-buffer
-              tab-line-tab-face-functions nil
-              tab-line-separator ""
-              tab-line-auto-hscroll t))
+(defun ri-tabs--select-buffer (frame buffer)
+  "Display live BUFFER in FRAME's selected ordinary window.
+Resolve the target window at action time so a rendered item cannot
+retain a stale window."
+  (if (and (frame-live-p frame) (buffer-live-p buffer))
+      (if-let* ((window (ri-tabs--frame-selected-window frame)))
+          (progn
+            (with-selected-window window
+              (switch-to-buffer buffer))
+            (ri-tabs--refresh))
+        (ri-tabs--refresh))
+    (ri-tabs--refresh)))
 
-(defun ri-tabs--install ()
-  "Install Ki tabs in the current file buffer."
-  (when (ri-tabs--file-buffer-p (current-buffer))
-    (unless ri-tabs--saved-state
-      (setq ri-tabs--saved-state (ri-tabs--capture-state)
-            ri-tabs--tab-line-was-active tab-line-mode))
-    (unless tab-line-mode
-      (tab-line-mode 1))
-    (ri-tabs--set-local-configuration)))
+(defun ri-tabs--close-buffer (buffer)
+  "Kill live BUFFER without changing its persistent Ri mark."
+  (if (buffer-live-p buffer)
+      (kill-buffer buffer)
+    (ri-tabs--refresh)))
 
-(defun ri-tabs--restore ()
-  "Restore tab-line state previously saved in the current buffer."
-  (when ri-tabs--saved-state
-    (let ((saved-state ri-tabs--saved-state)
-          (was-active ri-tabs--tab-line-was-active))
-      (if was-active
-          (unless tab-line-mode
-            (tab-line-mode 1))
-        (when tab-line-mode
-          (tab-line-mode -1)))
-      (dolist (entry saved-state)
-        (pcase-let ((`(,variable ,was-local ,value) entry))
-          (if was-local
-              (set (make-local-variable variable) value)
-            (kill-local-variable variable))))
-      (kill-local-variable 'ri-tabs--saved-state)
-      (kill-local-variable 'ri-tabs--tab-line-was-active)))
-  (kill-local-variable 'ri-tabs--marked-p)
-  (kill-local-variable 'ri-tabs--file-id))
+(defun ri-tabs--toggle-buffer-from-tab (buffer)
+  "Toggle live BUFFER's persistent mark from a rendered tab action."
+  (if (buffer-live-p buffer)
+      (ri-tabs-toggle-buffer-mark buffer)
+    (ri-tabs--refresh)))
+
+(defun ri-tabs--format-tabs (&optional frame)
+  "Return native file-tab menu items for FRAME.
+FRAME defaults to the selected frame because `tab-bar-format' calls
+formatters without arguments."
+  (setq frame (or frame (selected-frame)))
+  (if (not (ri-tabs--frame-eligible-p frame))
+      (when (frame-live-p frame)
+        (set-frame-parameter frame 'ri-tabs--item-buffers nil))
+    (let* ((window (ri-tabs--frame-selected-window frame))
+           (selected-buffer (and window (window-buffer window)))
+           (buffers (ri-tabs--buffer-list selected-buffer))
+           (index 0)
+           items
+           mapping)
+      (dolist (buffer buffers)
+        (setq index (1+ index))
+        (let* ((item-frame frame)
+               (item-buffer buffer)
+               (selected (eq item-buffer selected-buffer))
+               (key (if selected
+                        'current-tab
+                      (intern (format "tab-%d" index))))
+               (label
+                (ri-tabs--tab-label
+                 item-buffer buffers selected-buffer))
+               (help (get-text-property 0 'help-echo label))
+               (command
+                (if selected
+                    #'ignore
+                  (lambda ()
+                    (interactive)
+                    (ri-tabs--select-buffer item-frame item-buffer)))))
+          (push (list key 'menu-item label command :help help)
+                items)
+          (push (cons key item-buffer) mapping)))
+      (setq items (nreverse items)
+            mapping (nreverse mapping))
+      (set-frame-parameter frame 'ri-tabs--item-buffers mapping)
+      items)))
+
+(defun ri-tabs--event-position (event)
+  "Return the mouse or touch position carried by EVENT."
+  (cond
+   ((and (consp event)
+         (eq (car event) 'touchscreen-begin))
+    (cdadr event))
+   (t
+    (event-start event))))
+
+(defun ri-tabs--event-target (event &optional position)
+  "Decode EVENT at POSITION into (FRAME KEY BUFFER CLOSE-P).
+This is the only Ri helper that calls the native private event
+decoder.  A graphical position identifies its frame directly; a TTY
+position falls back to the selected frame."
+  (let* ((position (or position (ri-tabs--event-position event)))
+         (location (and position (posn-window position)))
+         (frame (cond
+                 ((framep location) location)
+                 ((windowp location) (window-frame location))
+                 (t (selected-frame))))
+         (item (and position (tab-bar--event-to-item position)))
+         (key (car item))
+         (entry
+          (and (frame-live-p frame)
+               (assq key
+                     (frame-parameter frame
+                                      'ri-tabs--item-buffers)))))
+    (list frame key (cdr entry) (nth 2 item))))
+
+(defun ri-tabs--mouse-select (event)
+  "Select the inactive Ri file tab clicked by EVENT."
+  (interactive "e")
+  (pcase-let ((`(,frame ,key ,buffer ,_)
+               (ri-tabs--event-target event)))
+    (when (and buffer (not (eq key 'current-tab)))
+      (ri-tabs--select-buffer frame buffer))))
+
+(defun ri-tabs--mouse-close (event)
+  "Close the Ri file tab clicked by EVENT."
+  (interactive "e")
+  (pcase-let ((`(,_frame ,_key ,buffer ,_)
+               (ri-tabs--event-target event)))
+    (when buffer
+      (ri-tabs--close-buffer buffer))))
+
+(defun ri-tabs--context-menu (frame buffer)
+  "Return a file-tab context menu for BUFFER on FRAME."
+  (let ((menu
+         (make-sparse-keymap
+          (propertize "Ri File Tab" 'hide t))))
+    (define-key-after
+      menu [select]
+      `(menu-item
+        "Select"
+        ,(lambda ()
+           (interactive)
+           (ri-tabs--select-buffer frame buffer))
+        :help "Display this file in the selected window"))
+    (define-key-after
+      menu [toggle-mark]
+      `(menu-item
+        ,(if (ri-tabs-buffer-marked-p buffer) "Unmark" "Mark")
+        ,(lambda ()
+           (interactive)
+           (ri-tabs--toggle-buffer-from-tab buffer))
+        :help "Toggle this file's persistent tab mark"))
+    (define-key-after
+      menu [close]
+      `(menu-item
+        "Close"
+        ,(lambda ()
+           (interactive)
+           (ri-tabs--close-buffer buffer))
+        :help "Kill this file buffer without removing its mark"))
+    menu))
+
+(defun ri-tabs--mouse-context-menu (event &optional position)
+  "Open the Ri file-tab context menu for EVENT at POSITION."
+  (interactive "e")
+  (pcase-let ((`(,frame ,_key ,buffer ,_)
+               (ri-tabs--event-target event position)))
+    (when buffer
+      (popup-menu (ri-tabs--context-menu frame buffer) event))))
+
+(declare-function touch-screen-track-tap "touch-screen.el")
+(defvar touch-screen-delay)
+
+(defun ri-tabs--touchscreen-timeout ()
+  "Request an Ri file-tab context menu after a long touch."
+  (beep)
+  (throw 'ri-tabs--context-menu 'context-menu))
+
+(defun ri-tabs--touchscreen-begin (event)
+  "Select, close, or open a context menu for touchscreen EVENT."
+  (interactive "e")
+  (let* ((position (ri-tabs--event-position event))
+         (target (ri-tabs--event-target event position))
+         (frame (nth 0 target))
+         (key (nth 1 target))
+         (buffer (nth 2 target))
+         (close-p (nth 3 target))
+         timer)
+    (when buffer
+      (when
+          (eq
+           (catch 'ri-tabs--context-menu
+             (unwind-protect
+                 (progn
+                   (setq timer
+                         (run-at-time
+                          touch-screen-delay nil
+                          #'ri-tabs--touchscreen-timeout))
+                   (when (touch-screen-track-tap event)
+                     (cond
+                      (close-p
+                       (ri-tabs--close-buffer buffer))
+                      ((not (eq key 'current-tab))
+                       (ri-tabs--select-buffer frame buffer)))))
+               (when timer
+                 (cancel-timer timer))))
+           'context-menu)
+        (popup-menu (ri-tabs--context-menu frame buffer) event)))))
+
+(defun ri-tabs--shortcut-keys ()
+  "Return native Tab Bar shortcut keys that can select workspaces."
+  (let ((modifiers tab-bar-select-tab-modifiers))
+    (append
+     (list [(control tab)]
+           [(control shift tab)]
+           [(control shift iso-lefttab)])
+     (when modifiers
+       (mapcar
+        (lambda (digit)
+          (vector (append modifiers (list digit))))
+        (number-sequence ?0 ?9))))))
+
+(defun ri-tabs--capture-bindings (map keys)
+  "Capture direct bindings for KEYS in MAP."
+  (mapcar
+   (lambda (key)
+     (cons (copy-sequence key) (lookup-key map key)))
+   keys))
+
+(defun ri-tabs--restore-bindings (map bindings)
+  "Restore MAP from saved BINDINGS."
+  (dolist (entry bindings)
+    (if (cdr entry)
+        (define-key map (car entry) (cdr entry))
+      (define-key map (car entry) nil t))))
+
+(defun ri-tabs--install-event-bindings ()
+  "Install Ri pointer, touch, and wheel bindings in `tab-bar-map'."
+  (dolist (entry ri-tabs--tab-bar-event-bindings)
+    (define-key tab-bar-map (car entry) (cdr entry))))
+
+(defun ri-tabs--hide-workspace-shortcuts ()
+  "Disable native shortcuts that target hidden workspace tabs."
+  (dolist (key (ri-tabs--shortcut-keys))
+    (when (memq (lookup-key tab-bar-mode-map key)
+                ri-tabs--workspace-shortcut-commands)
+      (define-key tab-bar-mode-map key #'undefined))))
+
+(defun ri-tabs--capture-frame-state (frame)
+  "Capture Ri-owned Tab Bar parameters of FRAME."
+  (list frame
+        (frame-parameter frame 'tab-bar-lines)
+        (frame-parameter frame 'tab-bar-lines-keep-state)))
+
+(defun ri-tabs--configure-frame (frame &optional remember-temporary)
+  "Apply the active Ri Tab Bar policy to FRAME.
+When REMEMBER-TEMPORARY is non-nil, save any protection Ri adds to a
+new structurally ineligible frame for mode disable."
+  (when (frame-live-p frame)
+    (let ((ineligible
+           (ri-tabs--structurally-ineligible-frame-p frame)))
+      (when (and remember-temporary
+                 ineligible
+                 (not (assq frame ri-tabs--temporary-frame-states)))
+        (push
+         (ri-tabs--capture-frame-state frame)
+         ri-tabs--temporary-frame-states))
+      (cond
+       (ineligible
+        (unless (frame-parameter frame 'tab-bar-lines-keep-state)
+          (set-frame-parameter frame 'tab-bar-lines 0)
+          (set-frame-parameter
+           frame 'tab-bar-lines-keep-state t)))
+       ((ri-tabs--frame-eligible-p frame)
+        (set-frame-parameter frame 'tab-bar-lines 1))))))
+
+(defun ri-tabs--configure-new-frame (frame)
+  "Configure newly created FRAME while `ri-tabs-mode' is active."
+  (when ri-tabs-mode
+    (ri-tabs--configure-frame frame t)
+    (when (ri-tabs--frame-eligible-p frame)
+      (let ((state (ri-tabs--state-for-hook)))
+        (unless (eq state ri-tabs--read-error)
+          (ri-tabs--sync-live-buffers state))))
+    (ri-tabs--refresh)))
+
+(defun ri-tabs--default-frame-lines-entry ()
+  "Return the position and value of the default Tab Bar lines entry.
+Return `ri-tabs--absent' when `default-frame-alist' has no such entry."
+  (let ((index 0)
+        (tail default-frame-alist)
+        entry)
+    (while (and tail (not entry))
+      (if (eq (caar tail) 'tab-bar-lines)
+          (setq entry (car tail))
+        (setq index (1+ index)
+              tail (cdr tail))))
+    (if entry
+        (list :index index :entry (copy-tree entry))
+      ri-tabs--absent)))
+
+(defun ri-tabs--set-default-frame-lines (value)
+  "Set the default frame Tab Bar lines entry to VALUE."
+  (setq default-frame-alist
+        (cons (cons 'tab-bar-lines value)
+              (assq-delete-all
+               'tab-bar-lines default-frame-alist))))
+
+(defun ri-tabs--restore-default-frame-lines (saved)
+  "Restore the saved default Tab Bar lines entry in SAVED."
+  (setq default-frame-alist
+        (assq-delete-all 'tab-bar-lines default-frame-alist))
+  (unless (eq saved ri-tabs--absent)
+    (let ((index
+           (min (plist-get saved :index)
+                (length default-frame-alist))))
+      (setq default-frame-alist
+            (append
+             (seq-take default-frame-alist index)
+             (list (copy-tree (plist-get saved :entry)))
+             (seq-drop default-frame-alist index))))))
+
+(defun ri-tabs--capture-tab-bar-state ()
+  "Capture native Tab Bar state before Ri takes ownership."
+  (list
+   :mode (and tab-bar-mode t)
+   :format (copy-tree (default-value 'tab-bar-format))
+   :show (default-value 'tab-bar-show)
+   :event-bindings
+   (ri-tabs--capture-bindings
+    tab-bar-map (mapcar #'car ri-tabs--tab-bar-event-bindings))
+   :shortcut-bindings
+   (ri-tabs--capture-bindings
+    tab-bar-mode-map (ri-tabs--shortcut-keys))
+   :frames (mapcar #'ri-tabs--capture-frame-state (frame-list))
+   :default-frame-lines (ri-tabs--default-frame-lines-entry)))
+
+(defun ri-tabs--install-tab-bar ()
+  "Install the frame-wide native Ri file Tab Bar."
+  (unless ri-tabs--tab-bar-state
+    (setq ri-tabs--tab-bar-state
+          (ri-tabs--capture-tab-bar-state)))
+  (setq-default tab-bar-format '(ri-tabs--format-tabs)
+                tab-bar-show 0)
+  (ri-tabs--install-event-bindings)
+  (dolist (frame (frame-list))
+    (ri-tabs--configure-frame frame))
+  (ri-tabs--set-default-frame-lines 1)
+  (tab-bar-mode 1)
+  (ri-tabs--hide-workspace-shortcuts)
+  (dolist (frame (frame-list))
+    (ri-tabs--configure-frame frame)))
+
+(defun ri-tabs--restore-tab-bar-state ()
+  "Restore native Tab Bar state saved before Ri activation."
+  (when ri-tabs--tab-bar-state
+    (let ((state ri-tabs--tab-bar-state))
+      (setq-default
+       tab-bar-format (copy-tree (plist-get state :format))
+       tab-bar-show (plist-get state :show))
+      (unless (plist-get state :mode)
+        (tab-bar-mode -1))
+      (when (plist-get state :mode)
+        (tab-bar-mode 1))
+      (dolist (entry ri-tabs--temporary-frame-states)
+        (when (frame-live-p (car entry))
+          (set-frame-parameter
+           (car entry) 'tab-bar-lines (nth 1 entry))
+          (set-frame-parameter
+           (car entry) 'tab-bar-lines-keep-state (nth 2 entry))))
+      (ri-tabs--restore-bindings
+       tab-bar-map (plist-get state :event-bindings))
+      (ri-tabs--restore-bindings
+       tab-bar-mode-map (plist-get state :shortcut-bindings))
+      (dolist (entry (plist-get state :frames))
+        (when (frame-live-p (car entry))
+          (set-frame-parameter
+           (car entry) 'tab-bar-lines (nth 1 entry))
+          (set-frame-parameter
+           (car entry) 'tab-bar-lines-keep-state (nth 2 entry))))
+      (ri-tabs--restore-default-frame-lines
+       (plist-get state :default-frame-lines))
+      (dolist (frame (frame-list))
+        (set-frame-parameter frame 'ri-tabs--item-buffers nil))
+      (setq ri-tabs--temporary-frame-states nil
+            ri-tabs--tab-bar-state nil))))
+
+(defun ri-tabs--clear-buffer-cache (buffer)
+  "Remove Ri-owned persistent-state cache variables from BUFFER."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (kill-local-variable 'ri-tabs--marked-p)
+      (kill-local-variable 'ri-tabs--file-id))))
 
 (defun ri-tabs--refresh (&rest _ignored)
-  "Invalidate every Ki tab line when `ri-tabs-mode' is active."
+  "Invalidate every frame-wide Ri file Tab Bar."
   (when ri-tabs-mode
     (if ri-tabs--refresh-batching-p
         (setq ri-tabs--refresh-pending-p t)
-      (tab-line-force-update t))))
+      (force-mode-line-update t))))
 
 (defun ri-tabs--updated-state (state file-id marked)
   "Return STATE with FILE-ID membership set to MARKED."
@@ -476,7 +837,7 @@ does not read or write persistent membership."
        (remove file-id files)))))
 
 (defun ri-tabs--commit-state (state &optional file-ids)
-  "Persist STATE, synchronize FILE-IDS, and refresh tab lines once.
+  "Persist STATE, synchronize FILE-IDS, and refresh file tabs once.
 When FILE-IDS is nil, synchronize every live file buffer."
   (setq state (ri-tabs--write-state state))
   (ri-tabs--sync-live-buffers state file-ids)
@@ -616,25 +977,17 @@ including marks for files with no live buffer."
     (ri-tabs--read-state-safely)))
 
 (defun ri-tabs--sync-visited-buffer ()
-  "Restore the current file buffer's mark and install Ki tabs."
+  "Restore the current file buffer's persistent mark and refresh tabs."
   (when ri-tabs-mode
     (if (ri-tabs--file-buffer-p (current-buffer))
         (let* ((file-id (ri-tabs--buffer-file-id (current-buffer)))
                (state (ri-tabs--state-for-hook)))
           (ri-tabs--set-buffer-cache
            (current-buffer) file-id
-           (unless (eq state ri-tabs--read-error) state))
-          (ri-tabs--install))
-      (ri-tabs--restore))
+           (unless (eq state ri-tabs--read-error) state)))
+      (ri-tabs--clear-buffer-cache (current-buffer)))
     (ri-tabs--refresh)))
 
-(defun ri-tabs--sync-buffer-role ()
-  "Install or remove Ki tabs without reinterpreting the current mark."
-  (when ri-tabs-mode
-    (if (ri-tabs--file-buffer-p (current-buffer))
-        (ri-tabs--install)
-      (ri-tabs--restore))
-    (ri-tabs--refresh)))
 
 (defun ri-tabs--sync-after-visited-file-name-change ()
   "Synchronize or migrate marks after the visited filename changes."
@@ -642,7 +995,7 @@ including marks for files with no live buffer."
     (let ((old-file-id ri-tabs--file-id)
           (new-file-id (ri-tabs--buffer-file-id (current-buffer))))
       (if (null new-file-id)
-          (ri-tabs--restore)
+          (ri-tabs--clear-buffer-cache (current-buffer))
         (let ((state (ri-tabs--state-for-hook)))
           (if (eq state ri-tabs--read-error)
               (setq ri-tabs--file-id new-file-id
@@ -669,23 +1022,34 @@ including marks for files with no live buffer."
                        (ri-tabs--sync-live-buffers
                         state affected))))
                 (ri-tabs--sync-live-buffers state affected))))
-          (ri-tabs--install)))
+          ))
       (ri-tabs--refresh))))
 
 (defun ri-tabs--install-infrastructure ()
-  "Install Ki tab hooks and configure every live visible file buffer."
+  "Install global hooks for file state, frames, and selected windows."
   (add-hook 'find-file-hook #'ri-tabs--sync-visited-buffer)
   (add-hook 'after-set-visited-file-name-hook
             #'ri-tabs--sync-after-visited-file-name-change)
-  (add-hook 'after-change-major-mode-hook
-            #'ri-tabs--sync-buffer-role)
   (add-hook 'kill-buffer-hook #'ri-tabs--refresh)
   (add-hook 'first-change-hook #'ri-tabs--refresh)
   (add-hook 'after-save-hook #'ri-tabs--refresh)
   (add-hook 'after-revert-hook #'ri-tabs--refresh)
-  (dolist (buffer (ri-tabs--file-buffer-list))
-    (with-current-buffer buffer
-      (ri-tabs--install))))
+  (add-hook 'window-selection-change-functions #'ri-tabs--refresh)
+  (add-hook 'window-buffer-change-functions #'ri-tabs--refresh)
+  (add-hook 'after-make-frame-functions #'ri-tabs--configure-new-frame))
+
+(defun ri-tabs--remove-infrastructure ()
+  "Remove every global hook installed by `ri-tabs-mode'."
+  (remove-hook 'find-file-hook #'ri-tabs--sync-visited-buffer)
+  (remove-hook 'after-set-visited-file-name-hook
+               #'ri-tabs--sync-after-visited-file-name-change)
+  (remove-hook 'kill-buffer-hook #'ri-tabs--refresh)
+  (remove-hook 'first-change-hook #'ri-tabs--refresh)
+  (remove-hook 'after-save-hook #'ri-tabs--refresh)
+  (remove-hook 'after-revert-hook #'ri-tabs--refresh)
+  (remove-hook 'window-selection-change-functions #'ri-tabs--refresh)
+  (remove-hook 'window-buffer-change-functions #'ri-tabs--refresh)
+  (remove-hook 'after-make-frame-functions #'ri-tabs--configure-new-frame))
 
 (defun ri-tabs--cancel-pending-activation ()
   "Cancel any persistent Ki tab activation awaiting startup."
@@ -725,16 +1089,14 @@ including marks for files with no live buffer."
                     (ri-tabs--restore-marked-files state))
                   (when ri-tabs-mode
                     (ri-tabs--sync-live-buffers
-                     (unless (eq state ri-tabs--read-error) state))
-                    (dolist (buffer (ri-tabs--file-buffer-list))
-                      (with-current-buffer buffer
-                        (ri-tabs--install)))))))
+                     (unless (eq state ri-tabs--read-error)
+                       state))))))
             (setq completed t))
         (when (and completed ri-tabs-mode)
           (setq ri-tabs--activation-complete-p t))
         (when (and ri-tabs-mode
                    (or completed ri-tabs--refresh-pending-p))
-          (tab-line-force-update t))))))
+          (force-mode-line-update t))))))
 
 (defun ri-tabs--startup-activate ()
   "Run deferred persistent Ki tab activation after Emacs startup."
@@ -756,39 +1118,60 @@ including marks for files with no live buffer."
     (add-hook 'emacs-startup-hook #'ri-tabs--startup-activate t)))
 
 (defun ri-tabs--enable ()
-  "Install Ki tabs and activate persistent marks at the proper boundary."
-  (ri-tabs--install-infrastructure)
-  (cond
-   ((or ri-tabs--activation-active-p
-        ri-tabs--activation-complete-p))
-   ((null after-init-time)
-    (ri-tabs--schedule-activation))
-   (t
-    (ri-tabs--cancel-pending-activation)
-    (ri-tabs--activate))))
+  "Install frame-wide tabs and activate persistent marks."
+  (condition-case err
+      (progn
+        (ri-tabs--install-infrastructure)
+        (ri-tabs--install-tab-bar)
+        (cond
+         ((or ri-tabs--activation-active-p
+              ri-tabs--activation-complete-p)
+          (ri-tabs--refresh))
+         ((null after-init-time)
+          (ri-tabs--schedule-activation)
+          (ri-tabs--refresh))
+         (t
+          (ri-tabs--cancel-pending-activation)
+          (ri-tabs--activate))))
+    (error
+     (setq ri-tabs-mode nil
+           ri-tabs--activation-complete-p nil
+           ri-tabs--refresh-pending-p nil)
+     (ri-tabs--cancel-pending-activation)
+     (ri-tabs--remove-infrastructure)
+     (dolist (buffer (buffer-list))
+       (ri-tabs--clear-buffer-cache buffer))
+     (condition-case rollback-error
+         (ri-tabs--restore-tab-bar-state)
+       (error
+        (display-warning
+         'ri-tabs
+         (format "Could not roll back failed Tab Bar installation: %s"
+                 (error-message-string rollback-error))
+         :error)))
+     (signal (car err) (cdr err)))))
 
 (defun ri-tabs--disable ()
-  "Remove Ki tabs and caches without changing persistent marks."
-  (ri-tabs--cancel-pending-activation)
-  (setq ri-tabs--activation-complete-p nil)
-  (remove-hook 'find-file-hook #'ri-tabs--sync-visited-buffer)
-  (remove-hook 'after-set-visited-file-name-hook
-               #'ri-tabs--sync-after-visited-file-name-change)
-  (remove-hook 'after-change-major-mode-hook
-               #'ri-tabs--sync-buffer-role)
-  (remove-hook 'kill-buffer-hook #'ri-tabs--refresh)
-  (remove-hook 'first-change-hook #'ri-tabs--refresh)
-  (remove-hook 'after-save-hook #'ri-tabs--refresh)
-  (remove-hook 'after-revert-hook #'ri-tabs--refresh)
-  (dolist (buffer (buffer-list))
-    (when (buffer-live-p buffer)
-      (with-current-buffer buffer
-        (ri-tabs--restore))))
-  (tab-line-force-update t))
+  "Remove frame-wide tabs and caches without changing persistent marks."
+  (let ((ri-tabs--refresh-batching-p t)
+        (ri-tabs--refresh-pending-p nil))
+    (ri-tabs--cancel-pending-activation)
+    (setq ri-tabs--activation-complete-p nil)
+    (ri-tabs--remove-infrastructure)
+    (dolist (buffer (buffer-list))
+      (ri-tabs--clear-buffer-cache buffer))
+    (ri-tabs--restore-tab-bar-state))
+  (setq ri-tabs--refresh-pending-p nil)
+  (force-mode-line-update t))
 
 ;;;###autoload
 (define-minor-mode ri-tabs-mode
-  "Display Ki-style tabs for persistently marked files.
+  "Display one frame-wide native Tab Bar for Ri file buffers.
+
+Every ordinary frame shows the process-global set of live persistently
+marked files.  The selected window's current unmarked file is appended
+for that frame only, and selecting a tab changes only that window's
+buffer.
 
 On first activation, the mode marks and stores every visible file
 buffer at the activation boundary.  Later activations reopen each

@@ -103,6 +103,7 @@ For a normal TTY mode line this is either zero or one row."
              (menu-bar-lines . 0)
              (tool-bar-lines . 0)
              (tab-bar-lines . 0)
+             (tab-bar-lines-keep-state . t)
              (vertical-scroll-bars . nil)
              (horizontal-scroll-bars . nil)
              (left-fringe . 0)

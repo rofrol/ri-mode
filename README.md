@@ -97,6 +97,11 @@ others, and `m` switches to the alternate file. In the `z` layer,
 and `u`/`o` perform character-granular undo/redo. A quick tap of `c`,
 `r`, `g`, `v`, `x`, or `z` performs its primary action.
 
+File tabs use one native Tab Bar spanning each frame. Splitting a frame
+does not duplicate the row. The active tab follows the frame's selected
+window, and selecting a file tab changes only that window's buffer;
+other windows and their layout remain unchanged.
+
 File marks are persistent: `e k` writes the mark immediately, and the
 mark survives both buffer closure and an Emacs restart. When Ki tabs
 activates after restart—or is disabled and enabled again—it reopens
