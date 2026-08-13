@@ -402,6 +402,7 @@
         (after-revert-hook nil)
         (window-selection-change-functions nil)
         (window-buffer-change-functions nil)
+        (window-size-change-functions nil)
         (after-make-frame-functions nil)
         (kkp-chord-after-release-hook nil)
         (sr-highlight-predicate nil)
@@ -424,20 +425,20 @@
               (setq buffer-file-name "/tmp/ri-tabs-after-enable.el")
               (run-hooks 'find-file-hook)
               (should ri-tabs-mode)
-              (should tab-bar-mode)
-              (should (= (frame-parameter nil 'tab-bar-lines) 1))
               (should-not tab-line-mode)
-              (should
-               (equal (default-value 'tab-bar-format)
-                      '(ri-tabs--format-tabs)))
-              (let ((items
-                     (ri-tabs--format-tabs (selected-frame))))
+              (ri-tabs--refresh)
+              (let* ((surface
+                      (gethash (selected-frame)
+                               ri-tabs--surface-windows))
+                     (items (ri-tabs--visible-items (selected-frame))))
+                (should (window-live-p surface))
+                (should (window-parameter surface 'ri-tabs-surface))
                 (should (= (length items) 1))
-                (should (eq (caar items) 'current-tab))
+                (should (ri-tabs--item-active (car items)))
                 (should
                  (equal
                   (substring-no-properties
-                   (nth 2 (car items)))
+                   (ri-tabs--item-display (car items)))
                   " [ ] ri-tabs-after-enable.el "))))))
       (when ri-tabs-mode
         (ri-tabs-mode -1))
