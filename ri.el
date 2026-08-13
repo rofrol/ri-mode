@@ -893,11 +893,8 @@ keymap lookups during that command must keep their resolved binding."
   (define-key mini-modal-map "f" #'ri-toggle-extend)
   (define-key mini-modal-map "Z" #'ri-smart-redo)
   (define-key mini-modal-map (kbd "<return>") #'save-buffer)
-  (define-key mini-modal-map (kbd "<up>") 'undefined)
-  (define-key mini-modal-map (kbd "<down>") 'undefined)
-  (define-key mini-modal-map (kbd "<left>") 'undefined)
   (define-key mini-modal-map (kbd "<escape>") #'ri-extend-escape)
-  (define-key mini-modal-map (kbd "<right>") 'undefined))
+  )
 
 (provide 'ri)
 ;;; ri.el ends here
