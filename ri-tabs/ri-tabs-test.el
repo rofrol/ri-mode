@@ -107,6 +107,8 @@
           (copy-tree (default-value 'tab-bar-format)))
          (ri-tabs-test--saved-tab-bar-show
           (default-value 'tab-bar-show))
+         (ri-tabs-test--saved-tab-bar-auto-width
+          (default-value 'tab-bar-auto-width))
          (ri-tabs-test--saved-tab-bar-map
           (copy-keymap tab-bar-map))
          (ri-tabs-test--saved-tab-bar-mode-map
@@ -131,7 +133,8 @@
        (setq-default
         tab-bar-format
         (copy-tree ri-tabs-test--saved-tab-bar-format)
-        tab-bar-show ri-tabs-test--saved-tab-bar-show)
+        tab-bar-show ri-tabs-test--saved-tab-bar-show
+        tab-bar-auto-width ri-tabs-test--saved-tab-bar-auto-width)
        (condition-case nil
            (tab-bar-mode
             (if ri-tabs-test--saved-tab-bar-mode 1 -1))
@@ -218,26 +221,124 @@
       (mapc #'kill-buffer
             (list alpha zeta current unmarked special hidden)))))
 
-(ert-deftest ri-tabs-test-names-use-shortest-unique-path-suffix ()
-  (let ((alpha (generate-new-buffer "ri-tabs-alpha-main"))
-        (beta (generate-new-buffer "ri-tabs-beta-main"))
-        (other (generate-new-buffer "ri-tabs-other")))
+(ert-deftest ri-tabs-test-owner-local-duplicate-keeps-basename ()
+  (let ((owner (generate-new-buffer "ri-tabs-owner-main"))
+        (foreign (generate-new-buffer "ri-tabs-foreign-main"))
+        (owner-root "/tmp/repo-a/"))
     (unwind-protect
         (progn
-          (with-current-buffer alpha
-            (setq buffer-file-name "/tmp/alpha/src/main.el"))
-          (with-current-buffer beta
-            (setq buffer-file-name "/tmp/beta/src/main.el"))
-          (with-current-buffer other
-            (setq buffer-file-name "/tmp/beta/src/other.el"))
-          (let ((buffers (list alpha beta other)))
-            (should (equal (ri-tabs--tab-name alpha buffers)
-                           "alpha/src/main.el"))
-            (should (equal (ri-tabs--tab-name beta buffers)
-                           "beta/src/main.el"))
-            (should (equal (ri-tabs--tab-name other buffers)
-                           "other.el"))))
-      (mapc #'kill-buffer (list alpha beta other)))))
+          (with-current-buffer owner
+            (setq buffer-file-name "/tmp/repo-a/src/main.el"))
+          (with-current-buffer foreign
+            (setq buffer-file-name "/tmp/repo-b/src/main.el"))
+          (cl-letf (((symbol-function 'ri-tabs--buffer-owner-context)
+                     (lambda (buffer)
+                       (if (eq buffer owner)
+                           owner-root
+                         "/tmp/repo-b/"))))
+            (let ((buffers (list owner foreign)))
+              (should (equal (ri-tabs--tab-name owner buffers owner-root)
+                             "main.el"))
+              (should (equal (ri-tabs--tab-name foreign buffers owner-root)
+                             "repo-b/src/main.el")))))
+      (mapc #'kill-buffer (list owner foreign)))))
+
+(ert-deftest ri-tabs-test-duplicate-naming-is-selection-independent ()
+  (let ((owner (generate-new-buffer "ri-tabs-owner-main"))
+        (foreign (generate-new-buffer "ri-tabs-foreign-main"))
+        (owner-root "/tmp/repo-a/"))
+    (unwind-protect
+        (progn
+          (with-current-buffer owner
+            (setq buffer-file-name "/tmp/repo-a/src/main.el"))
+          (with-current-buffer foreign
+            (setq buffer-file-name "/tmp/repo-b/src/main.el"))
+          (cl-letf (((symbol-function 'ri-tabs--buffer-owner-context)
+                     (lambda (buffer)
+                       (if (eq buffer owner)
+                           owner-root
+                         "/tmp/repo-b/"))))
+            (let* ((buffers (list owner foreign))
+                   (owner-labels
+                    (mapcar (lambda (buffer)
+                              (ri-tabs--tab-name buffer buffers owner-root))
+                            buffers))
+                   (foreign-labels
+                    (mapcar (lambda (buffer)
+                              (ri-tabs--tab-name buffer buffers owner-root))
+                            buffers)))
+              (should (equal owner-labels foreign-labels)))))
+      (mapc #'kill-buffer (list owner foreign)))))
+
+(ert-deftest ri-tabs-test-two-foreign-duplicates-grow-until-distinct ()
+  (let ((owner (generate-new-buffer "ri-tabs-owner-main"))
+        (foreign-a (generate-new-buffer "ri-tabs-foreign-a-main"))
+        (foreign-b (generate-new-buffer "ri-tabs-foreign-b-main"))
+        (owner-root "/tmp/repo-a/"))
+    (unwind-protect
+        (progn
+          (with-current-buffer owner
+            (setq buffer-file-name "/tmp/repo-a/src/main.el"))
+          (with-current-buffer foreign-a
+            (setq buffer-file-name "/tmp/repo-b/src/main.el"))
+          (with-current-buffer foreign-b
+            (setq buffer-file-name "/tmp/repo-c/src/main.el"))
+          (cl-letf (((symbol-function 'ri-tabs--buffer-owner-context)
+                     (lambda (buffer)
+                       (if (eq buffer owner)
+                           owner-root
+                         (file-name-directory
+                          (directory-file-name
+                           (file-name-directory
+                            (buffer-file-name buffer))))))))
+            (let ((buffers (list owner foreign-a foreign-b)))
+              (should (equal (ri-tabs--tab-name owner buffers owner-root)
+                             "main.el"))
+              (should (equal (ri-tabs--tab-name foreign-a buffers owner-root)
+                             "repo-b/src/main.el"))
+              (should (equal (ri-tabs--tab-name foreign-b buffers owner-root)
+                             "repo-c/src/main.el")))))
+      (mapc #'kill-buffer (list owner foreign-a foreign-b)))))
+
+(ert-deftest ri-tabs-test-owner-repository-duplicates-are-distinguished ()
+  (let ((foo (generate-new-buffer "ri-tabs-foo-main"))
+        (bar (generate-new-buffer "ri-tabs-bar-main"))
+        (owner-root "/tmp/project-a/"))
+    (unwind-protect
+        (progn
+          (with-current-buffer foo
+            (setq buffer-file-name "/tmp/project-a/foo/main.el"))
+          (with-current-buffer bar
+            (setq buffer-file-name "/tmp/project-a/bar/main.el"))
+          (cl-letf (((symbol-function 'ri-tabs--buffer-owner-context)
+                     (lambda (_buffer) owner-root)))
+            (let ((buffers (list foo bar)))
+              (should (equal (ri-tabs--tab-name foo buffers owner-root)
+                             "foo/main.el"))
+              (should (equal (ri-tabs--tab-name bar buffers owner-root)
+                             "bar/main.el")))))
+      (mapc #'kill-buffer (list foo bar)))))
+
+(ert-deftest ri-tabs-test-outside-git-owner-keeps-short-name ()
+  (let ((owner (generate-new-buffer "ri-tabs-dir-owner-main"))
+        (foreign (generate-new-buffer "ri-tabs-dir-foreign-main"))
+        (owner-root "/tmp/project-a/"))
+    (unwind-protect
+        (progn
+          (with-current-buffer owner
+            (setq buffer-file-name "/tmp/project-a/main.el"
+                  default-directory owner-root))
+          (with-current-buffer foreign
+            (setq buffer-file-name "/tmp/project-b/main.el"
+                  default-directory "/tmp/project-b/"))
+          (cl-letf (((symbol-function 'ri-tabs--git-work-tree-root)
+                     (lambda (_directory) nil)))
+            (let ((buffers (list owner foreign)))
+              (should (equal (ri-tabs--tab-name owner buffers owner-root)
+                             "main.el"))
+              (should (equal (ri-tabs--tab-name foreign buffers owner-root)
+                             "project-b/main.el")))))
+      (mapc #'kill-buffer (list owner foreign)))))
 
 (ert-deftest ri-tabs-test-identical-paths-fall-back-to-buffer-names ()
   (let ((first (generate-new-buffer "ri-tabs-main-a"))
@@ -249,11 +350,31 @@
           (with-current-buffer second
             (setq buffer-file-name "/tmp/main.el"))
           (let ((buffers (list first second)))
-            (should (equal (ri-tabs--tab-name first buffers)
+            (should (equal (ri-tabs--tab-name first buffers "/tmp/")
                            (buffer-name first)))
-            (should (equal (ri-tabs--tab-name second buffers)
+            (should (equal (ri-tabs--tab-name second buffers "/tmp/")
                            (buffer-name second)))))
       (mapc #'kill-buffer (list first second)))))
+
+(ert-deftest ri-tabs-test-tab-label-width-follows-content ()
+  (let ((short (generate-new-buffer "ri-tabs-short"))
+        (long (generate-new-buffer "ri-tabs-long")))
+    (unwind-protect
+        (progn
+          (with-current-buffer short
+            (setq buffer-file-name "/tmp/a.el"))
+          (with-current-buffer long
+            (setq buffer-file-name "/tmp/a-very-long-file-name.el"))
+          (let* ((buffers (list short long))
+                 (short-label (ri-tabs--tab-label short buffers short))
+                 (long-label (ri-tabs--tab-label long buffers short)))
+            (should (< (string-width short-label)
+                       (string-width long-label)))
+            (should (equal (substring-no-properties short-label)
+                           " [ ] a.el "))
+            (should (equal (substring-no-properties long-label)
+                           " [ ] a-very-long-file-name.el "))))
+      (mapc #'kill-buffer (list short long)))))
 
 (ert-deftest ri-tabs-test-tab-face-follows-tab-selection ()
   (should (eq (ri-tabs--tab-face t) 'ri-tabs-current-tab))
@@ -483,6 +604,7 @@
       (should (equal (default-value 'tab-bar-format)
                      '(ri-tabs--format-tabs)))
       (should (eq (default-value 'tab-bar-show) t))
+      (should-not (default-value 'tab-bar-auto-width))
       (should (= (frame-parameter frame 'tab-bar-lines) 1))
       (should (frame-parameter frame 'tab-bar-lines-keep-state))
       (should
@@ -565,7 +687,8 @@
           (custom-show 3))
       (tab-bar-mode 1)
       (setq-default tab-bar-format custom-format
-                    tab-bar-show custom-show)
+                    tab-bar-show custom-show
+                    tab-bar-auto-width t)
       (setq default-frame-alist
             '((width . 91)
               (tab-bar-lines . 0)

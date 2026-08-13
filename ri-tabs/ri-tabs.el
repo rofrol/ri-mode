@@ -13,8 +13,10 @@
 ;; selected buffer while it is unmarked in the active owner set.  The owner context
 ;; of the first marked file owns the set, but files in that set may live in any
 ;; Git repository or outside Git.  Opening such a file never changes the owner.
-;; Marked tabs stay in path order, use the shortest unique path suffix as their
-;; label, and show Ki's marked/modified state indicators.
+;; Marked tabs stay in path order.  Ordinary labels use basenames; when names
+;; collide, the owner-local file stays short where possible and foreign files
+;; receive the minimum parent-directory qualification needed for disambiguation.
+;; Tabs are content-sized rather than stretched to equal widths.
 
 ;;; Code:
 
@@ -454,8 +456,41 @@ When FILE-IDS is non-nil, only synchronize buffers with those identities."
   "Return non-nil when LEFT and RIGHT share a WIDTH-component suffix."
   (equal (last left width) (last right width)))
 
-(defun ri-tabs--tab-name (buffer buffers)
-  "Return BUFFER's shortest unique file label among BUFFERS."
+(defun ri-tabs--buffer-in-owner-p (buffer owner)
+  "Return non-nil when BUFFER belongs to OWNER.
+OWNER is the active marked-set owner context.  Git roots are compared when
+available; outside Git, the buffer's effective owner directory is compared
+directly with OWNER."
+  (and owner
+       (equal (ri-tabs--buffer-owner-context buffer)
+              (ri-tabs--canonical-directory owner))))
+
+(defun ri-tabs--shortest-distinguishing-suffix (buffer comparison-buffers
+                                                        &optional min-width)
+  "Return BUFFER's shortest path suffix distinct from COMPARISON-BUFFERS.
+MIN-WIDTH defaults to 1 path component.  The caller can pass 2 when BUFFER's
+basename is already known to collide and therefore parent context is required."
+  (let* ((parts (ri-tabs--path-parts (buffer-file-name buffer)))
+         (other-parts
+          (mapcar (lambda (other)
+                    (ri-tabs--path-parts (buffer-file-name other)))
+                  comparison-buffers))
+         (width (min (max 1 (or min-width 1)) (length parts)))
+         (limit (length parts)))
+    (while (and (< width limit)
+                (seq-some
+                 (lambda (candidate)
+                   (ri-tabs--same-suffix-p parts candidate width))
+                 other-parts))
+      (setq width (1+ width)))
+    (string-join (last parts width) "/")))
+
+(defun ri-tabs--tab-name (buffer buffers &optional owner)
+  "Return BUFFER's deterministic file label among BUFFERS for OWNER.
+A unique basename is kept as-is.  For duplicate basenames, a sole owner-local
+file keeps the basename while foreign files gain the shortest sufficient path
+suffix.  Multiple owner-local duplicates are qualified as needed so all labels
+remain unambiguous."
   (let* ((file (buffer-file-name buffer))
          (base (file-name-nondirectory file))
          (same-base
@@ -473,20 +508,16 @@ When FILE-IDS is non-nil, only synchronize buffers with those identities."
                 same-base)
       (buffer-name buffer))
      (t
-      (let* ((parts (ri-tabs--path-parts file))
-             (other-parts
-              (mapcar (lambda (other)
-                        (ri-tabs--path-parts (buffer-file-name other)))
-                      same-base))
-             (width 1)
-             (limit (length parts)))
-        (while (and (< width limit)
-                    (seq-some
-                     (lambda (candidate)
-                       (ri-tabs--same-suffix-p parts candidate width))
-                     other-parts))
-          (setq width (1+ width)))
-        (string-join (last parts width) "/"))))))
+      (let* ((duplicates (cons buffer same-base))
+             (owner-local
+              (seq-filter (lambda (candidate)
+                            (ri-tabs--buffer-in-owner-p candidate owner))
+                          duplicates)))
+        (if (and (memq buffer owner-local)
+                 (= (length owner-local) 1))
+            base
+          (ri-tabs--shortest-distinguishing-suffix
+           buffer same-base 2)))))))
 
 (defun ri-tabs--tab-face (selected)
   "Return the appropriate tab face for SELECTED state."
@@ -556,7 +587,7 @@ ambient selected window."
     (propertize
      (format " %s %s "
              (ri-tabs--marker buffer owner state)
-             (ri-tabs--tab-name buffer buffers))
+             (ri-tabs--tab-name buffer buffers owner))
      'face (ri-tabs--tab-face selected)
      'mouse-face 'ri-tabs-highlight
      'help-echo help)))
@@ -875,6 +906,7 @@ Return `ri-tabs--absent' when `default-frame-alist' has no such entry."
    :mode (and tab-bar-mode t)
    :format (copy-tree (default-value 'tab-bar-format))
    :show (default-value 'tab-bar-show)
+   :auto-width (default-value 'tab-bar-auto-width)
    :event-bindings
    (ri-tabs--capture-bindings
     tab-bar-map (mapcar #'car ri-tabs--tab-bar-event-bindings))
@@ -890,6 +922,10 @@ Return `ri-tabs--absent' when `default-frame-alist' has no such entry."
     (setq ri-tabs--tab-bar-state
           (ri-tabs--capture-tab-bar-state)))
   (setq-default tab-bar-format '(ri-tabs--format-tabs)
+                ;; Native `tab-bar-auto-width' deliberately stretches matching
+                ;; tabs to an equal width.  Nil is the native content-sized
+                ;; behavior, which is what Ri file tabs require.
+                tab-bar-auto-width nil
                 ;; `t' is the documented unconditional visibility value.
                 ;; A numeric value is a threshold based on native workspace
                 ;; tabs, which Ri deliberately does not use for file tabs.
@@ -909,7 +945,8 @@ Return `ri-tabs--absent' when `default-frame-alist' has no such entry."
     (let ((state ri-tabs--tab-bar-state))
       (setq-default
        tab-bar-format (copy-tree (plist-get state :format))
-       tab-bar-show (plist-get state :show))
+       tab-bar-show (plist-get state :show)
+       tab-bar-auto-width (plist-get state :auto-width))
       (unless (plist-get state :mode)
         (tab-bar-mode -1))
       (when (plist-get state :mode)
@@ -954,7 +991,8 @@ a contradictory state where the mode is active but its rendering surface
 is disabled."
   (when ri-tabs-mode
     (setq-default tab-bar-format '(ri-tabs--format-tabs)
-                  tab-bar-show t)
+                  tab-bar-show t
+                  tab-bar-auto-width nil)
     (unless tab-bar-mode
       (tab-bar-mode 1))
     (dolist (frame (frame-list))
