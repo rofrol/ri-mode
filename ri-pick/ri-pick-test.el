@@ -35,7 +35,7 @@
 (ert-deftest ri-pick-test-printable-keys-remain-query-input ()
   (with-temp-buffer
     (ri-pick-mode)
-    (dolist (key '("q" "-" "5" "SPC"))
+    (dolist (key '("q" "-" "5" "SPC" "s" "d" "f" "S"))
       (should (eq (key-binding (kbd key)) #'ri-pick-self-insert)))))
 
 (ert-deftest ri-pick-test-navigation-and-editing-bindings-remain-active ()
