@@ -77,10 +77,20 @@ main bindings are:
 | `I`                  | Join the current line to the previous line                  |
 | `J` / `L`            | Dedent / indent nonblank selected lines by four columns      |
 | `F`                  | Open the Transform menu                                      |
+| `,`                  | Open the Ki-style Surround menu                              |
 | `z` / `Z`            | Undo / redo; hold `z` for the Undo/Redo layer                |
 | `RET`                | Save the buffer                                              |
 | `SPC`                | Open the command menu                                        |
 | `C-h`                | Show the default Emacs help keymap and read one help key |
+
+The Surround menu is a prefix menu rather than a hold layer, matching Ki's
+spatial enclosure layout. Press `,` and then `s` to surround, `r` to delete a
+surround, `f` to change one, `d` to select inside, or `e` to select around.
+Enclosure keys are `m` for `()`, `,` for `[]`, `.` for `{}`, `/` for `<>`,
+`j` for single quotes, `k` for double quotes, and `l` for backticks. In the
+Surround submenu, `;` prompts for an HTML/XML tag. For example, `, s ,` wraps
+the current unit/selection in square brackets, and `, f m .` changes `()` to
+`{}`. Select Inside/Around enters Extend with exact enclosure bounds.
 
 The `c`, `r`, `e`, `g`, `t`, `v`, `x`, and `z` keys also act as
 momentary layers. Hold one of them to display its available actions,

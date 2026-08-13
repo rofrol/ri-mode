@@ -38,7 +38,8 @@
                    "status-frame"
                    "semantic-regions"
                    "modal-cursor"
-                   "ri-tabs"))
+                   "ri-tabs"
+                   "ri-surround"))
       (let ((path (expand-file-name dir ri-root)))
         (when (file-directory-p path)
           (add-to-list 'load-path path))))))
@@ -54,6 +55,7 @@
 (require 'ri-duplicate)
 (require 'ri-edit)
 (require 'ri-transform)
+(require 'ri-surround)
 (require 'cl-lib)
 (require 'face-remap)
 
@@ -220,6 +222,137 @@ including Eglot's project label."
   (ri--close-menu)
   (yank)
   (ri--finish-edit-command))
+
+
+;;;; Surround menu
+
+(defvar ri--surround-change-from nil
+  "Enclosure kind selected as the source of Change Surround.")
+
+(defun ri--surround-close-menu ()
+  "Close the active Surround menu without changing modal state."
+  (set-transient-map nil)
+  (ri--close-menu))
+
+(defun ri--surround-run (function kind)
+  "Close Surround UI and call FUNCTION with enclosure KIND."
+  (ri--surround-close-menu)
+  (funcall function kind))
+
+(defun ri--surround-add-command (kind)
+  (ri--surround-run #'ri-surround-add kind))
+(defun ri--surround-delete-command (kind)
+  (ri--surround-run #'ri-surround-delete kind))
+(defun ri--surround-select-inside-command (kind)
+  (ri--surround-run #'ri-surround-select-inside kind))
+(defun ri--surround-select-around-command (kind)
+  (ri--surround-run #'ri-surround-select-around kind))
+
+(defun ri--surround-command-symbol (prefix kind)
+  "Return/intern command symbol for PREFIX and KIND."
+  (intern (format "ri--surround-%s-%s" prefix kind)))
+
+(defun ri--surround-define-command (prefix function kind)
+  "Define a small interactive surround command for FUNCTION and KIND."
+  (let ((symbol (ri--surround-command-symbol prefix kind)))
+    (unless (fboundp symbol)
+      (fset symbol
+            `(lambda ()
+               (interactive)
+               (ri--surround-run #',function ',kind))))
+    symbol))
+
+(defun ri--surround-enclosure-map (prefix function)
+  "Build a Ki-layout enclosure map for PREFIX calling FUNCTION."
+  (let ((map (make-sparse-keymap)))
+    (dolist (spec ri-surround-enclosures)
+      (let* ((kind (car spec))
+             (props (cdr spec))
+             (key (plist-get props :key))
+             (label (plist-get props :label))
+             (command (ri--surround-define-command prefix function kind)))
+        (define-key map key (list 'menu-item label command))))
+    (define-key map (kbd "<escape>") #'ri--exit-menu)
+    map))
+
+(defvar ri--surround-add-map
+  (let ((map (ri--surround-enclosure-map "add" #'ri-surround-add)))
+    (define-key map ";" '(menu-item "<></>" ri-surround-add-tag-menu-command))
+    map))
+(defvar ri--surround-delete-map
+  (ri--surround-enclosure-map "delete" #'ri-surround-delete))
+(defvar ri--surround-select-inside-map
+  (ri--surround-enclosure-map "inside" #'ri-surround-select-inside))
+(defvar ri--surround-select-around-map
+  (ri--surround-enclosure-map "around" #'ri-surround-select-around))
+
+(defun ri--surround-show-submenu (state title map)
+  "Show Surround submenu STATE with TITLE and MAP."
+  (setq ri--menu-state state)
+  (keymap-legend-show title map (list :title title))
+  (set-transient-map map t
+                     (lambda ()
+                       (when (eq ri--menu-state state)
+                         (ri--close-menu)))))
+
+(defun ri-surround-add-tag-menu-command ()
+  "Close Surround UI, prompt for a tag, and surround with it."
+  (interactive)
+  (ri--surround-close-menu)
+  (call-interactively #'ri-surround-add-tag))
+
+(defun ri-surround-add-menu ()
+  (interactive)
+  (ri--surround-show-submenu 'surround-add "Surround" ri--surround-add-map))
+(defun ri-surround-delete-menu ()
+  (interactive)
+  (ri--surround-show-submenu 'surround-delete "Delete Surround" ri--surround-delete-map))
+(defun ri-surround-select-inside-menu ()
+  (interactive)
+  (ri--surround-show-submenu 'surround-inside "Select Inside" ri--surround-select-inside-map))
+(defun ri-surround-select-around-menu ()
+  (interactive)
+  (ri--surround-show-submenu 'surround-around "Select Around" ri--surround-select-around-map))
+
+(defun ri--surround-change-to-command (kind)
+  "Complete Change Surround using KIND as the replacement."
+  (let ((from ri--surround-change-from))
+    (setq ri--surround-change-from nil)
+    (ri--surround-close-menu)
+    (ri-surround-change from kind)))
+
+(defun ri--surround-change-from-command (kind)
+  "Remember source KIND and show the replacement enclosure map."
+  (setq ri--surround-change-from kind)
+  (ri--surround-show-submenu
+   'surround-change-to "Change Surround To" ri--surround-change-to-map))
+
+(defvar ri--surround-change-from-map
+  (ri--surround-enclosure-map "change-from" #'ri--surround-change-from-command))
+(defvar ri--surround-change-to-map
+  (ri--surround-enclosure-map "change-to" #'ri--surround-change-to-command))
+
+(defvar ri--surround-menu-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "d" '(menu-item "Select Inside" ri-surround-select-inside-menu))
+    (define-key map "e" '(menu-item "Select Around" ri-surround-select-around-menu))
+    (define-key map "f" '(menu-item "Change Surround" ri-surround-change-menu))
+    (define-key map "r" '(menu-item "Delete Surround" ri-surround-delete-menu))
+    (define-key map "s" '(menu-item "Surround" ri-surround-add-menu))
+    (define-key map (kbd "<escape>") #'ri--exit-menu)
+    map)
+  "Ki-style Surround operation menu.")
+
+(defun ri-surround-change-menu ()
+  (interactive)
+  (setq ri--surround-change-from nil)
+  (ri--surround-show-submenu
+   'surround-change-from "Change Surround From" ri--surround-change-from-map))
+
+(defun ri-surround-menu ()
+  "Open the Ki-style Surround menu."
+  (interactive)
+  (ri--surround-show-submenu 'surround "Surround" ri--surround-menu-map))
 
 ;;;; Quit with unsaved-file check
 
@@ -665,6 +798,7 @@ and its release as a KKP CSI-u event."
     (define-key map "g" '(menu-item "≡ Open" ri-change-selection))
     (define-key map "t" '(menu-item "≡ Swap" ignore))
     (define-key map "F" '(menu-item "⌨︎ Transform" ri-transform-menu))
+    (define-key map "," '(menu-item "Surround" ri-surround-menu))
     (define-key map "v" '(menu-item "≡ Paste" ri-paste-selection))
     (define-key map "x" '(menu-item "≡ Cut" ri-cut-selection))
     (define-key map "f" '(menu-item "Extend" ri-toggle-extend))
@@ -851,6 +985,7 @@ keymap lookups during that command must keep their resolved binding."
   (define-key mini-modal-map "h" #'ri-enter-insert-left)
   (define-key mini-modal-map ";" #'ri-enter-insert-right)
   (define-key mini-modal-map "F" #'ri-transform-menu)
+  (define-key mini-modal-map "," #'ri-surround-menu)
   (define-key mini-modal-map (kbd "SPC") #'ri-space-menu)
   (let (to-remove)
     (dolist (entry minor-mode-alist)
