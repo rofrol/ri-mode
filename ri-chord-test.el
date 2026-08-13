@@ -334,5 +334,34 @@
     (run-hooks 'post-command-hook)
     (should-not ri--restore-message-after-release)))
 
+
+(ert-deftest ri-chord-test-parser-keeps-kitty-text-codepoint ()
+  (let ((parsed (kkp-chord--parse (string-to-list "108;3:1;322u"))))
+    (should (= (plist-get parsed :keycode) ?l))
+    (should (= (plist-get parsed :modifier-num) 2))
+    (should (= (plist-get parsed :event-type) kkp-chord--event-press))
+    (should (equal (plist-get parsed :text-codepoints) '(322)))))
+
+(ert-deftest ri-chord-test-altgr-l-becomes-polish-l-stroke ()
+  (let ((translated
+         (kkp-chord--translate-advice
+          (lambda (_input) 'normal)
+          (string-to-list "108;3:1;322u"))))
+    (should (equal translated (vector ?ł)))))
+
+(ert-deftest ri-chord-test-meta-l-remains-meta-l ()
+  (let ((translated
+         (kkp-chord--translate-advice
+          (lambda (_input) 'normal)
+          (string-to-list "108;3:1;108u"))))
+    (should (eq translated 'normal))))
+
+(ert-deftest ri-chord-test-shift-meta-l-remains-normal-kkp-input ()
+  (let ((translated
+         (kkp-chord--translate-advice
+          (lambda (_input) 'normal)
+          (string-to-list "108:76;4:1;76u"))))
+    (should (eq translated 'normal))))
+
 (provide 'ri-chord-test)
 ;;; ri-chord-test.el ends here
