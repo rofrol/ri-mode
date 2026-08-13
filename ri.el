@@ -254,13 +254,13 @@ including Eglot's project label."
   "Replace the Pick submenu with the picker opened by FUNCTION."
   (setq ri--menu-state 'picker)
   (set-transient-map nil)
+  (keymap-legend-hide)
   (ri--hide-frame)
   (condition-case error
       (ri--call-preserving-user-error
        (lambda () (funcall function #'ri--picker-closed)))
     (error
      (setq ri--menu-state nil)
-     (keymap-legend-hide)
      (signal (car error) (cdr error)))))
 
 (defun ri-pick-buffer ()

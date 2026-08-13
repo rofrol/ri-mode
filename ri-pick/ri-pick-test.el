@@ -10,13 +10,15 @@
   (ri-pick-item-create :label label :search label :target target))
 
 (defmacro ri-pick-test--without-real-ui (&rest body)
-  "Run BODY with picker display and legend primitives recorded but inert."
+  "Run BODY with picker display primitives recorded but inert."
   (declare (indent 0) (debug t))
-  `(let (shown hidden display-action quit-arguments)
+  `(let (display-action quit-arguments)
      (cl-letf (((symbol-function 'keymap-legend-show)
-                (lambda (&rest arguments) (setq shown arguments)))
+                (lambda (&rest _arguments)
+                  (ert-fail "Picker unexpectedly showed a keymap legend")))
                ((symbol-function 'keymap-legend-hide)
-                (lambda () (setq hidden t)))
+                (lambda ()
+                  (ert-fail "Picker unexpectedly hid a keymap legend")))
                ((symbol-function 'display-buffer)
                 (lambda (_buffer action)
                   (setq display-action action)
@@ -35,6 +37,27 @@
     (ri-pick-mode)
     (dolist (key '("q" "-" "5" "SPC"))
       (should (eq (key-binding (kbd key)) #'ri-pick-self-insert)))))
+
+(ert-deftest ri-pick-test-navigation-and-editing-bindings-remain-active ()
+  (dolist (binding
+           '(("DEL" . ri-pick-delete-backward)
+             ("<backspace>" . ri-pick-delete-backward)
+             ("<delete>" . ri-pick-delete-forward)
+             ("C-a" . ri-pick-query-beginning)
+             ("C-e" . ri-pick-query-end)
+             ("C-y" . ri-pick-yank)
+             ("C-d" . ri-pick-page-down)
+             ("C-u" . ri-pick-page-up)
+             ("C-j" . ri-pick-next)
+             ("C-k" . ri-pick-previous)
+             ("<down>" . ri-pick-next)
+             ("<up>" . ri-pick-previous)
+             ("RET" . ri-pick-accept)
+             ("<return>" . ri-pick-accept)
+             ("C-g" . ri-pick-cancel)
+             ("<escape>" . ri-pick-cancel)))
+    (should (eq (lookup-key ri-pick-mode-map (kbd (car binding)))
+                (cdr binding)))))
 
 (ert-deftest ri-pick-test-render-keeps-results-out-of-query-line ()
   (with-temp-buffer
@@ -84,10 +107,7 @@
              :on-close (lambda (accepted) (setq closed accepted)))
             (should (equal (car display-action)
                            '(display-buffer-in-child-frame)))
-            (should (equal (car shown) "Buffer"))
-            (should (eq (cadr shown) ri-pick-mode-map))
             (ri-pick-cancel)
-            (should hidden)
             (should (equal quit-arguments
                            (list t (selected-window))))
             (should-not closed)
@@ -150,20 +170,25 @@
               (should (timerp (ri-pick--session-timer session))))
           (ri-pick--cancel-pending session))))))
 
-(ert-deftest ri-pick-test-geometry-stays-above-live-legend ()
+(ert-deftest ri-pick-test-bottom-edge-ignores-bottom-side-windows ()
   (save-window-excursion
-    (let* ((legend-buffer (get-buffer-create " *ri-pick-test-legend*"))
-           (legend-window
+    (let* ((side-buffer (get-buffer-create " *ri-pick-test-bottom*"))
+           (side-window
             (display-buffer-in-side-window
-             legend-buffer '((side . bottom) (window-height . 4)))))
+             side-buffer '((side . bottom) (window-height . 4))))
+           (frame (selected-frame))
+           (minibuffer (minibuffer-window frame))
+           (expected
+            (- (frame-height frame)
+               (if (window-live-p minibuffer)
+                   (window-total-height minibuffer)
+                 0))))
       (unwind-protect
-          (cl-letf (((symbol-function 'keymap-legend-window)
-                     (lambda () legend-window)))
-            (pcase-let ((`(,_left ,top ,_width ,height)
-                         (ri-pick--geometry (selected-frame))))
-              (should (<= (+ top height)
-                          (nth 1 (window-edges legend-window))))))
-        (when (buffer-live-p legend-buffer) (kill-buffer legend-buffer))))))
+          (progn
+            (should (= (ri-pick--bottom-usable-edge frame) expected))
+            (should (> expected (nth 1 (window-edges side-window)))))
+        (when (buffer-live-p side-buffer)
+          (kill-buffer side-buffer))))))
 
 (ert-deftest ri-pick-test-buffer-items-retain-buffer-identity ()
   (let ((first (generate-new-buffer "ri-pick-first"))
