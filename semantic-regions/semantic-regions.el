@@ -356,6 +356,29 @@ grammar tokens, such as language keywords, while skipping punctuation."
         (or (eq (char-syntax char) ?w)
             (eq char ?_)))))
 
+(defun sr--node-first-target-in-region (bounds)
+  "Return the first horizontally traversable real NODE inside BOUNDS.
+Search from the beginning of the source semantic region so entry from LINE is
+independent of the incidental point position.  Direct spatial resolution is
+used only to discover the lowest syntax node at each textual position; the
+existing horizontal-target predicate decides whether that node is a valid
+NODE navigation target."
+  (condition-case nil
+      (let ((pos (car bounds))
+            (end (cdr bounds))
+            target)
+        (while (and (< pos end) (not target))
+          (when-let* ((node (sr--node-lowest-at pos))
+                      (node-bounds (sr--node-bounds node)))
+            (when (and (<= (car bounds) (car node-bounds))
+                       (<= (cdr node-bounds) end)
+                       (sr--node-horizontal-target-p node))
+              (setq target node)))
+          (unless target
+            (setq pos (1+ pos))))
+        target)
+    (error nil)))
+
 (defun sr--node-horizontal-sibling (node direction)
   "Return NODE's traversable sibling in DIRECTION.
 DIRECTION is `next' or `prev'."
@@ -1479,10 +1502,12 @@ adjacent empty line is a target; otherwise empty lines are skipped."
 
 ;; ── Submode setters ──────────────────────────────────────────────────────
 
-(defun sr--set-submode (submode human-name)
-  "Set `sr-submode' to SUBMODE and show HUMAN-NAME in the echo area."
+(defun sr--set-submode (submode human-name &optional initial-node)
+  "Set `sr-submode' to SUBMODE and show HUMAN-NAME in the echo area.
+INITIAL-NODE, when non-nil, seeds NODE selection for a transition that has
+already resolved its semantic entry target."
   (unless (eq sr-submode submode)
-    (setq sr--node-current nil
+    (setq sr--node-current initial-node
           sr--node-direct-target-p nil)
     (sr--node-clear-virtual))
   (setq sr-submode submode)
@@ -1530,10 +1555,21 @@ adjacent empty line is a target; otherwise empty lines are skipped."
   (sr--set-submode 'paragraph "PARAGRAPH Mode"))
 
 (defun sr-set-node-mode ()
-  "Switch to NODE submode backed exclusively by tree-sitter."
+  "Switch to NODE submode backed exclusively by tree-sitter.
+When entering from LINE or LINE*, seed NODE from the first traversable syntax
+target in that selected line rather than from the incidental point position."
   (interactive)
-  (sr--require-node-parser)
-  (sr--set-submode 'node "NODE Mode"))
+  (let* ((source-submode sr-submode)
+         (line-bounds
+          (when (memq source-submode '(line line-star))
+            (sr--get-current-unit-bounds))))
+    (sr--require-node-parser)
+    (let ((initial-node
+           (when line-bounds
+             (sr--node-first-target-in-region line-bounds))))
+      (when-let* ((bounds (sr--node-bounds initial-node)))
+        (goto-char (car bounds)))
+      (sr--set-submode 'node "NODE Mode" initial-node))))
 
 ;; ── Minor mode ───────────────────────────────────────────────────────────
 

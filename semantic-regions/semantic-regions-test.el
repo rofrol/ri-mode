@@ -526,6 +526,59 @@
                    "t"))))
 
 
+(ert-deftest semantic-region-test-line-to-node-enters-first-elisp-target ()
+  (dolist (submode '(line line-star))
+    (dolist (text '("(setq mouse-wheel-tilt-scroll t)"
+                    "    (setq mouse-wheel-tilt-scroll t)"))
+      (semantic-region-test--with-buffer text
+        (unless (and (treesit-available-p)
+                     (treesit-language-available-p 'elisp))
+          (ert-skip "Elisp tree-sitter grammar unavailable"))
+        (emacs-lisp-mode)
+        (treesit-parser-create 'elisp)
+        (search-forward "mouse-wheel-tilt-scroll")
+        (backward-char 4)
+        (setq sr-submode submode)
+        (sr-set-node-mode)
+        (should (eq sr-submode 'node))
+        (should (equal (semantic-region-string
+                        (semantic-region-parse-at 'node (point)))
+                       "setq"))
+        (should-not (eq (char-after (point)) ?\())))))
+
+(ert-deftest semantic-region-test-line-to-node-entry-joins-horizontal-navigation ()
+  (semantic-region-test--with-buffer
+      "(setq mouse-wheel-tilt-scroll t)"
+    (unless (and (treesit-available-p)
+                 (treesit-language-available-p 'elisp))
+      (ert-skip "Elisp tree-sitter grammar unavailable"))
+    (emacs-lisp-mode)
+    (treesit-parser-create 'elisp)
+    (search-forward "mouse-wheel-tilt-scroll")
+    (backward-char 3)
+    (setq sr-submode 'line)
+    (sr-set-node-mode)
+    (should (equal (semantic-region-string
+                    (semantic-region-parse-at 'node (point)))
+                   "setq"))
+    (sr-nav-right)
+    (should (equal (semantic-region-string
+                    (semantic-region-parse-at 'node (point)))
+                   "mouse-wheel-tilt-scroll"))
+    (sr-nav-right)
+    (should (equal (semantic-region-string
+                    (semantic-region-parse-at 'node (point)))
+                   "t"))
+    (sr-nav-left)
+    (should (equal (semantic-region-string
+                    (semantic-region-parse-at 'node (point)))
+                   "mouse-wheel-tilt-scroll"))
+    (sr-nav-left)
+    (should (equal (semantic-region-string
+                    (semantic-region-parse-at 'node (point)))
+                   "setq"))))
+
+
 (ert-deftest semantic-region-test-node-down-enters-atomic-elisp-string ()
   (semantic-region-test--with-buffer "\"melpa\""
     (unless (and (treesit-available-p)
