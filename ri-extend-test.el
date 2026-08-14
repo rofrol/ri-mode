@@ -349,6 +349,42 @@
     (should (eq sr-submode 'word))
     (ri--exit-extend)))
 
+(ert-deftest ri-extend-test-momentary-release-in-node-retargets-lowest ()
+  (ri-extend-test--with-buffer "(defun foo ()\n  (bar baz))"
+    (unless (and (treesit-available-p)
+                 (treesit-language-available-p 'elisp))
+      (ert-skip "Elisp tree-sitter grammar unavailable"))
+    (treesit-parser-create 'elisp)
+    ;; CHAR: move right onto the space after `bar`; release must select the
+    ;; lowest node at that position like a mouse click, not the adjacent
+    ;; token from the keyboard top-node rule.
+    (setq sr-submode 'node)
+    (goto-char 20)                     ; `r' of bar
+    (sr--update-highlight)
+    (ri-momentary-char-right)
+    (should (= (point) 21))
+    (should (eq sr-submode 'char))
+    (should (eq ri--momentary-origin-submode 'node))
+    (ri--restore-momentary-submode)
+    (should (eq sr-submode 'node))
+    (should (= (point) 21))
+    (should (equal (sr--get-current-unit-bounds) (cons 17 26)))
+    (should (equal (buffer-substring-no-properties 17 26) "(bar baz)"))
+    (should-not ri--momentary-origin-submode)
+    ;; WORD+: down lands on the opening paren; release selects the `(' leaf
+    ;; node exactly as a click there would.
+    (setq sr-submode 'node)
+    (goto-char (point-min))
+    (sr--update-highlight)
+    (ri-momentary-word-plus-down)
+    (should (= (point) 17))
+    (should (eq ri--momentary-origin-submode 'node))
+    (ri--restore-momentary-submode)
+    (should (eq sr-submode 'node))
+    (should (= (point) 17))
+    (should (equal (sr--get-current-unit-bounds) (cons 17 18)))
+    (should (equal (buffer-substring-no-properties 17 18) "("))))
+
 (ert-deftest ri-extend-test-normal-submode-switch-snaps-to-unit-start ()
   (ri-extend-test--with-buffer "  alpha beta\n"
     (dolist

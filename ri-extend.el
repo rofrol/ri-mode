@@ -583,7 +583,10 @@ repeated `f` is a no-op; in NODE mode, it leaves Extend."
 (defun ri--restore-submode (submode)
   "Switch back to SUBMODE after a momentary layer, without moving point.
 Outside Extend, the raw semantic-regions setters do not move point, so
-the position left by held navigation is kept."
+the position left by held navigation is kept.  Returning to NODE retargets
+the current node at that position like a mouse click (lowest syntax node)
+instead of reapplying the keyboard top-node entry rule; an active Extend
+selection keeps its exact preserved bounds."
   (when (ri--selection-active-p)
     (ri--preserve-selection-for-submode-switch))
   (pcase submode
@@ -595,7 +598,10 @@ the position left by held navigation is kept."
     ('word-plus (sr-set-word-plus-mode))
     ('word-star (sr-set-word-star-mode))
     ('subword (sr-set-subword-mode))
-    ('node (sr-set-node-mode)))
+    ('node
+     (sr-set-node-mode)
+     (unless (ri--selection-active-p)
+       (sr-retarget-at-position (point)))))
   (ri--update-highlight))
 
 (defun ri--restore-momentary-submode ()

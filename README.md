@@ -127,7 +127,9 @@ press the shown key while still holding it, then release. Hold `a` with
 navigate by characters, or hold `s` with the same four keys to navigate by
 WORD+ units. Releasing a held `a`, `w`, or `s` returns to the
 submode that was active before the layer opened (e.g. NODE, WORD, LINE),
-leaving point where the movement put it. The other layers provide
+leaving point where the movement put it. When that submode is NODE, the
+release retargets the current unit to the lowest syntax node at the resting
+position, exactly as a mouse click there would. The other layers provide
 duplicate, eat, buffer, open, swap, paste, cut, and undo/redo operations.
 
 The Buffer layer matches Ki: `j`/`l` cycle marked buffers with wrapping,
