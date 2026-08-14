@@ -14,6 +14,8 @@
 (require 'multisession)
 (require 'semantic-regions)
 
+(declare-function mini-modal-normal "mini-modal")
+
 (define-multisession-variable ri--last-selection-submode
   'line
   "Last persistent Ri selection submode."
@@ -74,6 +76,370 @@
 
 (defvar-local ri--dup-last-bounds nil
   "Temporary bounds of a just-created inline duplicate.")
+
+(defvar-local ri--momentary-origin-submode nil
+  "Submode to restore when a momentary LINE/CHAR/WORD+ layer releases.")
+(cl-defstruct (ri--history-snapshot
+               (:constructor ri--history-snapshot-create))
+  "One transient Ri location that can be restored later."
+  buffer
+  file
+  point
+  point-fallback
+  submode
+  extend-p
+  start
+  start-fallback
+  end
+  end-fallback
+  active-edge)
+
+(cl-defstruct (ri--history-window-state
+               (:constructor ri--history-window-state-create))
+  "Coarse Move History state for one editing window."
+  current
+  back
+  forward)
+
+(defvar-local ri--history-fine-current nil
+  "Current fine Move History snapshot for this buffer.")
+(defvar-local ri--history-fine-back nil
+  "Fine Move History snapshots behind the current buffer location.")
+(defvar-local ri--history-fine-forward nil
+  "Fine Move History snapshots ahead of the current buffer location.")
+
+(defvar ri--history-before-snapshot nil
+  "Snapshot captured by `ri--history-pre-command'.")
+(defvar ri--history-before-window nil
+  "Window captured by `ri--history-pre-command'.")
+(defvar ri--history-replaying nil
+  "Non-nil while a Move History command is restoring a snapshot.")
+
+(defun ri--history-snapshot-markers (snapshot)
+  "Return all markers owned by SNAPSHOT."
+  (delq nil
+        (list (ri--history-snapshot-point snapshot)
+              (ri--history-snapshot-start snapshot)
+              (ri--history-snapshot-end snapshot))))
+
+(defun ri--history-dispose-snapshot (snapshot)
+  "Detach all markers owned by SNAPSHOT."
+  (when (ri--history-snapshot-p snapshot)
+    (dolist (marker (ri--history-snapshot-markers snapshot))
+      (set-marker marker nil))))
+
+(defun ri--history-dispose-list (snapshots)
+  "Detach markers owned by SNAPSHOTS."
+  (mapc #'ri--history-dispose-snapshot snapshots))
+
+(defun ri--history-snapshot-position (marker fallback)
+  "Return MARKER's position, or FALLBACK after its buffer is gone."
+  (or (and (markerp marker) (marker-position marker))
+      fallback))
+
+(defun ri--history-snapshot-point-position (snapshot)
+  "Return the point position stored in SNAPSHOT."
+  (ri--history-snapshot-position
+   (ri--history-snapshot-point snapshot)
+   (ri--history-snapshot-point-fallback snapshot)))
+
+(defun ri--history-snapshot-bounds (snapshot)
+  "Return exact selection bounds stored in SNAPSHOT, or nil."
+  (when (ri--history-snapshot-extend-p snapshot)
+    (cons
+     (ri--history-snapshot-position
+      (ri--history-snapshot-start snapshot)
+      (ri--history-snapshot-start-fallback snapshot))
+     (ri--history-snapshot-position
+      (ri--history-snapshot-end snapshot)
+      (ri--history-snapshot-end-fallback snapshot)))))
+
+(defun ri--history-effective-submode ()
+  "Return the submode represented by the current visible Ri state."
+  (or ri--momentary-origin-submode sr-submode))
+
+(defun ri--history-capture-snapshot (&optional buffer)
+  "Capture the current Ri location in BUFFER."
+  (with-current-buffer (or buffer (current-buffer))
+    (let* ((extend-p (ri--selection-active-p))
+           (bounds (and extend-p (ri--selection-bounds)))
+           (start (and bounds (copy-marker (car bounds))))
+           (end (and bounds (copy-marker (cdr bounds)))))
+      (ri--history-snapshot-create
+       :buffer (current-buffer)
+       :file buffer-file-name
+       :point (copy-marker (point))
+       :point-fallback (point)
+       :submode (ri--history-effective-submode)
+       :extend-p extend-p
+       :start start
+       :start-fallback (and bounds (car bounds))
+       :end end
+       :end-fallback (and bounds (cdr bounds))
+       :active-edge (and extend-p
+                         (ri--selection-state-active-edge ri--selection))))))
+
+(defun ri--history-snapshot-equal-p (left right)
+  "Return non-nil when LEFT and RIGHT describe the same location."
+  (and (ri--history-snapshot-p left)
+       (ri--history-snapshot-p right)
+       (eq (ri--history-snapshot-buffer left)
+           (ri--history-snapshot-buffer right))
+       (equal (ri--history-snapshot-file left)
+              (ri--history-snapshot-file right))
+       (eq (ri--history-snapshot-submode left)
+           (ri--history-snapshot-submode right))
+       (= (ri--history-snapshot-point-position left)
+          (ri--history-snapshot-point-position right))
+       (eq (ri--history-snapshot-extend-p left)
+           (ri--history-snapshot-extend-p right))
+       (equal (ri--history-snapshot-bounds left)
+              (ri--history-snapshot-bounds right))
+       (eq (ri--history-snapshot-active-edge left)
+           (ri--history-snapshot-active-edge right))))
+
+(defun ri--history-snapshot-file-equal-p (left right)
+  "Return non-nil when LEFT and RIGHT refer to the same file."
+  (and (ri--history-snapshot-p left)
+       (ri--history-snapshot-p right)
+       (equal (ri--history-snapshot-file left)
+              (ri--history-snapshot-file right))))
+
+(defun ri--history-window (window)
+  "Return WINDOW's coarse Move History state."
+  (window-parameter window 'ri--history-state))
+
+(defun ri--history-set-window (window state)
+  "Set WINDOW's coarse Move History STATE."
+  (set-window-parameter window 'ri--history-state state))
+
+(defun ri--history-eligible-window-p (window)
+  "Return non-nil when WINDOW is an ordinary Ri editing window."
+  (and (window-live-p window)
+       (null (window-parameter window 'window-side))
+       (not (window-minibuffer-p window))
+       (with-current-buffer (window-buffer window)
+         (and (bound-and-true-p sr-mode)
+              (bound-and-true-p mini-modal-mode)
+              (not (derived-mode-p 'special-mode))))))
+
+(defun ri--history-fine-ensure-current ()
+  "Initialize the current fine snapshot lazily."
+  (unless (ri--history-snapshot-p ri--history-fine-current)
+    (setq ri--history-fine-current (ri--history-capture-snapshot))))
+
+(defun ri--history-fine-clear-forward ()
+  "Discard fine snapshots ahead of the current location."
+  (ri--history-dispose-list ri--history-fine-forward)
+  (setq ri--history-fine-forward nil))
+
+(defun ri--history-window-ensure-current (window)
+  "Initialize WINDOW's coarse snapshot lazily."
+  (or (ri--history-window window)
+      (let ((state (ri--history-window-state-create
+                    :current (with-current-buffer (window-buffer window)
+                               (ri--history-capture-snapshot))
+                    :back nil
+                    :forward nil)))
+        (ri--history-set-window window state)
+        state)))
+
+(defun ri--history-window-clear-forward (state)
+  "Discard coarse snapshots ahead of STATE's current location."
+  (ri--history-dispose-list
+   (ri--history-window-state-forward state))
+  (setf (ri--history-window-state-forward state) nil))
+
+(defun ri--history-restore-extend (snapshot)
+  "Restore the exact Extend state stored in SNAPSHOT."
+  (let* ((bounds (ri--history-snapshot-bounds snapshot))
+         (start (max (point-min) (min (point-max) (car bounds))))
+         (end (max start (min (point-max) (cdr bounds))))
+         (edge (or (ri--history-snapshot-active-edge snapshot) 'end))
+         (state (ri--selection-state-create
+                 :anchor (copy-marker (if (eq edge 'end) start end))
+                 :initial-end nil
+                 :preserved-boundary
+                 (copy-marker (if (eq edge 'end) end start))
+                 :active-edge edge
+                 :undo-stack nil)))
+    (setq ri--selection state)
+    (goto-char (ri--point-at-unit-edge (cons start end) edge))))
+
+(defun ri--history-restore-snapshot (snapshot)
+  "Restore SNAPSHOT in its current buffer."
+  (let ((buffer (ri--history-snapshot-buffer snapshot)))
+    (when (buffer-live-p buffer)
+      (with-current-buffer buffer
+        (ri--exit-extend)
+        (ri--restore-submode (ri--history-snapshot-submode snapshot))
+        (if (ri--history-snapshot-extend-p snapshot)
+            (ri--history-restore-extend snapshot)
+          (goto-char
+           (max (point-min)
+                (min (point-max)
+                     (ri--history-snapshot-point-position snapshot)))))
+        (ri--update-highlight)
+        (force-mode-line-update)
+        t))))
+
+(defun ri--history-fine-commit (before after)
+  "Record a changed same-buffer location from BEFORE to AFTER."
+  (with-current-buffer (ri--history-snapshot-buffer before)
+    (ri--history-fine-ensure-current)
+    (if ri--history-replaying
+        (if (ri--history-snapshot-equal-p
+             ri--history-fine-current after)
+            (ri--history-dispose-snapshot after)
+          (ri--history-dispose-snapshot ri--history-fine-current)
+          (setq ri--history-fine-current after))
+      (unless (ri--history-snapshot-equal-p
+               ri--history-fine-current after)
+        (push ri--history-fine-current ri--history-fine-back)
+        (ri--history-fine-clear-forward)
+        (setq ri--history-fine-current after)))
+    (ri--history-dispose-snapshot before)))
+
+(defun ri--history-fine-navigate (direction)
+  "Navigate fine Move History in DIRECTION, `back' or `forward'."
+  (interactive)
+  (ri--history-fine-ensure-current)
+  (let* ((forward (eq direction 'forward))
+         (source (if forward
+                     ri--history-fine-forward
+                   ri--history-fine-back))
+         (target (pop source)))
+    (while (and target
+                (not (buffer-live-p (ri--history-snapshot-buffer target))))
+      (ri--history-dispose-snapshot target)
+      (setq target (pop source)))
+    (if forward
+        (setq ri--history-fine-forward source)
+      (setq ri--history-fine-back source))
+    (when target
+      (let ((current ri--history-fine-current))
+        (if forward
+            (push current ri--history-fine-back)
+          (push current ri--history-fine-forward))
+        (setq ri--history-replaying t)
+        (ri--history-restore-snapshot target)
+        (setq ri--history-fine-current target)))))
+
+(defun ri-history-back ()
+  "Move to the previous Ri cursor or selection location."
+  (interactive)
+  (ri--history-fine-navigate 'back))
+
+(defun ri-history-forward ()
+  "Move to the next Ri cursor or selection location."
+  (interactive)
+  (ri--history-fine-navigate 'forward))
+
+(defun ri--history-coarse-restore (direction)
+  "Navigate coarse Move History in DIRECTION, `back' or `forward'."
+  (let* ((window (selected-window))
+         (state (and (ri--history-eligible-window-p window)
+                     (ri--history-window-ensure-current window)))
+         (forward (eq direction 'forward))
+         (source (and state
+                      (if forward
+                          (ri--history-window-state-forward state)
+                        (ri--history-window-state-back state))))
+         (target (and source (pop source))))
+    (when state
+      (while (and target
+                  (or (not (stringp
+                            (ri--history-snapshot-file target)))
+                      (not (file-exists-p
+                            (ri--history-snapshot-file target)))))
+        (ri--history-dispose-snapshot target)
+        (setq target (pop source)))
+      (if forward
+          (setf (ri--history-window-state-forward state) source)
+        (setf (ri--history-window-state-back state) source))
+      (when target
+        (let ((current (ri--history-window-state-current state))
+              (buffer (ri--history-snapshot-buffer target)))
+          (if forward
+              (push current (ri--history-window-state-back state))
+            (push current (ri--history-window-state-forward state)))
+          (setq ri--history-replaying t)
+          (unless (eq (current-buffer) buffer)
+            (switch-to-buffer
+             (or (and (buffer-live-p buffer) buffer)
+                 (find-file-noselect
+                  (ri--history-snapshot-file target)))))
+          (with-current-buffer (window-buffer window)
+            (setf (ri--history-snapshot-buffer target) (current-buffer))
+            (ri--history-restore-snapshot target)
+            (ri--history-dispose-snapshot ri--history-fine-current)
+            (setq ri--history-fine-current
+                  (ri--history-capture-snapshot)))
+          (setf (ri--history-window-state-current state) target))))))
+
+(defun ri-history-coarse-back ()
+  "Move to the previous visited Ri file location."
+  (interactive)
+  (ri--history-coarse-restore 'back))
+
+(defun ri-history-coarse-forward ()
+  "Move to the next visited Ri file location."
+  (interactive)
+  (ri--history-coarse-restore 'forward))
+
+(defun ri--history-pre-command ()
+  "Capture the selected Ri location before a command."
+  (setq ri--history-before-snapshot nil
+        ri--history-before-window nil)
+  (let ((window (selected-window)))
+    (when (ri--history-eligible-window-p window)
+      (setq ri--history-before-window window
+            ri--history-before-snapshot
+            (with-current-buffer (window-buffer window)
+              (ri--history-capture-snapshot))
+            ri--history-replaying nil)
+      (ri--history-fine-ensure-current)
+      (ri--history-window-ensure-current window))))
+
+(defun ri--history-post-command ()
+  "Record the selected Ri location after a command."
+  (let ((before ri--history-before-snapshot)
+        (before-window ri--history-before-window)
+        (after-window (selected-window)))
+    (unwind-protect
+        (when (and before
+                   (window-live-p before-window))
+          (if (eq before-window after-window)
+              (let ((after (ri--history-capture-snapshot))
+                    (coarse-after (ri--history-capture-snapshot)))
+                (if (eq (ri--history-snapshot-buffer before)
+                        (window-buffer after-window))
+                    (ri--history-fine-commit before after)
+                  (ri--history-dispose-snapshot after))
+                (let* ((state (ri--history-window-ensure-current after-window))
+                       (current (ri--history-window-state-current state)))
+                  (if (ri--history-snapshot-file-equal-p
+                       current coarse-after)
+                      (progn
+                        (unless (ri--history-snapshot-equal-p
+                                 current coarse-after)
+                          (unless ri--history-replaying
+                            (ri--history-window-clear-forward state))
+                          (ri--history-dispose-snapshot current)
+                          (setf (ri--history-window-state-current state)
+                                coarse-after))
+                        (unless (eq current coarse-after)
+                          (ri--history-dispose-snapshot coarse-after)))
+                    (push current (ri--history-window-state-back state))
+                    (ri--history-window-clear-forward state)
+                    (setf (ri--history-window-state-current state)
+                          coarse-after))))
+            (when (ri--history-eligible-window-p after-window)
+              (ri--history-fine-ensure-current)
+              (ri--history-window-ensure-current after-window))))
+      (setq ri--history-replaying nil
+            ri--history-before-snapshot nil
+            ri--history-before-window nil))))
 
 (defun ri--selection-active-p ()
   "Return non-nil when the current buffer has an extended selection."
@@ -617,8 +983,6 @@ repeated `f` is a no-op; in NODE mode, it leaves Extend."
 (defun ri-extend-nav-up () (interactive) (ri--run-extend-navigation #'sr-nav-up))
 (defun ri-extend-nav-down () (interactive) (ri--run-extend-navigation #'sr-nav-down))
 
-(defvar-local ri--momentary-origin-submode nil
-  "Submode to restore when a momentary LINE/CHAR/WORD+ layer releases.")
 
 (defun ri--run-momentary-navigation (setter movement)
   "Record the active submode, switch with SETTER, then run MOVEMENT."

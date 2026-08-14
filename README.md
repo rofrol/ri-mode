@@ -110,8 +110,8 @@ main bindings are:
 | `f`                  | Start Extend; navigation then grows or shrinks the selection |
 | `/`                  | Move the cursor to the other edge of the unit or selection   |
 | `c`, `r`, `g`, `v`, `x` | Copy, delete, change, paste, or cut the unit/selection |
+| `q` (hold)           | Open the Ki-style Move History momentary layer             |
 | `e` (hold)           | Open the Ki-style Buffer momentary layer                     |
-| `I`                  | Join the current line to the previous line                  |
 | `J` / `L`            | Dedent / indent nonblank selected lines by four columns      |
 | `F`                  | Open the Transform menu                                      |
 | `,`                  | Open the Ki-style Surround menu                              |
@@ -154,12 +154,17 @@ Buffer includes live file-visiting buffers. Document and Workspace symbol
 pickers require the corresponding Eglot capability.
 Cancelling preserves the exact source point and any active Extend selection.
 
-The `a`, `s`, `w`, `c`, `r`, `e`, `g`, `t`, `v`, `x`, and `z` keys also act as
+The `a`, `s`, `w`, `c`, `q`, `r`, `e`, `g`, `t`, `v`, `x`, and `z` keys also act as
 momentary layers. Hold one of them to display its available actions,
 press the shown key while still holding it, then release. Hold `a` with
 `i` / `k` to navigate by lines, hold `w` with `i` / `j` / `k` / `l` to
 navigate by characters, or hold `s` with the same four keys to navigate by
-WORD+ units. Releasing a held `a`, `w`, or `s` returns to the
+WORD+ units. Hold `q` with `j` / `l` to move backward / forward through
+visited file locations, or with `u` / `o` to move backward / forward through
+cursor and selection locations in the current buffer. Move History is
+transient and NORM-only: a quick tap of `q` does nothing, and a new ordinary
+movement after moving backward discards the corresponding forward history.
+Releasing a held `a`, `w`, or `s` returns to the
 submode that was active before the layer opened (e.g. NODE, WORD, LINE),
 leaving point where the movement put it. When that submode is NODE, the
 release retargets the current unit to the lowest syntax node at the resting

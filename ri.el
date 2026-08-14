@@ -759,6 +759,15 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
     map)
   "Keymap for the Undo/Redo momentary layer (z held).")
 
+(defvar ri--move-history-layer-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "j" '(menu-item "<< Move Hist" ri-history-coarse-back))
+    (define-key map "l" '(menu-item "Move Hist >>" ri-history-coarse-forward))
+    (define-key map "u" '(menu-item "< Move Hist" ri-history-back))
+    (define-key map "o" '(menu-item "Move Hist >" ri-history-forward))
+    map)
+  "Keymap for the Move History momentary layer (q held).")
+
 (defvar ri--char-layer-map
   (let ((map (make-sparse-keymap)))
     (define-key map "i" '(menu-item "CHAR ^" ri-momentary-char-up))
@@ -791,6 +800,11 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
 
 (defconst ri--layer-specs
   (list
+   (list :key ?q
+         :label "≡ Move Hist"
+         :tap nil
+         :map ri--move-history-layer-map
+         :release nil)
    (list :key ?a
          :label "≡ LINE"
          :submode 'line
@@ -1220,6 +1234,8 @@ keymap lookups during that command must keep their resolved binding."
   (dolist (buf (buffer-list))
     (with-current-buffer buf
       (ri--maybe-enable-semantic-regions)))
+  (add-hook 'pre-command-hook #'ri--history-pre-command)
+  (add-hook 'post-command-hook #'ri--history-post-command)
   (define-key mini-modal-map "j" #'ri-extend-nav-left)
   (define-key mini-modal-map "l" #'ri-extend-nav-right)
   (define-key mini-modal-map "i" #'ri-extend-nav-up)

@@ -678,5 +678,41 @@
           (string-to-list "108:76;4:1;76u"))))
     (should (eq translated 'normal))))
 
+(ert-deftest ri-chord-test-move-history-layer-registers-ki-bindings ()
+  (ri-chord-test--with-fresh-chords
+    (with-temp-buffer
+      (let ((mini-modal-mode t)
+            (ri--menu-state nil)
+            (ri--help-prefix-active nil))
+        (ri-chord-setup)
+        (let ((spec (ri--layer-spec ?q)))
+          (should (equal (plist-get spec :label) "≡ Move Hist"))
+          (should-not (plist-get spec :tap))
+          (should-not (plist-get spec :submode))
+          (should-not (plist-get spec :restore-on-release))
+          (should (eq (plist-get spec :map) ri--move-history-layer-map)))
+        (should (eq (gethash ?q kkp-chord--mod-maps)
+                    ri--move-history-layer-map))
+        (dolist
+            (binding
+             `(("j" . ,#'ri-history-coarse-back)
+               ("l" . ,#'ri-history-coarse-forward)
+               ("u" . ,#'ri-history-back)
+               ("o" . ,#'ri-history-forward)))
+          (should (eq (lookup-key ri--move-history-layer-map (car binding))
+                      (cdr binding))))
+        (let ((point (point))
+              (submode sr-submode))
+          (cl-letf (((symbol-function 'this-command-keys-vector)
+                     (lambda () [?q]))
+                    ((symbol-function 'ri--hide-frame) #'ignore)
+                    ((symbol-function 'keymap-legend-show) #'ignore)
+                    ((symbol-function 'modal-cursor-refresh) #'ignore))
+            (let ((last-command-event ?q))
+              (call-interactively #'ri--press-layer))
+            (should (equal kkp-chord--held '((113))))
+            (should (= point (point)))
+            (should (eq submode sr-submode))))))))
 (provide 'ri-chord-test)
 ;;; ri-chord-test.el ends here
+
