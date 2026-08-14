@@ -784,6 +784,8 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
     map)
   "Keymap for momentary WORD+ navigation (s held).")
 
+(defvar-local ri--momentary-layer-submode nil
+  "Navigation submode displayed while a, s, or w is held.")
 
 ;;;; Layer specs (single source of truth for labels and icons)
 
@@ -791,6 +793,7 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
   (list
    (list :key ?a
          :label "≡ LINE"
+         :submode 'line
          :tap #'ri-extend-set-line-mode
          :activate-on-press nil
          :restore-on-release t
@@ -798,6 +801,7 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
          :release nil)
    (list :key ?s
          :label "≡ WORD+"
+         :submode 'word-plus
          :tap #'ri-extend-set-word-plus-mode
          :activate-on-press nil
          :restore-on-release t
@@ -805,6 +809,7 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
          :release nil)
    (list :key ?w
          :label "≡ CHAR"
+         :submode 'char
          :tap #'ri-extend-set-character-mode
          :activate-on-press nil
          :restore-on-release t
@@ -840,6 +845,7 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
          :release "Undo"))
   "Momentary layer specifications.
 :key     -- KKP keycode for the chord modifier.
+:submode -- Temporary navigation submode shown in the mode line while held.
 :label   -- Display label with icon (used in menus and legend titles).
 :tap               -- Primary command called when the layer is tapped.
 :activate-on-press -- Non-nil also runs :tap when the layer opens.
@@ -895,6 +901,7 @@ and its release as a KKP CSI-u event."
   (dolist (spec ri--layer-specs)
     (let ((key (plist-get spec :key))
           (tap (plist-get spec :tap))
+          (submode (plist-get spec :submode))
           (activate-on-press (plist-get spec :activate-on-press))
           (restore-on-release (plist-get spec :restore-on-release))
           (map (plist-get spec :map))
@@ -904,9 +911,11 @@ and its release as a KKP CSI-u event."
         :tap tap
         :when #'ri--chord-when-p
         :on-press (lambda ()
-                    (setq ri--momentary-origin-submode nil)
+                    (setq ri--momentary-origin-submode nil
+                          ri--momentary-layer-submode submode)
                     (when restore-on-release
                       (setq release (ri--submode-name)))
+                    (force-mode-line-update)
                     (when activate-on-press
                       (funcall tap))
                     (ri--hide-frame)
@@ -920,7 +929,9 @@ and its release as a KKP CSI-u event."
         :on-release (if restore-on-release
                         (lambda ()
                           (keymap-legend-hide)
-                          (ri--restore-momentary-submode))
+                          (setq ri--momentary-layer-submode nil)
+                          (ri--restore-momentary-submode)
+                          (force-mode-line-update))
                       #'keymap-legend-hide)
         :map map)
       (define-key mini-modal-map (string key) #'ri--press-layer))))
@@ -933,10 +944,10 @@ and its release as a KKP CSI-u event."
 
 ;;;; Mode line
 
-(defun ri--submode-name ()
-  "Return the human-readable name for the current `sr-submode'."
-  (if (boundp 'sr-submode)
-      (pcase sr-submode
+(defun ri--submode-name (&optional submode)
+  "Return the human-readable name for SUBMODE or current `sr-submode'."
+  (if (or submode (boundp 'sr-submode))
+      (pcase (or submode sr-submode)
         ('line "LINE")
         ('line-star "LINE*")
         ('paragraph "PARAGRAPH")
@@ -953,7 +964,12 @@ and its release as a KKP CSI-u event."
   "Return the mode-line text with mode, submode, Extend, and help hint."
   (if (bound-and-true-p mini-modal-mode)
       (format " NORM[%s]%s [Press ? for help]"
-              (ri--submode-name)
+              (if ri--momentary-layer-submode
+                  (format "%s(%s)"
+                          (ri--submode-name
+                           (or ri--momentary-origin-submode sr-submode))
+                          (ri--submode-name ri--momentary-layer-submode))
+                (ri--submode-name))
               (if (ri--selection-active-p) " Extend" ""))
     " INST"))
 

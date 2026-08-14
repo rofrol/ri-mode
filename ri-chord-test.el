@@ -376,6 +376,7 @@
             (let ((spec (ri--layer-spec key)))
               (should (equal (plist-get spec :label) label))
               (should (eq (plist-get spec :tap) tap))
+              (should (eq (plist-get spec :submode) layer-submode))
               (should-not (plist-get spec :activate-on-press))
               (should (plist-get spec :restore-on-release))
               (should-not (plist-get spec :release))
@@ -399,46 +400,51 @@
                     ((symbol-function 'modal-cursor-refresh) #'ignore))
             (dolist
                 (case
-                 `((?a ,#'ri-momentary-line-down line 12)
-                   (?s ,#'ri-momentary-word-plus-right word-plus 6)
-                   (?w ,#'ri-momentary-char-right char 2)))
-              (pcase-let ((`(,key ,right ,layer-submode ,expected-point)
-                           case))
+                 `((?a ,#'ri-momentary-line-down line 12 char)
+                   (?s ,#'ri-momentary-word-plus-right word-plus 6 char)
+                   (?w ,#'ri-momentary-char-right char 2 line)))
+              (pcase-let
+                  ((`(,key ,right ,layer-submode ,expected-point ,tap-start)
+                    case))
                 (let ((release (format "%d;:3u" key)))
                   ;; Tap: press and release without a sub-key commits the tap
                   ;; target; the press itself must not switch the submode.
                   (setq current-key key
-                        sr-submode (pcase key
-                                     (?a 'char)
-                                     (?s 'char)
-                                     (?w 'line)))
+                        sr-submode tap-start)
                   (goto-char (point-min))
                   (let ((last-command-event key))
                     (call-interactively #'ri--press-layer))
-                  (should (eq sr-submode (pcase key
-                                           (?a 'char)
-                                           (?s 'char)
-                                           (?w 'line))))
+                  (should (eq sr-submode tap-start))
+                  (should (eq ri--momentary-layer-submode layer-submode))
+                  (should
+                   (equal (ri--mode-line-text)
+                          (format " NORM[%s(%s)] [Press ? for help]"
+                                  (ri--submode-name tap-start)
+                                  (ri--submode-name layer-submode))))
                   (should
                    (equal
                     (kkp-chord--translate-advice
                      #'ignore (string-to-list release))
                     []))
-                  (should (eq sr-submode (pcase key
-                                           (?a 'line)
-                                           (?s 'word-plus)
-                                           (?w 'char))))
+                  (should (eq sr-submode layer-submode))
+                  (should-not ri--momentary-layer-submode)
+                  (should
+                   (equal (ri--mode-line-text)
+                          (format " NORM[%s] [Press ? for help]"
+                                  (ri--submode-name layer-submode))))
 
                   ;; Hold: a sub-key navigates in the layer unit, and the
                   ;; release restores the tap-start submode without moving
                   ;; point.
-                  (setq sr-submode (pcase key
-                                     (?a 'char)
-                                     (?s 'char)
-                                     (?w 'line)))
+                  (setq sr-submode tap-start)
                   (goto-char (point-min))
                   (let ((last-command-event key))
                     (call-interactively #'ri--press-layer))
+                  (should
+                   (equal (ri--mode-line-text)
+                          (format " NORM[%s(%s)] [Press ? for help]"
+                                  (ri--submode-name tap-start)
+                                  (ri--submode-name layer-submode))))
                   (let ((command (key-binding (pcase key
                                                 (?a "k")
                                                 (_ "l")))))
@@ -448,15 +454,39 @@
                   (should (= (point) expected-point))
                   (should (eq sr-submode layer-submode))
                   (should
+                   (equal (ri--mode-line-text)
+                          (format " NORM[%s(%s)] [Press ? for help]"
+                                  (ri--submode-name tap-start)
+                                  (ri--submode-name layer-submode))))
+                  (should
                    (equal
                     (kkp-chord--translate-advice
                      #'ignore (string-to-list release))
                     []))
-                  (should (eq sr-submode (pcase key
-                                           (?a 'char)
-                                           (?s 'char)
-                                           (?w 'line))))
+                  (should (eq sr-submode tap-start))
+                  (should-not ri--momentary-layer-submode)
+                  (should
+                   (equal (ri--mode-line-text)
+                          (format " NORM[%s] [Press ? for help]"
+                                  (ri--submode-name tap-start))))
                   (should (= (point) expected-point)))))))))))
+
+(ert-deftest ri-chord-test-momentary-mode-line-keeps-node-as-base ()
+  (let ((mini-modal-mode t)
+        (sr-submode 'node)
+        (ri--momentary-origin-submode nil)
+        (ri--momentary-layer-submode 'line))
+    (should (equal (ri--mode-line-text)
+                   " NORM[NODE(LINE)] [Press ? for help]"))
+    (setq ri--momentary-origin-submode 'node
+          sr-submode 'line)
+    (should (equal (ri--mode-line-text)
+                   " NORM[NODE(LINE)] [Press ? for help]"))
+    (setq ri--momentary-layer-submode nil
+          ri--momentary-origin-submode nil
+          sr-submode 'node)
+    (should (equal (ri--mode-line-text)
+                   " NORM[NODE] [Press ? for help]"))))
 
 (ert-deftest ri-chord-test-hold-w-i-uses-char-highlight ()
   (ri-chord-test--with-fresh-chords

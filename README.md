@@ -54,6 +54,8 @@ The mode line shows the current state:
 - `NORM[UNIT]` is normal mode, where `UNIT` is the currently highlighted
   semantic unit. Press `h` to insert at its start or `;` to insert at
   its end.
+- `NORM[BASE(TARGET)]` shows a held navigation layer: `BASE` remains the
+  persistent unit and `TARGET` is `LINE`, `WORD+`, or `CHAR`.
 - `NORM[UNIT] Extend` means that Extend selection is active. Press
   `Esc` to leave Extend while staying in `NORM`.
 
