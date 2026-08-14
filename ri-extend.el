@@ -569,6 +569,28 @@ repeated `f` is a no-op; in NODE mode, it leaves Extend."
   (ri--run-extend-horizontal-navigation 'right #'sr-nav-right))
 (defun ri-extend-nav-up () (interactive) (ri--run-extend-navigation #'sr-nav-up))
 (defun ri-extend-nav-down () (interactive) (ri--run-extend-navigation #'sr-nav-down))
+
+(defun ri--run-node-line-navigation (direction movement)
+  "Run NODE line MOVEMENT in DIRECTION without detaching an Extend edge."
+  (when (or (not (ri--selection-active-p))
+            (when-let* ((target (sr--node-line-target direction))
+                        (bounds (sr--node-bounds target)))
+              (ri--target-preserves-active-edge-p bounds)))
+    (ri--run-extend-navigation movement)))
+
+(defun ri-extend-nav-line-up ()
+  "Move up by source line while preserving the active semantic submode."
+  (interactive)
+  (if (eq sr-submode 'node)
+      (ri--run-node-line-navigation -1 #'sr-nav-node-line-up)
+    (ri-extend-nav-up)))
+
+(defun ri-extend-nav-line-down ()
+  "Move down by source line while preserving the active semantic submode."
+  (interactive)
+  (if (eq sr-submode 'node)
+      (ri--run-node-line-navigation 1 #'sr-nav-node-line-down)
+    (ri-extend-nav-down)))
 (defun ri-extend-nav-prev ()
   (interactive)
   (if (and (ri--selection-active-p) (eq sr-submode 'paragraph))
@@ -591,7 +613,7 @@ repeated `f` is a no-op; in NODE mode, it leaves Extend."
       (goto-char position)
       (sr--meaningful-unit-bounds-at position sr-submode))))
 
-(defun ri--parent-line-target-allowed-p (target-bounds)
+(defun ri--target-preserves-active-edge-p (target-bounds)
   "Return non-nil when TARGET-BOUNDS preserves the active Extend edge."
   (if (not (ri--selection-active-p))
       t
@@ -606,7 +628,7 @@ repeated `f` is a no-op; in NODE mode, it leaves Extend."
     (when (or (not (ri--selection-active-p))
               (when-let* ((target-bounds
                            (ri--parent-line-target-bounds position)))
-                (ri--parent-line-target-allowed-p target-bounds)))
+                (ri--target-preserves-active-edge-p target-bounds)))
       (goto-char position)
       (sr--snap-to-unit-start))))
 
