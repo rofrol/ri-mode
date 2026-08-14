@@ -30,6 +30,28 @@
      (eq (overlay-get overlay 'face) 'sr-highlight-face))
    (overlays-at pos)))
 
+(defmacro ri-extend-test--with-persistence (&rest body)
+  "Run BODY with isolated Ri selection-mode persistence."
+  (declare (indent 0) (debug t))
+  `(let* ((root (make-temp-file "ri-extend-persistence-" t))
+          (multisession-directory
+           (expand-file-name "multisession/" root))
+          (user-init-file (expand-file-name "synthetic-init.el" root))
+          (ri--last-selection-submode
+           (make-multisession
+            :key "last-selection-submode"
+            :initial-value 'line
+            :package "ri-extend-test"
+            :synchronized t
+            :storage 'files))
+          (old-default (default-value 'sr-submode)))
+     (unwind-protect
+         (progn
+           (setq-default sr-submode 'line)
+           ,@body)
+       (setq-default sr-submode old-default)
+       (delete-directory root t))))
+
 (ert-deftest ri-extend-test-toggle-command-enters-extend-interactively ()
   (ri-extend-test--with-buffer "alpha beta\n"
     (setq sr-submode 'word)
@@ -870,6 +892,114 @@
                    "#ffffff"))
     (should (equal (face-attribute 'ri-mode-line :background nil t)
                    "#3478c6"))))
+
+(ert-deftest ri-extend-test-persistent-submode-initializes-default ()
+  (ri-extend-test--with-persistence
+    (setf (multisession-value ri--last-selection-submode) 'word)
+    (setq-default sr-submode (ri--read-persistent-selection-submode))
+    (with-temp-buffer
+      (should (eq sr-submode 'word)))))
+
+(ert-deftest ri-extend-test-persistent-setters-save-submode ()
+  (ri-extend-test--with-persistence
+    (dolist (case '((ri-extend-set-line-mode line)
+                    (ri-extend-set-line-star-mode line-star)
+                    (ri-extend-set-paragraph-mode paragraph)
+                    (ri-extend-set-character-mode char)
+                    (ri-extend-set-word-mode word)
+                    (ri-extend-set-word-star-mode word-star)
+                    (ri-extend-set-word-plus-mode word-plus)
+                    (ri-extend-set-subword-mode subword)))
+      (pcase-let ((`(,setter ,submode) case))
+        (with-temp-buffer
+          (insert "alpha beta\n")
+          (goto-char 2)
+          (funcall setter)
+          (should (eq sr-submode submode))
+          (should (eq (default-value 'sr-submode) submode))
+          (should (eq (multisession-value ri--last-selection-submode)
+                      submode)))))))
+
+(ert-deftest ri-extend-test-node-setter-saves-submode ()
+  (ri-extend-test--with-persistence
+    (ri-extend-test--with-json-buffer "\"melpa\""
+      (ri-extend-set-node-mode)
+      (should (eq sr-submode 'node))
+      (should (eq (multisession-value ri--last-selection-submode)
+                  'node)))))
+
+(ert-deftest ri-extend-test-navigation-layer-tap-saves-submode ()
+  (ri-extend-test--with-persistence
+    (with-temp-buffer
+      (insert "alpha beta\n")
+      (goto-char 2)
+      (setf (multisession-value ri--last-selection-submode) 'word)
+      (funcall (plist-get (ri--layer-spec ?a) :tap))
+      (should (eq sr-submode 'line))
+      (should (eq (multisession-value ri--last-selection-submode)
+                  'line)))))
+
+(ert-deftest ri-extend-test-momentary-navigation-does-not-save-submode ()
+  (ri-extend-test--with-persistence
+    (with-temp-buffer
+      (insert "alpha beta\n")
+      (goto-char 2)
+      (setq sr-submode 'word)
+      (setf (multisession-value ri--last-selection-submode) 'word)
+      (ri-momentary-char-right)
+      (should (eq sr-submode 'char))
+      (should (eq (multisession-value ri--last-selection-submode)
+                  'word))
+      (ri--restore-momentary-submode)
+      (should (eq sr-submode 'word))
+      (should (eq (multisession-value ri--last-selection-submode)
+                  'word)))))
+
+(ert-deftest ri-extend-test-persistent-switch-keeps-extend-state ()
+  (ri-extend-test--with-persistence
+    (with-temp-buffer
+      (insert "alpha beta\n")
+      (goto-char 2)
+      (setq sr-submode 'char)
+      (should (ri--enter-extend))
+      (let ((bounds (ri--selection-bounds)))
+        (ri-extend-set-word-mode)
+        (should (equal (ri--selection-bounds) bounds))
+        (should (eq (ri--selection-state-active-edge ri--selection) 'end))
+        (should (eq (multisession-value ri--last-selection-submode)
+                    'word)))
+      (ri--exit-extend))))
+
+(ert-deftest ri-extend-test-invalid-persistent-submode-falls-back ()
+  (ri-extend-test--with-persistence
+    (setf (multisession-value ri--last-selection-submode) 'invalid)
+    (let (warnings)
+      (cl-letf (((symbol-function 'display-warning)
+                 (lambda (&rest args) (push args warnings))))
+        (should (eq (ri--read-persistent-selection-submode) 'line))
+        (should warnings)))
+    (let (warnings)
+      (cl-letf (((symbol-function 'multisession-value)
+                 (lambda (&rest _args) (error "synthetic read failure")))
+                ((symbol-function 'display-warning)
+                 (lambda (&rest args) (push args warnings))))
+        (should (eq (ri--read-persistent-selection-submode) 'line))
+        (should warnings)))))
+
+(ert-deftest ri-extend-test-persistence-errors-do-not-break-switch ()
+  (ri-extend-test--with-persistence
+    (with-temp-buffer
+      (insert "alpha beta\n")
+      (goto-char 2)
+      (let (warnings)
+        (cl-letf (((symbol-function 'multisession--set-value)
+                   (lambda (&rest _args) (error "synthetic write failure")))
+                  ((symbol-function 'display-warning)
+                   (lambda (&rest args) (push args warnings))))
+          (ri-extend-set-word-mode)
+          (should (eq sr-submode 'word))
+          (should (eq (default-value 'sr-submode) 'word))
+          (should warnings))))))
 
 (provide 'ri-extend-test)
 ;;; ri-extend-test.el ends here

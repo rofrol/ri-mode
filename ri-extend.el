@@ -11,7 +11,54 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'multisession)
 (require 'semantic-regions)
+
+(define-multisession-variable ri--last-selection-submode
+  'line
+  "Last persistent Ri selection submode."
+  :package "ri-mode"
+  :synchronized t)
+
+(defun ri--selection-submode-valid-p (submode)
+  "Return non-nil when SUBMODE is a supported semantic selection mode."
+  (and (symbolp submode)
+       (assq submode sr--submode-properties)))
+
+(defun ri--warn-selection-submode-persistence (operation err)
+  "Warn that SELECTION submode persistence OPERATION failed with ERR."
+  (display-warning
+   'ri
+   (format "Could not %s persistent Ri selection mode: %s"
+           operation (error-message-string err))
+   :warning))
+
+(defun ri--read-persistent-selection-submode ()
+  "Return the stored selection submode, or `line' when unavailable."
+  (condition-case err
+      (let ((submode (multisession-value ri--last-selection-submode)))
+        (if (ri--selection-submode-valid-p submode)
+            submode
+          (when submode
+            (display-warning
+             'ri
+             (format "Ignoring invalid persistent Ri selection mode: %S"
+                     submode)
+             :warning))
+          'line))
+    (error
+     (ri--warn-selection-submode-persistence "read" err)
+     'line)))
+
+(defun ri--persist-selection-submode (submode)
+  "Make SUBMODE the default and persist it across Emacs sessions."
+  (setq-default sr-submode submode)
+  (condition-case err
+      (setf (multisession-value ri--last-selection-submode) submode)
+    (error
+     (ri--warn-selection-submode-persistence "write" err))))
+
+(setq-default sr-submode (ri--read-persistent-selection-submode))
 
 (cl-defstruct (ri--selection-state
                (:constructor ri--selection-state-create))
@@ -620,45 +667,45 @@ selection keeps its exact preserved bounds."
 
 (defun ri-momentary-char-left ()
   (interactive)
-  (ri--run-momentary-navigation #'ri-extend-set-character-mode
+  (ri--run-momentary-navigation #'sr-set-character-mode
                                  #'ri-extend-nav-left))
 (defun ri-momentary-char-right ()
   (interactive)
-  (ri--run-momentary-navigation #'ri-extend-set-character-mode
+  (ri--run-momentary-navigation #'sr-set-character-mode
                                  #'ri-extend-nav-right))
 (defun ri-momentary-char-up ()
   (interactive)
-  (ri--run-momentary-navigation #'ri-extend-set-character-mode
+  (ri--run-momentary-navigation #'sr-set-character-mode
                                  #'ri-extend-nav-up))
 (defun ri-momentary-char-down ()
   (interactive)
-  (ri--run-momentary-navigation #'ri-extend-set-character-mode
+  (ri--run-momentary-navigation #'sr-set-character-mode
                                  #'ri-extend-nav-down))
 
 (defun ri-momentary-line-up ()
   (interactive)
-  (ri--run-momentary-navigation #'ri-extend-set-line-mode
+  (ri--run-momentary-navigation #'sr-set-line-mode
                                  #'ri-extend-nav-up))
 (defun ri-momentary-line-down ()
   (interactive)
-  (ri--run-momentary-navigation #'ri-extend-set-line-mode
+  (ri--run-momentary-navigation #'sr-set-line-mode
                                  #'ri-extend-nav-down))
 
 (defun ri-momentary-word-plus-left ()
   (interactive)
-  (ri--run-momentary-navigation #'ri-extend-set-word-plus-mode
+  (ri--run-momentary-navigation #'sr-set-word-plus-mode
                                  #'ri-extend-nav-left))
 (defun ri-momentary-word-plus-right ()
   (interactive)
-  (ri--run-momentary-navigation #'ri-extend-set-word-plus-mode
+  (ri--run-momentary-navigation #'sr-set-word-plus-mode
                                  #'ri-extend-nav-right))
 (defun ri-momentary-word-plus-up ()
   (interactive)
-  (ri--run-momentary-navigation #'ri-extend-set-word-plus-mode
+  (ri--run-momentary-navigation #'sr-set-word-plus-mode
                                  #'ri-extend-nav-up))
 (defun ri-momentary-word-plus-down ()
   (interactive)
-  (ri--run-momentary-navigation #'ri-extend-set-word-plus-mode
+  (ri--run-momentary-navigation #'sr-set-word-plus-mode
                                  #'ri-extend-nav-down))
 (defun ri-extend-nav-prev ()
   (interactive)
@@ -708,26 +755,29 @@ selection keeps its exact preserved bounds."
   (ri--run-extend-navigation #'ri--move-to-parent-line))
 
 
-(defun ri--set-submode-with-extend (setter)
+(defun ri--set-submode-with-extend (setter &optional persistent-submode)
   "Switch submodes with SETTER without changing an active selection.
 Outside Extend, place point at the start of the first traversable unit
-at or after its old position."
+at or after its old position.  When PERSISTENT-SUBMODE is non-nil, make
+that submode the default for future buffers."
   (let ((extending (ri--selection-active-p)))
     (when extending
       (ri--preserve-selection-for-submode-switch))
     (funcall setter)
     (unless extending
       (ri--snap-to-unit-start))
-    (ri--update-highlight)))
-(defun ri-extend-set-line-mode () (interactive) (ri--set-submode-with-extend #'sr-set-line-mode))
-(defun ri-extend-set-line-star-mode () (interactive) (ri--set-submode-with-extend #'sr-set-line-star-mode))
-(defun ri-extend-set-character-mode () (interactive) (ri--set-submode-with-extend #'sr-set-character-mode))
-(defun ri-extend-set-word-mode () (interactive) (ri--set-submode-with-extend #'sr-set-word-mode))
-(defun ri-extend-set-word-star-mode () (interactive) (ri--set-submode-with-extend #'sr-set-word-star-mode))
-(defun ri-extend-set-word-plus-mode () (interactive) (ri--set-submode-with-extend #'sr-set-word-plus-mode))
-(defun ri-extend-set-subword-mode () (interactive) (ri--set-submode-with-extend #'sr-set-subword-mode))
-(defun ri-extend-set-paragraph-mode () (interactive) (ri--set-submode-with-extend #'sr-set-paragraph-mode))
-(defun ri-extend-set-node-mode () (interactive) (ri--set-submode-with-extend #'sr-set-node-mode))
+    (ri--update-highlight)
+    (when persistent-submode
+      (ri--persist-selection-submode persistent-submode))))
+(defun ri-extend-set-line-mode () (interactive) (ri--set-submode-with-extend #'sr-set-line-mode 'line))
+(defun ri-extend-set-line-star-mode () (interactive) (ri--set-submode-with-extend #'sr-set-line-star-mode 'line-star))
+(defun ri-extend-set-character-mode () (interactive) (ri--set-submode-with-extend #'sr-set-character-mode 'char))
+(defun ri-extend-set-word-mode () (interactive) (ri--set-submode-with-extend #'sr-set-word-mode 'word))
+(defun ri-extend-set-word-star-mode () (interactive) (ri--set-submode-with-extend #'sr-set-word-star-mode 'word-star))
+(defun ri-extend-set-word-plus-mode () (interactive) (ri--set-submode-with-extend #'sr-set-word-plus-mode 'word-plus))
+(defun ri-extend-set-subword-mode () (interactive) (ri--set-submode-with-extend #'sr-set-subword-mode 'subword))
+(defun ri-extend-set-paragraph-mode () (interactive) (ri--set-submode-with-extend #'sr-set-paragraph-mode 'paragraph))
+(defun ri-extend-set-node-mode () (interactive) (ri--set-submode-with-extend #'sr-set-node-mode 'node))
 
 
 (defun ri-extend-escape ()
