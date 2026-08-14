@@ -379,28 +379,6 @@ NODE navigation target."
         target)
     (error nil)))
 
-(defun sr--node-line-target (direction)
-  "Return the first NODE target on a source line in DIRECTION."
-  (save-excursion
-    (let ((origin-line (line-beginning-position))
-          target)
-      (while (and (zerop (forward-line direction))
-                  (/= (line-beginning-position) origin-line)
-                  (not
-                   (setq target
-                         (sr--node-first-target-in-region
-                          (semantic-region--line-bounds-at (point)))))))
-      target)))
-
-(defun sr--goto-node-line-target (direction)
-  "Move to the first NODE target on a source line in DIRECTION."
-  (when-let* ((target (sr--node-line-target direction))
-              (bounds (sr--node-bounds target)))
-    (sr--node-clear-virtual)
-    (setq sr--node-current target
-          sr--node-direct-target-p nil)
-    (goto-char (car bounds))
-    t))
 
 (defun sr--node-horizontal-sibling (node direction)
   "Return NODE's traversable sibling in DIRECTION.
@@ -1277,21 +1255,6 @@ units in word-based modes."
   (sr--snap-to-unit-start)
   (sr--update-highlight))
 
-(defun sr-nav-node-line-up ()
-  "Move NODE to the first traversable target on a preceding source line."
-  (interactive)
-  (unless (eq sr-submode 'node)
-    (user-error "NODE line navigation requires NODE mode"))
-  (sr--goto-node-line-target -1)
-  (sr--update-highlight))
-
-(defun sr-nav-node-line-down ()
-  "Move NODE to the first traversable target on a following source line."
-  (interactive)
-  (unless (eq sr-submode 'node)
-    (user-error "NODE line navigation requires NODE mode"))
-  (sr--goto-node-line-target 1)
-  (sr--update-highlight))
 
 (defun sr-nav-parent-line ()
   "Move the current semantic unit to the nearest parent line above."

@@ -759,12 +759,23 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
     map)
   "Keymap for the Undo/Redo momentary layer (z held).")
 
-(defvar ri--line-layer-map
+(defvar ri--char-layer-map
   (let ((map (make-sparse-keymap)))
-    (define-key map "i" '(menu-item "LINE ^" ri-extend-nav-line-up))
-    (define-key map "k" '(menu-item "LINE v" ri-extend-nav-line-down))
+    (define-key map "i" '(menu-item "CHAR ^" ri-momentary-char-up))
+    (define-key map "j" '(menu-item "< CHAR" ri-momentary-char-left))
+    (define-key map "k" '(menu-item "CHAR v" ri-momentary-char-down))
+    (define-key map "l" '(menu-item "CHAR >" ri-momentary-char-right))
     map)
-  "Keymap for momentary LINE navigation (a held).")
+  "Keymap for momentary CHAR navigation (a held).")
+
+(defvar ri--word-plus-layer-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "i" '(menu-item "WORD+ ^" ri-momentary-word-plus-up))
+    (define-key map "j" '(menu-item "< WORD+" ri-momentary-word-plus-left))
+    (define-key map "k" '(menu-item "WORD+ v" ri-momentary-word-plus-down))
+    (define-key map "l" '(menu-item "WORD+ >" ri-momentary-word-plus-right))
+    map)
+  "Keymap for momentary WORD+ navigation (s held).")
 
 
 ;;;; Layer specs (single source of truth for labels and icons)
@@ -772,10 +783,15 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
 (defconst ri--layer-specs
   (list
    (list :key ?a
-         :label "LINE"
+         :label "CHAR"
          :tap #'ri-extend-set-line-mode
-         :map ri--line-layer-map
+         :map ri--char-layer-map
          :release "LINE")
+   (list :key ?s
+         :label "WORD+"
+         :tap #'ri-extend-set-word-mode
+         :map ri--word-plus-layer-map
+         :release "WORD")
    (list :key ?c
          :label "Copy/≡ Dup"
          :tap #'ri-copy-unit
@@ -927,11 +943,11 @@ and its release as a KKP CSI-u event."
     (define-key map "y" '(menu-item "|<" ri-extend-nav-first))
     (define-key map "p" '(menu-item ">|" ri-extend-nav-last))
     (define-key map "." '(menu-item "Parent Line" ri-parent-line))
-    (define-key map "a" '(menu-item "LINE / hold: ^ v" ri-extend-set-line-mode))
+    (define-key map "a" '(menu-item "≡ LINE" ri-extend-set-line-mode))
     (define-key map "A" '(menu-item "LINE*" ri-extend-set-line-star-mode))
     (define-key map "W" '(menu-item "CHAR" ri-extend-set-character-mode))
     (define-key map "E" '(menu-item "PARAGRAPH" ri-extend-set-paragraph-mode))
-    (define-key map "s" '(menu-item "WORD" ri-extend-set-word-mode))
+    (define-key map "s" '(menu-item "≡ WORD" ri-extend-set-word-mode))
     (define-key map "S" '(menu-item "WORD*" ri-extend-set-word-star-mode))
     (define-key map (kbd "M-s") '(menu-item "WORD+" ri-extend-set-word-plus-mode))
     (define-key map "w" '(menu-item "SUBWORD" ri-extend-set-subword-mode))
@@ -1171,7 +1187,7 @@ keymap lookups during that command must keep their resolved binding."
   (define-key mini-modal-map "A" #'ri-extend-set-line-star-mode)
   (define-key mini-modal-map "W" #'ri-extend-set-character-mode)
   (define-key mini-modal-map "E" #'ri-extend-set-paragraph-mode)
-  (define-key mini-modal-map "s" #'ri-extend-set-word-mode)
+  (define-key mini-modal-map "s" #'ri--press-layer)
   (define-key mini-modal-map "S" #'ri-extend-set-word-star-mode)
   (define-key mini-modal-map (kbd "M-s") #'ri-extend-set-word-plus-mode)
   (define-key mini-modal-map "w" #'ri-extend-set-subword-mode)
