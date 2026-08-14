@@ -351,7 +351,7 @@
 (ert-deftest ri-chord-test-navigation-layers-tap-commits-hold-restores ()
   (ri-chord-test--with-fresh-chords
     (with-temp-buffer
-      (insert "alpha,beta\n")
+      (insert "alpha,beta\ngamma\n")
       (let ((mini-modal-mode t)
             (ri--menu-state nil)
             (ri--help-prefix-active nil)
@@ -359,15 +359,19 @@
         (ri-chord-setup)
         (dolist
             (case
-             `((?a "CHAR" ,#'ri-extend-set-line-mode
-                   ,ri--char-layer-map ,#'ri-momentary-char-right
-                   char 2)
+             `((?a "LINE" ,#'ri-extend-set-line-mode
+                   ,ri--line-layer-map "k" ,#'ri-momentary-line-down
+                   ("i" "k") line 12 char)
                (?s "WORD+" ,#'ri-extend-set-word-plus-mode
-                   ,ri--word-plus-layer-map
+                   ,ri--word-plus-layer-map "l"
                    ,#'ri-momentary-word-plus-right
-                   word-plus 6)))
-          (pcase-let ((`(,key ,label ,tap ,map ,right ,layer-submode
-                              ,expected-point)
+                   ("i" "j" "k" "l") word-plus 6 char)
+               (?w "CHAR" ,#'ri-extend-set-subword-mode
+                   ,ri--char-layer-map "l" ,#'ri-momentary-char-right
+                   ("i" "j" "k" "l") char 2 line)))
+          (pcase-let ((`(,key ,label ,tap ,map ,right-key ,right
+                              ,motions ,layer-submode ,expected-point
+                              ,tap-start)
                        case))
             (let ((spec (ri--layer-spec key)))
               (should (equal (plist-get spec :label) label))
@@ -376,62 +380,81 @@
               (should (plist-get spec :restore-on-release))
               (should-not (plist-get spec :release))
               (should (eq (plist-get spec :map) map)))
-            (should (eq (lookup-key map "l") right))
-            (dolist (motion '("i" "j" "k" "l"))
-              (should (commandp (lookup-key map motion))))))
-        (should (eq (lookup-key ri--normal-help-map "a")
-                    #'ri-extend-set-line-mode))
-        (should (eq (lookup-key ri--normal-help-map "s")
-                    #'ri-extend-set-word-plus-mode))
-        (cl-letf (((symbol-function 'this-command-keys-vector)
-                   (lambda () (vector current-key)))
-                  ((symbol-function 'ri--hide-frame) #'ignore)
-                  ((symbol-function 'modal-cursor-refresh) #'ignore))
-          (dolist
-              (case
-               '((?a "97;:3u" line char ri-momentary-char-right 2)
-                 (?s "115;:3u" char word-plus
-                     ri-momentary-word-plus-right 6)))
-            (pcase-let
-                ((`(,key ,release ,tap-start ,layer-submode ,right
-                        ,expected-point)
-                  case))
-              ;; Tap: press and release without a sub-key commits the tap
-              ;; target; the press itself must not switch the submode.
-              (setq current-key key
-                    sr-submode tap-start)
-              (goto-char (point-min))
-              (let ((last-command-event key))
-                (call-interactively #'ri--press-layer))
-              (should (eq sr-submode tap-start))
-              (should
-               (equal
-                (kkp-chord--translate-advice
-                 #'ignore (string-to-list release))
-                []))
-              (should (eq sr-submode (if (eq key ?a) 'line 'word-plus)))
+            (should (eq (lookup-key map right-key) right))
+            (dolist (motion motions)
+              (should (commandp (lookup-key map motion)))))
+          (should (eq (lookup-key ri--normal-help-map "a")
+                      #'ri-extend-set-line-mode))
+          (should (eq (lookup-key ri--normal-help-map "s")
+                      #'ri-extend-set-word-plus-mode))
+          (should (eq (lookup-key ri--normal-help-map "w")
+                      #'ri-extend-set-subword-mode))
+          (cl-letf (((symbol-function 'this-command-keys-vector)
+                     (lambda () (vector current-key)))
+                    ((symbol-function 'ri--hide-frame) #'ignore)
+                    ((symbol-function 'modal-cursor-refresh) #'ignore))
+            (dolist
+                (case
+                 `((?a ,#'ri-momentary-line-down line 12)
+                   (?s ,#'ri-momentary-word-plus-right word-plus 6)
+                   (?w ,#'ri-momentary-char-right char 2)))
+              (pcase-let ((`(,key ,right ,layer-submode ,expected-point)
+                           case))
+                (let ((release (format "%d;:3u" key)))
+                  ;; Tap: press and release without a sub-key commits the tap
+                  ;; target; the press itself must not switch the submode.
+                  (setq current-key key
+                        sr-submode (pcase key
+                                     (?a 'char)
+                                     (?s 'char)
+                                     (?w 'line)))
+                  (goto-char (point-min))
+                  (let ((last-command-event key))
+                    (call-interactively #'ri--press-layer))
+                  (should (eq sr-submode (pcase key
+                                           (?a 'char)
+                                           (?s 'char)
+                                           (?w 'line))))
+                  (should
+                   (equal
+                    (kkp-chord--translate-advice
+                     #'ignore (string-to-list release))
+                    []))
+                  (should (eq sr-submode (pcase key
+                                           (?a 'line)
+                                           (?s 'word-plus)
+                                           (?w 'subword))))
 
-              ;; Hold: a sub-key navigates in the layer unit, and the
-              ;; release restores the tap-start submode without moving point.
-              (setq sr-submode tap-start)
-              (goto-char (point-min))
-              (let ((last-command-event key))
-                (call-interactively #'ri--press-layer))
-              (let ((command (key-binding "l")))
-                (should (eq command right))
-                (kkp-chord--mark-plain-command)
-                (call-interactively command))
-              (should (= (point) expected-point))
-              (should (eq sr-submode layer-submode))
-              (should
-               (equal
-                (kkp-chord--translate-advice
-                 #'ignore (string-to-list release))
-                []))
-              (should (eq sr-submode tap-start))
-              (should (= (point) expected-point)))))))))
+                  ;; Hold: a sub-key navigates in the layer unit, and the
+                  ;; release restores the tap-start submode without moving
+                  ;; point.
+                  (setq sr-submode (pcase key
+                                     (?a 'char)
+                                     (?s 'char)
+                                     (?w 'line)))
+                  (goto-char (point-min))
+                  (let ((last-command-event key))
+                    (call-interactively #'ri--press-layer))
+                  (let ((command (key-binding (pcase key
+                                                (?a "k")
+                                                (_ "l")))))
+                    (should (eq command right))
+                    (kkp-chord--mark-plain-command)
+                    (call-interactively command))
+                  (should (= (point) expected-point))
+                  (should (eq sr-submode layer-submode))
+                  (should
+                   (equal
+                    (kkp-chord--translate-advice
+                     #'ignore (string-to-list release))
+                    []))
+                  (should (eq sr-submode (pcase key
+                                           (?a 'char)
+                                           (?s 'char)
+                                           (?w 'line))))
+                  (should (= (point) expected-point)))))))))))
 
-(ert-deftest ri-chord-test-hold-a-i-uses-char-highlight ()
+(ert-deftest ri-chord-test-hold-w-i-uses-char-highlight ()
   (ri-chord-test--with-fresh-chords
     (with-temp-buffer
       (insert "ab\ncd")
@@ -442,10 +465,10 @@
             (sr-submode 'line))
         (ri-chord-setup)
         (cl-letf (((symbol-function 'this-command-keys-vector)
-                   (lambda () [?a]))
+                   (lambda () [?w]))
                   ((symbol-function 'ri--hide-frame) #'ignore)
                   ((symbol-function 'modal-cursor-refresh) #'ignore))
-          (let ((last-command-event ?a))
+          (let ((last-command-event ?w))
             (call-interactively #'ri--press-layer))
           (should (eq sr-submode 'line))
           (should (equal (sr--get-current-unit-bounds) (cons 4 6)))
@@ -464,7 +487,7 @@
            (cl-some (lambda (overlay)
                       (eq (overlay-get overlay 'face) 'sr-highlight-face))
                     (overlays-at 2)))
-          (kkp-chord--on-release ?a)
+          (kkp-chord--on-release ?w)
           (should (eq sr-submode 'line))
           (should (= (point) 1))
           (should (equal (sr--get-current-unit-bounds) (cons 1 3)))
@@ -476,6 +499,43 @@
            (cl-some (lambda (overlay)
                       (eq (overlay-get overlay 'face) 'sr-highlight-face))
                     (overlays-at 2))))))))
+
+(ert-deftest ri-chord-test-hold-a-k-uses-line-highlight ()
+  (ri-chord-test--with-fresh-chords
+    (with-temp-buffer
+      (insert "ab\ncd")
+      (goto-char 1)
+      (let ((mini-modal-mode t)
+            (ri--menu-state nil)
+            (ri--help-prefix-active nil)
+            (sr-submode 'char))
+        (ri-chord-setup)
+        (cl-letf (((symbol-function 'this-command-keys-vector)
+                   (lambda () [?a]))
+                  ((symbol-function 'ri--hide-frame) #'ignore)
+                  ((symbol-function 'modal-cursor-refresh) #'ignore))
+          (let ((last-command-event ?a))
+            (call-interactively #'ri--press-layer))
+          (should (eq sr-submode 'char))
+          (let ((command (key-binding "k")))
+            (should (eq command #'ri-momentary-line-down))
+            (kkp-chord--mark-plain-command)
+            (call-interactively command))
+          (should (eq sr-submode 'line))
+          (should (= (point) 4))
+          (should (equal (sr--get-current-unit-bounds) (cons 4 6)))
+          (should
+           (cl-some (lambda (overlay)
+                      (eq (overlay-get overlay 'face) 'sr-highlight-face))
+                    (overlays-at 4)))
+          (should-not
+           (cl-some (lambda (overlay)
+                      (eq (overlay-get overlay 'face) 'sr-highlight-face))
+                    (overlays-at 1)))
+          (kkp-chord--on-release ?a)
+          (should (eq sr-submode 'char))
+          (should (= (point) 4))
+          (should (equal (sr--get-current-unit-bounds) (cons 4 5))))))))
 
 (ert-deftest ri-chord-test-mark-user-error-is-preserved-for-key-release ()
   (let ((ri--restore-message-after-release nil)

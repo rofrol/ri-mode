@@ -766,7 +766,14 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
     (define-key map "k" '(menu-item "CHAR v" ri-momentary-char-down))
     (define-key map "l" '(menu-item "CHAR >" ri-momentary-char-right))
     map)
-  "Keymap for momentary CHAR navigation (a held).")
+  "Keymap for momentary CHAR navigation (w held).")
+
+(defvar ri--line-layer-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "i" '(menu-item "LINE ^" ri-momentary-line-up))
+    (define-key map "k" '(menu-item "LINE v" ri-momentary-line-down))
+    map)
+  "Keymap for momentary LINE navigation (a held).")
 
 (defvar ri--word-plus-layer-map
   (let ((map (make-sparse-keymap)))
@@ -783,11 +790,11 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
 (defconst ri--layer-specs
   (list
    (list :key ?a
-         :label "CHAR"
+         :label "LINE"
          :tap #'ri-extend-set-line-mode
          :activate-on-press nil
          :restore-on-release t
-         :map ri--char-layer-map
+         :map ri--line-layer-map
          :release nil)
    (list :key ?s
          :label "WORD+"
@@ -795,6 +802,13 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
          :activate-on-press nil
          :restore-on-release t
          :map ri--word-plus-layer-map
+         :release nil)
+   (list :key ?w
+         :label "CHAR"
+         :tap #'ri-extend-set-subword-mode
+         :activate-on-press nil
+         :restore-on-release t
+         :map ri--char-layer-map
          :release nil)
    (list :key ?c
          :label "Copy/≡ Dup"
@@ -961,14 +975,14 @@ and its release as a KKP CSI-u event."
     (define-key map "y" '(menu-item "|<" ri-extend-nav-first))
     (define-key map "p" '(menu-item ">|" ri-extend-nav-last))
     (define-key map "." '(menu-item "Parent Line" ri-parent-line))
-    (define-key map "a" '(menu-item "LINE/≡ CHAR" ri-extend-set-line-mode))
+    (define-key map "a" '(menu-item "LINE / hold: ^ v" ri-extend-set-line-mode))
     (define-key map "A" '(menu-item "LINE*" ri-extend-set-line-star-mode))
     (define-key map "W" '(menu-item "CHAR" ri-extend-set-character-mode))
     (define-key map "E" '(menu-item "PARAGRAPH" ri-extend-set-paragraph-mode))
     (define-key map "s" '(menu-item "≡ WORD+" ri-extend-set-word-plus-mode))
     (define-key map "S" '(menu-item "WORD*" ri-extend-set-word-star-mode))
     (define-key map (kbd "M-s") '(menu-item "WORD+" ri-extend-set-word-plus-mode))
-    (define-key map "w" '(menu-item "SUBWORD" ri-extend-set-subword-mode))
+    (define-key map "w" '(menu-item "SUBWORD / hold: CHAR" ri-extend-set-subword-mode))
     (define-key map "d" '(menu-item "NODE" ri-set-node-mode))
     (define-key map "c" '(menu-item "Copy/≡ Dup" ri-copy-unit))
     (define-key map "r" '(menu-item "≡ Delete" ri-delete-selection))
@@ -1208,7 +1222,7 @@ keymap lookups during that command must keep their resolved binding."
   (define-key mini-modal-map "s" #'ri--press-layer)
   (define-key mini-modal-map "S" #'ri-extend-set-word-star-mode)
   (define-key mini-modal-map (kbd "M-s") #'ri-extend-set-word-plus-mode)
-  (define-key mini-modal-map "w" #'ri-extend-set-subword-mode)
+  (define-key mini-modal-map "w" #'ri--press-layer)
   (define-key mini-modal-map "d" #'ri-set-node-mode)
   (define-key mini-modal-map "f" #'ri-toggle-extend)
   (define-key mini-modal-map "Z" #'ri-smart-redo)

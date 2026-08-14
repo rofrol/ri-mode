@@ -571,7 +571,7 @@ repeated `f` is a no-op; in NODE mode, it leaves Extend."
 (defun ri-extend-nav-down () (interactive) (ri--run-extend-navigation #'sr-nav-down))
 
 (defvar-local ri--momentary-origin-submode nil
-  "Submode to restore when a momentary CHAR/WORD+ layer releases.")
+  "Submode to restore when a momentary LINE/CHAR/WORD+ layer releases.")
 
 (defun ri--run-momentary-navigation (setter movement)
   "Record the active submode, switch with SETTER, then run MOVEMENT."
@@ -621,6 +621,15 @@ the position left by held navigation is kept."
 (defun ri-momentary-char-down ()
   (interactive)
   (ri--run-momentary-navigation #'ri-extend-set-character-mode
+                                 #'ri-extend-nav-down))
+
+(defun ri-momentary-line-up ()
+  (interactive)
+  (ri--run-momentary-navigation #'ri-extend-set-line-mode
+                                 #'ri-extend-nav-up))
+(defun ri-momentary-line-down ()
+  (interactive)
+  (ri--run-momentary-navigation #'ri-extend-set-line-mode
                                  #'ri-extend-nav-down))
 
 (defun ri-momentary-word-plus-left ()
