@@ -61,8 +61,12 @@ Enable whole-session restoration for buffers, window layout, positions, and
 Ri's last semantic selection submode:
 
 ```elisp
+(setq desktop-save t)
 (desktop-save-mode 1)
 ```
+
+`desktop-save` must be non-nil so the first desktop snapshot is written
+without waiting for an exit prompt.
 
 When `desktop` is loaded, Ri registers its buffer-local `sr-submode` value
 with `desktop-locals-to-save`. Active Extend selections remain transient and
