@@ -71,7 +71,7 @@ main bindings are:
 | `s`                  | Select `WORD+`; hold with `i` / `j` / `k` / `l` for `WORD+` movement |
 | `w`                  | Select `SUBWORD`; hold with `i` / `j` / `k` / `l` for `CHAR` movement |
 | `A`, `E`, `W`        | Use `LINE*`, `PARAGRAPH`, or `CHAR` units                   |
-| `S`, `M-s`           | Use `WORD*` or `WORD+` units                                |
+| `S`, `M-s`           | Use `WORD*` or `WORD` units                                 |
 | `d`                  | Use a tree-sitter `NODE` unit                                |
 | `f`                  | Start Extend; navigation then grows or shrinks the selection |
 | `/`                  | Move the cursor to the other edge of the unit or selection   |

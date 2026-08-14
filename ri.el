@@ -797,7 +797,7 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
          :map ri--line-layer-map
          :release nil)
    (list :key ?s
-         :label "WORD+"
+         :label "≡ WORD+"
          :tap #'ri-extend-set-word-plus-mode
          :activate-on-press nil
          :restore-on-release t
@@ -981,7 +981,7 @@ and its release as a KKP CSI-u event."
     (define-key map "E" '(menu-item "PARAGRAPH" ri-extend-set-paragraph-mode))
     (define-key map "s" '(menu-item "≡ WORD+" ri-extend-set-word-plus-mode))
     (define-key map "S" '(menu-item "WORD*" ri-extend-set-word-star-mode))
-    (define-key map (kbd "M-s") '(menu-item "WORD+" ri-extend-set-word-plus-mode))
+    (define-key map (kbd "M-s") '(menu-item "WORD" ri-extend-set-word-mode))
     (define-key map "w" '(menu-item "SUBWORD / hold: CHAR" ri-extend-set-subword-mode))
     (define-key map "d" '(menu-item "NODE" ri-set-node-mode))
     (define-key map "c" '(menu-item "Copy/≡ Dup" ri-copy-unit))
@@ -1221,7 +1221,7 @@ keymap lookups during that command must keep their resolved binding."
   (define-key mini-modal-map "E" #'ri-extend-set-paragraph-mode)
   (define-key mini-modal-map "s" #'ri--press-layer)
   (define-key mini-modal-map "S" #'ri-extend-set-word-star-mode)
-  (define-key mini-modal-map (kbd "M-s") #'ri-extend-set-word-plus-mode)
+  (define-key mini-modal-map (kbd "M-s") #'ri-extend-set-word-mode)
   (define-key mini-modal-map "w" #'ri--press-layer)
   (define-key mini-modal-map "d" #'ri-set-node-mode)
   (define-key mini-modal-map "f" #'ri-toggle-extend)
