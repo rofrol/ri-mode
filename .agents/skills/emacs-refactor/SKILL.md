@@ -1,11 +1,14 @@
 ---
+
 name: emacs-refactor
 description: >
-  Incrementally refactor Emacs Lisp code using canonical Emacs APIs and
-  representations, Chesterton's Fence, high-value regression tests, and
-  strict verification after each small change. Designed to be used together
-  with the Ponytail skill, which supplies the general minimalism, YAGNI,
-  reuse-before-implementation, and complexity-reduction principles.
+Incrementally refactor Emacs Lisp using canonical Emacs vectors,
+representations, and APIs, Chesterton's Fence, high-value regression tests,
+and strict verification after each small change. Designed to be used
+together with Ponytail, which supplies general minimalism, YAGNI,
+reuse-before-implementation, and complexity-reduction principles.
+---
+
 ---
 
 # Incremental Emacs Lisp Refactoring
@@ -24,57 +27,194 @@ Ponytail supplies the general engineering principles concerning:
 - preferring existing platform/library functionality;
 - reducing code and complexity.
 
-Do not duplicate or weaken those principles here.
-
-This skill adds the **Emacs-specific analysis and safe incremental refactoring
-protocol** needed to apply them to an Emacs Lisp codebase.
+This skill adds the Emacs-specific analysis and safe incremental refactoring
+protocol.
 
 The primary objectives are:
 
-- use canonical Emacs APIs instead of custom mechanisms;
-- use canonical Emacs representations instead of duplicated state;
+- find the canonical Emacs vector for each mechanism;
+- use canonical Emacs representations;
+- use canonical Emacs APIs;
+- eliminate project-owned machinery that Emacs can own instead;
 - understand unusual code before removing it;
-- remove tests that do not provide useful project-specific regression
-  protection;
+- keep tests focused on project-owned behavior;
 - preserve observable behavior;
 - perform exactly one small independently verifiable refactoring at a time;
 - keep Emacs loadable after every change.
+
+The central reasoning order is:
+
+> Ponytail → canonical vector → canonical representation → canonical API →
+> Chesterton's Fence → minimal change → verification → stop
+
+Do not optimize implementation details before determining whether the
+implementation is operating through the correct Emacs vector.
 
 The most important execution constraint is:
 
 > Never perform a large refactor in one step.
 
-Every refactoring step must leave the repository in a working state and must
-be independently verifiable and independently revertible.
+Every refactoring step must leave the repository working and must be
+independently verifiable and independently revertible.
 
 ## 1. Apply Ponytail first
 
-Apply Ponytail's decision process before introducing or retaining project code.
+Apply Ponytail's decision process before introducing or retaining
+project-owned machinery.
 
-In particular, determine whether:
+Determine whether:
 
-1. the code or mechanism is needed at all;
+1. the behavior is needed at all;
 2. existing project code already solves the problem;
 3. Emacs itself already solves the problem;
 4. a standard Emacs Lisp library already solves the problem;
 5. an existing dependency already solves the problem;
 6. custom implementation is actually necessary.
 
-Do not reproduce Ponytail's general implementation philosophy in this skill.
-Use this skill to answer the Emacs-specific questions that remain after
-Ponytail has been applied.
+Do not reproduce Ponytail's complete general implementation philosophy here.
 
-## 2. Prefer canonical Emacs functionality
+Use this skill for the Emacs-specific questions that remain after applying
+Ponytail.
 
-Actively look for project code that duplicates functionality already provided
-by Emacs or standard Emacs Lisp libraries.
+## 2. Find the canonical Emacs vector
 
-Consider APIs and idioms from Emacs itself and standard libraries such as:
+Before simplifying an implementation locally, determine the canonical Emacs
+vector for the problem.
 
+A **canonical vector** is the mechanism, extension point, lifecycle path, or
+architectural direction through which Emacs naturally expects this kind of
+behavior to be implemented.
+
+This is broader than choosing a canonical API.
+
+Code may use valid standard Emacs APIs while still implement a feature through
+the wrong architectural vector.
+
+For every non-trivial mechanism, ask:
+
+> What is the canonical way for an Emacs package to participate in this
+> behavior?
+
+Look especially for:
+
+- polling or timers where Emacs provides an event or hook;
+- advice where Emacs provides a dedicated hook or extension point;
+- manual command dispatch where a keymap or transient map is appropriate;
+- global bookkeeping where Emacs provides buffer-, window-, or frame-local
+  state;
+- manual lifecycle synchronization where Emacs already owns the lifecycle;
+- integer positions where markers are intended to track edits;
+- custom project discovery where `project.el` provides the integration point;
+- textual parsing where syntax APIs or tree-sitter provide structural
+  information;
+- manually reconstructed display state where faces, text properties,
+  overlays, display properties, or redisplay semantics provide the natural
+  mechanism;
+- custom state machines duplicating state already represented by Emacs
+  objects or modes;
+- explicit refresh mechanisms where normal Emacs invalidation or redisplay
+  behavior is sufficient;
+- manual focus/window/frame tracking where Emacs lifecycle hooks or object
+  state already expose the transition;
+- custom buffer lifecycle tracking where standard buffer hooks provide the
+  event;
+- custom command lifecycle tracking where command hooks or documented
+  extension points exist.
+
+Distinguish three separate questions:
+
+1. **Canonical vector** — are we solving the problem through the correct Emacs
+   extension or lifecycle mechanism?
+2. **Canonical representation** — are we representing the state using the
+   natural Emacs object or data model?
+3. **Canonical API** — are we using the standard Emacs operation for the
+   concrete action?
+
+Investigate them in this order:
+
+> vector → representation → API
+
+Do not optimize an implementation that is operating through the wrong vector.
+
+For example, replacing a custom timer helper with a cleaner use of
+`run-with-idle-timer` is not a meaningful architectural simplification if the
+timer exists only because the implementation failed to use the hook
+representing the actual lifecycle event.
+
+Likewise, simplifying operations on a global hash table may be the wrong
+refactor if the state naturally belongs in a buffer-local variable.
+
+When a potentially non-canonical vector is found:
+
+1. determine what responsibility the mechanism serves;
+2. determine why the current vector was chosen;
+3. apply Chesterton's Fence before replacing it;
+4. identify the canonical Emacs vector;
+5. determine whether it preserves all required invariants;
+6. determine which custom state, synchronization, timers, advice, or tests
+   become unnecessary after migration;
+7. prefer migration to the canonical vector over optimizing the workaround.
+
+A strong refactoring candidate often removes an entire mechanism rather than
+merely simplifying its implementation.
+
+## 3. Find the canonical Emacs representation
+
+After establishing the correct vector, inspect how the relevant concepts and
+state are represented.
+
+For every important concept ask:
+
+> Is this the natural representation of this concept in Emacs?
+
+Investigate whether something should naturally be:
+
+- a buffer instead of a filename;
+- a marker instead of an integer buffer position;
+- a window instead of manually tracked display state;
+- a frame-local value instead of global state;
+- a buffer-local variable instead of a global registry;
+- a window parameter instead of a parallel window-state table;
+- a frame parameter instead of a parallel frame-state table;
+- a text property instead of reconstructed display text;
+- an overlay instead of manual highlighting bookkeeping;
+- a face instead of direct visual mutation;
+- a keymap instead of a command dispatcher;
+- a hook instead of explicit notification code;
+- an Emacs project abstraction instead of custom Git-root state;
+- syntax information instead of textual parsing;
+- a tree-sitter node instead of reconstructed syntax structure.
+
+Prefer representations whose identity, lifetime, invalidation, or consistency
+are already maintained by Emacs.
+
+Before changing a representation:
+
+1. determine why the current representation exists;
+2. identify the invariants depending on it;
+3. determine whether the canonical representation preserves them;
+4. determine whether the change removes state or synchronization;
+5. verify that no required lifecycle semantics are lost.
+
+Do not migrate merely because another representation appears more idiomatic.
+
+The migration should eliminate meaningful project-owned complexity.
+
+## 4. Prefer canonical Emacs APIs
+
+Only after checking vector and representation should implementation-level API
+choices be optimized.
+
+Actively look for project code duplicating functionality already provided by
+Emacs or standard Emacs Lisp libraries.
+
+Consider APIs and idioms from:
+
+- Emacs core;
 - `cl-lib`;
 - `seq`;
 - `subr-x`;
-- project APIs;
+- `project`;
 - buffer APIs;
 - window APIs;
 - frame APIs;
@@ -82,11 +222,9 @@ Consider APIs and idioms from Emacs itself and standard libraries such as:
 - text properties;
 - overlays;
 - faces;
-- syntax tables;
-- syntax parsing;
+- syntax APIs;
 - tree-sitter;
 - hooks;
-- advice;
 - keymaps;
 - transient maps;
 - minor modes;
@@ -101,67 +239,24 @@ Look especially for:
 - manual list, alist, or plist manipulation;
 - custom searching/filtering already covered by standard APIs;
 - manual point bookkeeping;
-- integer buffer positions that should potentially be markers;
 - custom buffer identity bookkeeping;
-- custom window/frame state tracking;
-- duplicated state already maintained by Emacs;
+- custom window/frame bookkeeping;
 - custom hook-like mechanisms;
-- command dispatchers that should be keymaps;
-- manual lifecycle management;
-- manual project or repository root detection;
+- command dispatchers duplicating keymap functionality;
+- manual project/root detection;
 - custom syntax parsing;
-- textual heuristics where syntax information or tree-sitter is available;
-- custom redisplay logic;
-- unnecessary timers or delayed updates;
-- custom implementations of standard Emacs behavior.
+- textual heuristics where structural APIs exist;
+- custom implementations of standard Emacs operations.
 
 Do not replace simple code with a standard abstraction merely because that
 abstraction exists.
 
-The replacement must make the implementation clearly simpler, more canonical,
-more robust, or easier to reason about.
+The replacement should clearly reduce project-owned complexity, improve
+correctness, or make the code more canonical and easier to reason about.
 
-When proposing such a replacement, explicitly identify the canonical Emacs
-mechanism.
+## 5. Look for duplicated Emacs state
 
-## 3. Look for canonical Emacs representations
-
-For every important concept represented by project state, ask:
-
-> Is this the natural representation of this concept in Emacs?
-
-Investigate whether something should naturally be:
-
-- a buffer instead of a filename;
-- a marker instead of an integer buffer position;
-- a window instead of manually tracked display state;
-- a frame-local value instead of global state;
-- a buffer-local variable instead of a global registry;
-- a text property instead of reconstructed display text;
-- an overlay instead of manual highlighting bookkeeping;
-- a face instead of direct visual mutation;
-- a keymap instead of a command dispatcher;
-- a hook instead of explicit notification code;
-- an Emacs project abstraction instead of custom Git-root detection;
-- syntax information instead of textual parsing;
-- a tree-sitter node instead of reconstructed syntax structure.
-
-Prefer representations whose lifecycle and consistency are already maintained
-by Emacs.
-
-Do not change a representation automatically.
-
-Before changing it:
-
-1. determine why the current representation exists;
-2. identify the invariants that depend on it;
-3. determine whether the canonical representation preserves those invariants;
-4. determine whether the change actually removes state or synchronization;
-5. verify that no required lifecycle semantics are lost.
-
-## 4. Look for duplicated Emacs state
-
-Pay particular attention to state that duplicates information Emacs already
+Pay particular attention to state duplicating information Emacs already
 maintains.
 
 Look for:
@@ -173,10 +268,10 @@ Look for:
 - parallel registries;
 - dirty flags;
 - synchronization flags;
-- cached values available cheaply from Emacs;
-- state requiring multiple hooks to remain synchronized.
+- cached values cheaply available from Emacs;
+- state requiring several hooks to remain synchronized.
 
-For every mutable project variable, ask:
+For every mutable project variable ask:
 
 > Is this authoritative project state, or merely a copy of something Emacs
 > already knows?
@@ -185,13 +280,13 @@ Prefer Emacs-owned authoritative state when practical.
 
 Be especially suspicious of caches without an obvious invalidation strategy.
 
-Do not remove a cache or duplicated-looking state until its purpose and
+Do not remove caching or duplicated-looking state until its purpose and
 performance implications are understood.
 
-## 5. Apply Chesterton's Fence
+## 6. Apply Chesterton's Fence
 
-Do not remove unusual code merely because Ponytail or a local inspection makes
-it appear unnecessary.
+Do not remove unusual code merely because Ponytail or the canonical-vector
+analysis makes it appear unnecessary.
 
 Treat every unusual:
 
@@ -220,7 +315,7 @@ Before removing or replacing it:
 7. determine whether the original problem can still occur;
 8. only then decide whether removal is safe.
 
-For every proposed removal, be able to answer:
+For every proposed removal, answer:
 
 > Why did this probably exist, and why is that reason no longer applicable?
 
@@ -234,7 +329,7 @@ If the reason cannot be determined with reasonable confidence:
 
 Chesterton's Fence takes precedence over aggressive simplification.
 
-## 6. Preserve observable behavior
+## 7. Preserve observable behavior
 
 This is a refactor, not a redesign.
 
@@ -262,7 +357,7 @@ that separately as a possible future change.
 
 Do not silently include it in the refactoring.
 
-## 7. Audit tests by ownership
+## 8. Audit tests by ownership
 
 Tests should primarily protect behavior owned by this project.
 
@@ -315,7 +410,7 @@ For every test proposed for deletion, answer:
 
 If there is no meaningful answer, the test is probably low-value.
 
-## 8. Prefer contract and regression tests
+## 9. Prefer contract and regression tests
 
 Prefer tests for:
 
@@ -339,7 +434,7 @@ Avoid unnecessary coupling to:
 A behavior-preserving refactor should often be possible without rewriting
 unrelated tests.
 
-## 9. Add tests only when they buy confidence
+## 10. Add tests only when they buy confidence
 
 Do not automatically add a test for every refactoring change.
 
@@ -354,13 +449,14 @@ Add or improve a test when:
 Do not add tests merely to verify that a documented Emacs primitive continues
 to work.
 
-## 10. Identify Emacs-specific architectural smells
+## 11. Identify Emacs-specific architectural smells
 
 Explicitly investigate:
 
+- a non-canonical extension/lifecycle vector;
 - state duplicated between Emacs and project variables;
 - global mutable state that could be buffer-local;
-- global mutable state that could be frame-local;
+- global mutable state that could be window- or frame-local;
 - caches without clear invalidation;
 - multiple sources of truth;
 - manual synchronization;
@@ -386,7 +482,7 @@ Explicitly investigate:
 
 These are investigation targets, not automatic rewrite instructions.
 
-## 11. Keep diffs narrow
+## 12. Keep diffs narrow
 
 Do not modify unrelated code merely because it is nearby.
 
@@ -400,15 +496,9 @@ Do not combine the selected refactor with:
 - adjacent cleanup;
 - another independently useful refactor.
 
-A narrow diff is easier to:
+A narrow diff is easier to understand, review, verify, revert, and bisect.
 
-- understand;
-- review;
-- verify;
-- revert;
-- bisect.
-
-## 12. Perform exactly one refactoring step
+## 13. Perform exactly one refactoring step
 
 One invocation of this skill should normally perform exactly one
 independently useful refactoring.
@@ -417,7 +507,9 @@ A step should change one concept.
 
 Good examples:
 
+- migrate one workaround to the canonical Emacs vector;
 - replace one custom helper with one canonical Emacs API;
+- replace one non-canonical representation;
 - remove one redundant state variable;
 - remove one dead helper;
 - simplify one state transition;
@@ -425,8 +517,7 @@ Good examples:
 - eliminate one duplicated calculation;
 - remove one unnecessary timer;
 - simplify one lifecycle path;
-- remove one coherent group of tautological tests;
-- migrate one internal representation when it can be done atomically.
+- remove one coherent group of tautological tests.
 
 Bad examples:
 
@@ -439,7 +530,7 @@ Bad examples:
 
 If the proposed step contains several independently valuable changes, split it.
 
-## 13. Keep every step independently revertible
+## 14. Keep every step independently revertible
 
 Every completed step must form a clean rollback boundary.
 
@@ -458,7 +549,7 @@ Do not intentionally leave:
 If a migration cannot safely be performed atomically, divide it into
 preparatory steps that are themselves behavior-preserving and useful.
 
-## 14. Understand before modifying
+## 15. Understand before modifying
 
 At the beginning of a refactoring session, inspect enough context to
 understand the relevant architecture.
@@ -471,7 +562,7 @@ Determine, as applicable:
 - supported Emacs version;
 - important state variables;
 - buffer-local state;
-- frame-local state;
+- window-local and frame-local state;
 - public commands;
 - interactive commands;
 - keymaps;
@@ -487,7 +578,7 @@ Determine, as applicable:
 
 Do not modify the first suspicious function before understanding its role.
 
-## 15. Build a candidate inventory
+## 16. Build a candidate inventory
 
 Before selecting the change, identify several plausible refactoring
 opportunities in the relevant area.
@@ -495,9 +586,12 @@ opportunities in the relevant area.
 For each candidate determine:
 
 - location;
-- current mechanism;
-- proposed mechanism;
-- canonical Emacs mechanism, if applicable;
+- current vector;
+- canonical vector;
+- current representation;
+- canonical representation, if different;
+- current API/mechanism;
+- canonical API, if applicable;
 - expected complexity reduction;
 - behavior that must remain unchanged;
 - Chesterton's Fence considerations;
@@ -517,7 +611,7 @@ Prefer high-confidence, useful, low-risk improvements.
 
 Do not optimize for the largest possible refactor.
 
-## 16. Select exactly one candidate
+## 17. Select exactly one candidate
 
 After the audit, select exactly one independently useful refactoring.
 
@@ -527,14 +621,23 @@ Before editing, establish:
 
 Exactly what will change.
 
+### Canonical vector
+
+What the canonical Emacs architectural/lifecycle mechanism is and whether the
+current implementation already uses it.
+
+### Canonical representation
+
+What the natural Emacs representation is and whether the current
+implementation already uses it.
+
+### Canonical API
+
+Which Emacs/Elisp API should implement the operation.
+
 ### Reason
 
-Why this reduces project-specific complexity.
-
-### Canonical mechanism
-
-Which Emacs/Elisp mechanism replaces the custom implementation, if
-applicable.
+Why the change reduces project-specific complexity.
 
 ### Chesterton check
 
@@ -552,7 +655,7 @@ How this specific change will be verified.
 
 Why the change can be independently reverted.
 
-## 17. Execute only the selected change
+## 18. Execute only the selected change
 
 Once a candidate is selected:
 
@@ -578,7 +681,7 @@ Instead:
 
 A supposedly small refactor must not grow opportunistically.
 
-## 18. Use an Emacs-specific verification hierarchy
+## 19. Use an Emacs-specific verification hierarchy
 
 Choose verification appropriate to the change.
 
@@ -595,7 +698,7 @@ Consider, in increasing scope:
 Use the cheapest verification that gives meaningful confidence, but do not
 under-test lifecycle or initialization changes.
 
-## 19. Protect Emacs startup explicitly
+## 20. Protect Emacs startup explicitly
 
 Changes involving any of the following require explicit consideration of
 startup/load verification:
@@ -621,7 +724,7 @@ can still be loaded in a suitably minimal Emacs process.
 An Emacs configuration that no longer starts is not an acceptable
 intermediate refactoring state.
 
-## 20. Do not trust passing tests blindly
+## 21. Do not trust passing tests blindly
 
 Passing tests do not prove that a refactor is safe.
 
@@ -640,7 +743,7 @@ regression caused by this change.
 If not, perform an appropriate smoke test or add a meaningful regression test
 when justified.
 
-## 21. Use history as evidence when needed
+## 22. Use history as evidence when needed
 
 Comments, tests, and git history may explain why unusual code exists.
 
@@ -651,7 +754,7 @@ They are evidence, not unquestionable truth.
 Verify whether historical assumptions still apply to the current code and
 supported Emacs versions.
 
-## 22. Session execution protocol
+## 23. Session execution protocol
 
 When this skill is invoked to perform a refactor, follow this protocol.
 
@@ -665,8 +768,12 @@ Do not modify anything yet.
 
 Find several plausible refactoring opportunities.
 
-Apply Ponytail and investigate enough context to distinguish genuine
-simplifications from Chesterton's Fences.
+For each significant mechanism reason explicitly through:
+
+> Ponytail → vector → representation → API → Chesterton
+
+Distinguish genuine simplifications from workarounds protecting important
+invariants.
 
 ### Phase C — Rank
 
@@ -676,6 +783,9 @@ Rank candidates by:
 2. confidence;
 3. risk;
 4. verification cost.
+
+Prefer a vector-level simplification over a local API cleanup when the
+vector-level change safely eliminates the mechanism being cleaned up.
 
 ### Phase D — Select
 
@@ -707,6 +817,8 @@ Confirm that:
 - behavior is preserved;
 - the diff contains no unrelated cleanup;
 - project-specific complexity decreased;
+- the canonical vector is respected;
+- the representation is appropriate;
 - tests remain meaningful;
 - no new synchronization/state problem was introduced;
 - the change remains independently revertible.
@@ -717,9 +829,11 @@ Report:
 
 - what changed;
 - why;
-- which canonical Emacs mechanism was used, if any;
-- the Chesterton's Fence conclusion;
-- what code/state/tests were removed;
+- current and canonical vector;
+- current and canonical representation where relevant;
+- canonical Emacs API used, if any;
+- Chesterton's Fence conclusion;
+- what code/state/tests became unnecessary;
 - verification commands and results;
 - remaining concerns;
 - promising candidates for a future invocation.
@@ -728,23 +842,27 @@ Then **STOP**.
 
 Do not automatically begin another refactoring.
 
-## 23. Audit-only mode
+## 24. Audit-only mode
 
 If explicitly asked only for an audit, analysis, or plan:
 
 - do not modify code;
 - inspect the codebase;
 - produce a prioritized refactoring inventory;
+- identify non-canonical vectors;
+- identify non-canonical representations;
+- identify canonical Emacs APIs;
 - identify Chesterton's Fences;
-- identify canonical Emacs alternatives;
 - identify questionable tests;
 - divide proposed work into small independently verifiable steps.
 
 For each proposed step include:
 
 - change;
+- canonical vector;
+- canonical representation, where relevant;
+- canonical API, where relevant;
 - reason;
-- canonical mechanism, if applicable;
 - Chesterton check;
 - invariant;
 - risk;
@@ -753,7 +871,7 @@ For each proposed step include:
 
 Do not execute the plan unless explicitly requested.
 
-## 24. Existing refactoring backlogs
+## 25. Existing refactoring backlogs
 
 If the repository contains an existing refactoring backlog or audit such as
 `REFACTORING.md`, treat it as evidence and context rather than an
@@ -764,7 +882,8 @@ Before executing an old candidate:
 1. verify that it still applies;
 2. verify its assumptions;
 3. reconsider its priority;
-4. repeat the Chesterton check.
+4. re-evaluate vector, representation, and API;
+5. repeat the Chesterton check.
 
 Record useful discoveries when appropriate, especially:
 
@@ -776,25 +895,28 @@ Record useful discoveries when appropriate, especially:
 This prevents future sessions from repeatedly proposing the same unsafe
 cleanup.
 
-## 25. Core Emacs-refactoring questions
+## 26. Core questions
 
-Throughout the refactor, repeatedly ask:
+Throughout the refactor repeatedly ask, in this order:
 
-> Is Emacs already maintaining this information?
+> Does Ponytail indicate that this mechanism should exist at all?
 
-> Is this the canonical Emacs representation?
+> What is the canonical Emacs vector for this behavior?
 
-> Is there a standard Emacs Lisp API for this operation?
+> Are we currently using that vector?
 
-> Why does this unusual code exist?
+> What is the canonical Emacs representation?
+
+> Are we storing information Emacs already owns?
+
+> What is the canonical Emacs API for the remaining operation?
+
+> Why does the current unusual code exist?
 
 > What invariant does it protect?
 
-> Can the same invariant be preserved using Emacs-owned state?
-
-> Are there multiple sources of truth?
-
-> Is this cache necessary?
+> Can the same invariant be preserved with less project-owned state and
+> synchronization?
 
 > Is this timer repairing a lifecycle problem?
 
@@ -817,9 +939,13 @@ too large.
 A refactoring invocation is complete only when:
 
 - Ponytail's general simplification principles have been applied;
+- the canonical vector has been considered;
+- the canonical representation has been considered;
+- the canonical API has been considered;
+- Chesterton's Fence has been applied where relevant;
 - exactly one coherent concern was changed;
 - observable behavior is preserved;
-- the implementation is simpler or more canonical;
+- project-owned complexity decreased;
 - relevant tests pass;
 - byte compilation succeeds when applicable;
 - package loading succeeds when applicable;
@@ -832,8 +958,9 @@ A refactoring invocation is complete only when:
 The desired end state is:
 
 - less project-owned machinery;
-- greater use of canonical Emacs functionality;
+- canonical Emacs extension and lifecycle vectors;
 - canonical Emacs representations;
+- canonical Emacs APIs;
 - fewer duplicated sources of truth;
 - fewer synchronization mechanisms;
 - clearer invariants;
