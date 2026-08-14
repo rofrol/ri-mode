@@ -51,6 +51,11 @@ the user's configuration does not need any `:load-path` entries.
 Ri uses Emacs's built-in persistence mechanisms rather than maintaining a
 second session file.
 
+Ri automatically persists the last committed semantic selection submode and
+uses it as the default for new buffers after the next Emacs start. No desktop
+configuration is required for this Ri-wide default. Held momentary navigation
+does not change the persisted mode.
+
 Enable point restoration for ordinary file visits:
 
 ```elisp
@@ -58,7 +63,7 @@ Enable point restoration for ordinary file visits:
 ```
 
 Enable whole-session restoration for buffers, window layout, positions, and
-Ri's last semantic selection submode:
+each buffer's saved semantic selection submode:
 
 ```elisp
 (setq desktop-save t)
@@ -69,8 +74,9 @@ Ri's last semantic selection submode:
 without waiting for an exit prompt.
 
 When `desktop` is loaded, Ri registers its buffer-local `sr-submode` value
-with `desktop-locals-to-save`. Active Extend selections remain transient and
-are not restored after a restart.
+with `desktop-locals-to-save`. That per-buffer value overrides Ri's global
+last-mode default. Active Extend selections remain transient and are not
+restored after a restart.
 
 ## Usage
 
