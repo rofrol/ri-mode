@@ -570,10 +570,41 @@ repeated `f` is a no-op; in NODE mode, it leaves Extend."
 (defun ri-extend-nav-up () (interactive) (ri--run-extend-navigation #'sr-nav-up))
 (defun ri-extend-nav-down () (interactive) (ri--run-extend-navigation #'sr-nav-down))
 
+(defvar-local ri--momentary-origin-submode nil
+  "Submode to restore when a momentary CHAR/WORD+ layer releases.")
+
 (defun ri--run-momentary-navigation (setter movement)
-  "Switch submodes with SETTER, then run MOVEMENT."
+  "Record the active submode, switch with SETTER, then run MOVEMENT."
+  (unless ri--momentary-origin-submode
+    (setq ri--momentary-origin-submode sr-submode))
   (funcall setter)
   (funcall movement))
+
+(defun ri--restore-submode (submode)
+  "Switch back to SUBMODE after a momentary layer, without moving point.
+Outside Extend, the raw semantic-regions setters do not move point, so
+the position left by held navigation is kept."
+  (when (ri--selection-active-p)
+    (ri--preserve-selection-for-submode-switch))
+  (pcase submode
+    ('line (sr-set-line-mode))
+    ('line-star (sr-set-line-star-mode))
+    ('paragraph (sr-set-paragraph-mode))
+    ('char (sr-set-character-mode))
+    ('word (sr-set-word-mode))
+    ('word-plus (sr-set-word-plus-mode))
+    ('word-star (sr-set-word-star-mode))
+    ('subword (sr-set-subword-mode))
+    ('node (sr-set-node-mode)))
+  (ri--update-highlight))
+
+(defun ri--restore-momentary-submode ()
+  "Restore the submode active before the current momentary layer."
+  (when ri--momentary-origin-submode
+    (let ((origin ri--momentary-origin-submode))
+      (setq ri--momentary-origin-submode nil)
+      (ri--restore-submode origin)
+      (force-mode-line-update))))
 
 (defun ri-momentary-char-left ()
   (interactive)
