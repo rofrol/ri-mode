@@ -46,6 +46,28 @@ The MELPA recipe must include the bundled library directories. Once
 installed, `ri.el` adds those directories to `load-path` internally, so
 the user's configuration does not need any `:load-path` entries.
 
+### Restore cursor and selection mode
+
+Ri uses Emacs's built-in persistence mechanisms rather than maintaining a
+second session file.
+
+Enable point restoration for ordinary file visits:
+
+```elisp
+(save-place-mode 1)
+```
+
+Enable whole-session restoration for buffers, window layout, positions, and
+Ri's last semantic selection submode:
+
+```elisp
+(desktop-save-mode 1)
+```
+
+When `desktop` is loaded, Ri registers its buffer-local `sr-submode` value
+with `desktop-locals-to-save`. Active Extend selections remain transient and
+are not restored after a restart.
+
 ## Usage
 
 The mode line shows the current state:

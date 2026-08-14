@@ -66,6 +66,14 @@ consumer provide selection bounds without taking ownership of overlays.")
 Supported values are `line', `line-star', `paragraph', `char', `word',
 `word-plus', `word-star', `subword', and `node'.")
 
+(with-eval-after-load 'desktop
+  (add-to-list 'desktop-locals-to-save 'sr-submode)
+  (add-hook 'desktop-after-read-hook #'sr--refresh-desktop-highlights))
+
+(with-eval-after-load 'saveplace
+  (add-hook 'save-place-after-find-file-hook
+            #'sr--refresh-current-highlight))
+
 (defconst sr--submode-properties
   '((line      :line t)
     (line-star :line t)
@@ -1629,6 +1637,17 @@ target in that selected line rather than from the incidental point position."
 ;; ── Minor mode ───────────────────────────────────────────────────────────
 
 ;; ── Deferred highlight after file open ──────────────────────────────────
+
+(defun sr--refresh-current-highlight ()
+  "Refresh the current semantic highlight after point restoration."
+  (when (bound-and-true-p sr-mode)
+    (sr--update-highlight)))
+
+(defun sr--refresh-desktop-highlights ()
+  "Refresh semantic highlights after desktop restores all buffers."
+  (dolist (buffer (buffer-list))
+    (with-current-buffer buffer
+      (sr--refresh-current-highlight))))
 
 (defun sr--on-find-file ()
   "Call `sr--update-highlight' when `sr-mode' is enabled.

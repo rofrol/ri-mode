@@ -1034,3 +1034,73 @@ pre-existing property of the old code, not something the
       (should (string= (treesit-node-type sr--node-current) "number"))
       (sr-nav-up)
       (should-not (string= (treesit-node-type sr--node-current) "number")))))
+
+(defvar desktop-buffer-ok-count)
+(defvar desktop-buffer-fail-count)
+(defvar desktop-first-buffer)
+(defvar desktop-base-file-name)
+
+(defun semantic-region-test--enable-sr-mode ()
+  "Enable semantic-regions for a desktop-restored test buffer."
+  (sr-mode 1))
+
+
+(ert-deftest semantic-region-test-desktop-registers-submode ()
+  (require 'desktop)
+  (should (memq 'sr-submode desktop-locals-to-save))
+  (should (= 1 (cl-count 'sr-submode desktop-locals-to-save :test #'eq))))
+
+(ert-deftest semantic-region-test-desktop-restores-submode ()
+  (require 'desktop)
+  (let* ((desktop-dir (make-temp-file "semantic-regions-desktop-" t))
+         (file (make-temp-file "semantic-regions-submode-" nil ".el"))
+         (source (find-file-noselect file))
+         (desktop-file (expand-file-name desktop-base-file-name desktop-dir)))
+    (unwind-protect
+        (progn
+          (with-current-buffer source
+            (emacs-lisp-mode)
+            (setq-local sr-submode 'word)
+            (insert "alpha beta\n")
+            (setq-local ri--selection 'transient-state)
+            (goto-char 7)
+            (sr-mode 1)
+            (save-buffer))
+          (add-hook 'find-file-hook #'semantic-region-test--enable-sr-mode)
+          (save-window-excursion
+            (switch-to-buffer source)
+            (desktop-save desktop-dir nil nil 208)
+            (with-temp-buffer
+              (insert-file-contents desktop-file)
+              (should-not (string-match-p "ri--selection" (buffer-string)))))
+          (kill-buffer source)
+          (let ((desktop-buffer-ok-count 0)
+                (desktop-buffer-fail-count 0)
+                (desktop-first-buffer nil))
+            (load desktop-file nil nil t))
+          (run-hooks 'desktop-after-read-hook)
+          (let ((restored (get-file-buffer file)))
+            (unwind-protect
+                (progn
+                  (should restored)
+                  (with-current-buffer restored
+                    (should (= (point) 7))
+                    (should (eq sr-submode 'word))
+                    (should
+                     (equal (buffer-substring-no-properties
+                             (car (sr--get-current-unit-bounds))
+                             (cdr (sr--get-current-unit-bounds)))
+                            "beta"))
+                    (should
+                     (cl-some
+                      (lambda (overlay)
+                        (and (= (overlay-start overlay) 7)
+                             (= (overlay-end overlay) 11)))
+                      (overlays-in (point-min) (point-max))))))
+              (when (buffer-live-p restored)
+                (kill-buffer restored)))))
+      (remove-hook 'find-file-hook #'semantic-region-test--enable-sr-mode)
+      (when (buffer-live-p source)
+        (kill-buffer source))
+      (delete-file file)
+      (delete-directory desktop-dir t))))
