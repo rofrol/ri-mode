@@ -1199,9 +1199,14 @@ configured bounds source returns nil."
         (when (< (car bounds) line-end)
           (car bounds))))))
 
+(defvar-local sr--goal-column nil
+  "Goal column for vertical CHAR navigation, or nil to capture the
+current column on the next move.")
+
 (defun sr--nav-wordish-line (direction)
   "Move in DIRECTION to a line containing a traversable word-based unit.
 Restore point when no such line exists."
+  (setq sr--goal-column nil)
   (let ((origin (point))
         target)
     (while (and (zerop (forward-line direction))
@@ -1210,6 +1215,20 @@ Restore point when no such line exists."
     (goto-char (or target origin))))
 
 ;; ── Navigation commands ──────────────────────────────────────────────────
+
+(defun sr--nav-char-vertical (direction)
+  "Move point DIRECTION lines, preserving the goal column.
+The goal column is captured from the column where the vertical movement
+started and restored on every subsequent move; lines shorter than the
+goal clamp point to their last character."
+  (let ((goal (or sr--goal-column (current-column))))
+    (forward-line direction)
+    (setq sr--goal-column goal)
+    (goto-char (line-beginning-position))
+    (move-to-column goal)
+    (when (eolp)
+      (when (> (point) (line-beginning-position))
+        (backward-char 1)))))
 
 (defun sr-nav-up ()
   "Move point up by line.
@@ -1228,6 +1247,8 @@ units in word-based modes."
      (sr--nav-wordish-line -1))
     ('paragraph
      (message "Up/Down navigation (i/k) is not defined for PARAGRAPH mode."))
+    ('char
+     (sr--nav-char-vertical -1))
     (_
      (forward-line -1)))
   (sr--snap-to-unit-start)
@@ -1250,6 +1271,8 @@ units in word-based modes."
      (sr--nav-wordish-line 1))
     ('paragraph
      (message "Up/Down navigation (i/k) is not defined for PARAGRAPH mode."))
+    ('char
+     (sr--nav-char-vertical 1))
     (_
      (forward-line 1)))
   (sr--snap-to-unit-start)
@@ -1259,6 +1282,7 @@ units in word-based modes."
 (defun sr-nav-parent-line ()
   "Move the current semantic unit to the nearest parent line above."
   (interactive)
+  (setq sr--goal-column nil)
   (sr--require-node-parser "Parent Line")
   (when-let* ((position (sr--parent-line-position)))
     (goto-char position)
@@ -1336,6 +1360,7 @@ adjacent empty line is a target; otherwise empty lines are skipped."
 (defun sr-nav-prev ()
   "Move to previous significant item."
   (interactive)
+  (setq sr--goal-column nil)
   (pcase sr-submode
     ('word
      (sr-backward-word-all))
@@ -1360,6 +1385,7 @@ adjacent empty line is a target; otherwise empty lines are skipped."
 (defun sr-nav-next ()
   "Move to next significant item."
   (interactive)
+  (setq sr--goal-column nil)
   (pcase sr-submode
     ('word
      (sr-forward-word-all))
@@ -1384,6 +1410,7 @@ adjacent empty line is a target; otherwise empty lines are skipped."
 (defun sr-nav-left ()
   "Move point left/backward by one unit."
   (interactive)
+  (setq sr--goal-column nil)
   (pcase sr-submode
     ('node (sr--goto-node-target 'left))
     ('char (backward-char))
@@ -1398,6 +1425,7 @@ adjacent empty line is a target; otherwise empty lines are skipped."
 (defun sr-nav-right ()
   "Move point right/forward by one unit."
   (interactive)
+  (setq sr--goal-column nil)
   (pcase sr-submode
     ('node (sr--goto-node-target 'right))
     ('char (forward-char))
@@ -1461,6 +1489,7 @@ adjacent empty line is a target; otherwise empty lines are skipped."
 (defun sr-nav-first ()
   "Move to the first item allowed by the current submode."
   (interactive)
+  (setq sr--goal-column nil)
   (unless (eq sr-submode 'subword)
     (pcase sr-submode
       ('char
@@ -1483,6 +1512,7 @@ adjacent empty line is a target; otherwise empty lines are skipped."
 (defun sr-nav-last ()
   "Move to the last item allowed by the current submode."
   (interactive)
+  (setq sr--goal-column nil)
   (unless (eq sr-submode 'subword)
     (pcase sr-submode
       ('char
@@ -1510,7 +1540,8 @@ INITIAL-NODE, when non-nil, seeds NODE selection for a transition that has
 already resolved its semantic entry target."
   (unless (eq sr-submode submode)
     (setq sr--node-current initial-node
-          sr--node-direct-target-p nil)
+          sr--node-direct-target-p nil
+          sr--goal-column nil)
     (sr--node-clear-virtual))
   (setq sr-submode submode)
   (sr--update-highlight)

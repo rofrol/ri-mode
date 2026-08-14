@@ -14,6 +14,7 @@
 
 (defun ri--target-unit-bounds (movement current &optional _preserve-reached)
   "Return semantic-region bounds reached from CURRENT by MOVEMENT."
+  (setq sr--goal-column nil)
   (save-excursion
     (let ((ri--selection nil))
       (goto-char (if (memq movement '(:left :prev :first :up))
