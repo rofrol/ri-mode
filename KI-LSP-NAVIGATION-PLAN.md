@@ -65,7 +65,7 @@ If Eglot is absent or the server lacks the requested capability, signal `user-er
 
 ### Preserve Ri menu and terminal behavior
 
-The Space layer is a persistent prefix layer with a `Space` legend, matching Ki. Before invoking an LSP action, close the transient map and legend so the Xref or Eglot hierarchy UI becomes the only active result surface. Route `user-error` through the existing `ri--call-preserving-user-error` mechanism so a following Kitty key-release event cannot erase the useful error message.
+The Space layer is a one-shot prefix layer with a `Space` legend, matching its single-action UI. Emacs deactivates its transient map before invoking the selected command. The shared LSP wrapper still closes the legend and menu state idempotently so the Xref or Eglot hierarchy UI becomes the only active result surface, including direct invocation and error paths. Route `user-error` through the existing `ri--call-preserving-user-error` mechanism so a following Kitty key-release event cannot erase the useful error message.
 
 ## Proposed structure
 
@@ -104,10 +104,9 @@ Do not add generic protocol abstractions beyond the shared preflight helper. The
 
 1. Require `ri-lsp` after `ri-extend`.
 2. Add all eight exact Ki keys and labels to the existing `ri--space-layer-map`; retain its existing `Editor` submenu and `<escape>` binding.
-3. Keep `ri-space-menu` as the `SPC` entry point, `Space` legend owner, and persistent transient map.
+3. Keep `ri-space-menu` as the `SPC` entry point, `Space` legend owner, and one-shot transient map.
 4. Add a small shared UI wrapper that:
-   - clears the transient map;
-   - closes the Space legend/menu state;
+   - closes the Space legend/menu state idempotently;
    - invokes the selected `ri-lsp--...` operation through `ri--call-preserving-user-error`.
 5. Add eight explicit interactive `ri-find-...` commands which call that shared wrapper. Explicit commands keep `M-x`, help, tests, and stack traces meaningful; do not dispatch by inspecting `last-command-event`.
 6. Do not add a separate `n` menu or change the existing direct NORM bindings.
@@ -205,7 +204,7 @@ Add `ri-lsp-test.el` rather than mixing protocol-navigation coverage into `ri-ch
    - `v` excludes and `V` includes declarations;
    - `x` is definition and `X` is declaration.
 3. Assert `SPC` still opens `ri-space-menu` and that `n` remains unbound in NORM.
-4. Invoke `ri-space-menu` with legend functions stubbed and verify the `Space` title, map, persistent transient behavior, and cleanup after an LSP command or `<escape>`.
+4. Invoke `ri-space-menu` with legend functions stubbed and verify the `Space` title, map, one-shot transient behavior, and cleanup after an LSP command or `<escape>`.
 
 ### LSP dispatch contract
 
