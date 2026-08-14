@@ -67,7 +67,7 @@ main bindings are:
 | `u` / `o`            | Move to the previous / next unit                             |
 | `y` / `p`            | Move to the first / last unit                                |
 | `.`                  | Move to the parent line                                      |
-| `a`                  | Select `CHAR`; hold with `i` / `j` / `k` / `l` for `CHAR` movement |
+| `a`                  | Select `LINE`; hold with `i` / `j` / `k` / `l` for `CHAR` movement |
 | `s`                  | Select `WORD+`; hold with `i` / `j` / `k` / `l` for `WORD+` movement |
 | `A`, `E`, `W`        | Use `LINE*`, `PARAGRAPH`, or `CHAR` units                   |
 | `S`, `M-s`, `w`      | Use `WORD*`, `WORD+`, or `SUBWORD` units                    |
@@ -122,11 +122,11 @@ Cancelling preserves the exact source point and any active Extend selection.
 The `a`, `s`, `c`, `r`, `e`, `g`, `t`, `v`, `x`, and `z` keys also act as
 momentary layers. Hold one of them to display its available actions,
 press the shown key while still holding it, then release. Hold `a` with
-`i` / `j` / `k` / `l` to select `CHAR` and navigate by characters, or hold
-`s` with the same keys to select `WORD+` and navigate by WORD+ units. The
-selected semantic submode remains active after the layer closes. The other
-layers provide duplicate, eat, buffer, open, swap, paste, cut, and undo/redo
-operations.
+`i` / `j` / `k` / `l` to navigate by characters, or hold `s` with the same
+keys to navigate by WORD+ units. Releasing a held `a` or `s` returns to the
+submode that was active before the layer opened (e.g. NODE, WORD, LINE),
+leaving point where the movement put it. The other layers provide
+duplicate, eat, buffer, open, swap, paste, cut, and undo/redo operations.
 
 The Buffer layer matches Ki: `j`/`l` cycle marked buffers with wrapping,
 `y`/`p` select the first/last marked buffer, `u`/`o` move through all
@@ -135,7 +135,7 @@ current buffer mark, `n` closes the current buffer, `i` unmarks the
 others, and `m` switches to the alternate file. In the `z` layer,
 `j`/`l` perform coarse undo/redo
 and `u`/`o` perform character-granular undo/redo. A quick tap of `a`
-enters `CHAR`, and a quick tap of `s` enters `WORD+`; a quick tap of `c`,
+enters `LINE`, and a quick tap of `s` enters `WORD+`; a quick tap of `c`,
 `r`, `g`, `v`, `x`, or `z` performs its primary action.
 
 File tabs use one Ri-owned top side-window surface spanning each ordinary

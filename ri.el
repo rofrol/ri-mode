@@ -784,16 +784,18 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
   (list
    (list :key ?a
          :label "CHAR"
-         :tap #'ri-extend-set-character-mode
-         :activate-on-press t
+         :tap #'ri-extend-set-line-mode
+         :activate-on-press nil
+         :restore-on-release t
          :map ri--char-layer-map
-         :release "CHAR")
+         :release nil)
    (list :key ?s
          :label "WORD+"
          :tap #'ri-extend-set-word-plus-mode
-         :activate-on-press t
+         :activate-on-press nil
+         :restore-on-release t
          :map ri--word-plus-layer-map
-         :release "WORD+")
+         :release nil)
    (list :key ?c
          :label "Copy/≡ Dup"
          :tap #'ri-copy-unit
@@ -827,6 +829,8 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
 :label   -- Display label with icon (used in menus and legend titles).
 :tap               -- Primary command called when the layer is tapped.
 :activate-on-press -- Non-nil also runs :tap when the layer opens.
+:restore-on-release -- Non-nil restores the pre-layer submode on release and
+                      shows it as the release label.
 :map               -- Keymap for the momentary layer.
 :release           -- Label shown on release, or nil.")
 
@@ -878,6 +882,7 @@ and its release as a KKP CSI-u event."
     (let ((key (plist-get spec :key))
           (tap (plist-get spec :tap))
           (activate-on-press (plist-get spec :activate-on-press))
+          (restore-on-release (plist-get spec :restore-on-release))
           (map (plist-get spec :map))
           (label (plist-get spec :label))
           (release (plist-get spec :release)))
@@ -885,6 +890,9 @@ and its release as a KKP CSI-u event."
         :tap tap
         :when #'ri--chord-when-p
         :on-press (lambda ()
+                    (setq ri--momentary-origin-submode nil)
+                    (when restore-on-release
+                      (setq release (ri--submode-name)))
                     (when activate-on-press
                       (funcall tap))
                     (ri--hide-frame)
@@ -895,7 +903,11 @@ and its release as a KKP CSI-u event."
                     ;; The modal state did not change, so explicitly restore
                     ;; the cursor that belongs to NORM.
                     (modal-cursor-refresh))
-        :on-release #'keymap-legend-hide
+        :on-release (if restore-on-release
+                        (lambda ()
+                          (keymap-legend-hide)
+                          (ri--restore-momentary-submode))
+                      #'keymap-legend-hide)
         :map map)
       (define-key mini-modal-map (string key) #'ri--press-layer))))
 
@@ -949,7 +961,7 @@ and its release as a KKP CSI-u event."
     (define-key map "y" '(menu-item "|<" ri-extend-nav-first))
     (define-key map "p" '(menu-item ">|" ri-extend-nav-last))
     (define-key map "." '(menu-item "Parent Line" ri-parent-line))
-    (define-key map "a" '(menu-item "≡ CHAR" ri-extend-set-character-mode))
+    (define-key map "a" '(menu-item "LINE/≡ CHAR" ri-extend-set-line-mode))
     (define-key map "A" '(menu-item "LINE*" ri-extend-set-line-star-mode))
     (define-key map "W" '(menu-item "CHAR" ri-extend-set-character-mode))
     (define-key map "E" '(menu-item "PARAGRAPH" ri-extend-set-paragraph-mode))
