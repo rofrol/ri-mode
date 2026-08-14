@@ -312,16 +312,13 @@ the stack is empty, exit extend mode gracefully."
     (ri--update-highlight)))
 
 (defun ri--undo-at-exhausted-redo-p ()
-  "Return non-nil when `undo-only' reached an exhausted redo branch."
-  (and (eq last-command 'undo)
-       (not undo-in-region)
-       (consp pending-undo-list)
-       (eq (gethash pending-undo-list undo-equiv-table) t)
-       (let ((undo-list buffer-undo-list))
-         (while (and (consp undo-list)
-                     (null (car undo-list)))
-           (setq undo-list (cdr undo-list)))
-         (gethash undo-list undo-equiv-table))))
+  "Return non-nil when only an exhausted redo record remains."
+  (and (not undo-in-region)
+       (or (eq pending-undo-list t)
+           (and (consp pending-undo-list)
+                (eq (gethash pending-undo-list undo-equiv-table) t)))
+       (gethash (ri--first-undo-cell buffer-undo-list)
+                undo-equiv-table)))
 
 (defun ri--first-undo-cell (undo-list)
   "Return the first non-boundary cons cell in UNDO-LIST."
@@ -370,21 +367,33 @@ Preserve any redo equivalence mapping for the new REST list."
             (cons (substring text 1)
                   (if (< pos 0) (- next-pos) next-pos)))))))))
 
+(defun ri-undo-only ()
+  "Undo one buffer change without consuming Extend navigation history.
+When Extend is active, preserve point on its active selection edge."
+  (interactive)
+  (let ((extend-point
+         (and (ri--selection-active-p) (copy-marker (point)))))
+    (unwind-protect
+        (progn
+          ;; `undo-only' skips list-valued redo equivalents, but an exhausted
+          ;; branch maps to t and would otherwise replay the discarded edit.
+          (when (ri--undo-at-exhausted-redo-p)
+            (setq last-command 'undo
+                  pending-undo-list t))
+          (undo-only)
+          ;; KKP chord actions run while Emacs is reading the next event,
+          ;; before the command loop can delimit the redo record they create.
+          (undo-boundary))
+      (when extend-point
+        (goto-char extend-point)
+        (set-marker extend-point nil)))))
+
 (defun ri-smart-undo ()
-  "Dispatch undo based on current mode context.
-In extend mode: contract the selection by one unit (`ri--extend-undo').
-Otherwise: run `undo-only', stopping at an exhausted redo branch."
+  "Undo one Extend navigation step, or one buffer change outside Extend."
   (interactive)
   (if (ri--selection-active-p)
       (ri--extend-undo)
-    ;; `undo-only' skips list-valued redo equivalents, but an exhausted
-    ;; branch maps to t and would otherwise replay the discarded edit.
-    (when (ri--undo-at-exhausted-redo-p)
-      (setq pending-undo-list t))
-    (undo-only)
-    ;; KKP chord actions run while Emacs is reading the next event, before
-    ;; the command loop can delimit the redo record they just created.
-    (undo-boundary)))
+    (ri-undo-only)))
 
 (defun ri-smart-redo ()
   "Redo one change and delimit it for a following KKP chord action."

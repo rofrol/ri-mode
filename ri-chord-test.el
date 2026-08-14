@@ -213,7 +213,7 @@
         (should (eq (gethash ?z kkp-chord--mod-maps)
                     ri--undo-redo-layer-map))
         (should (eq (gethash ?z kkp-chord--tap-actions)
-                    #'ri-smart-undo))
+                    #'ri-undo-only))
         (should (eq (lookup-key ri--undo-redo-layer-map "j")
                     #'ri-smart-undo))
         (should (eq (lookup-key ri--undo-redo-layer-map "l")
@@ -222,6 +222,8 @@
                     #'ri-fine-undo))
         (should (eq (lookup-key ri--undo-redo-layer-map "o")
                     #'ri-fine-redo))
+        (should (eq (lookup-key ri--normal-help-map "z")
+                    #'ri-undo-only))
         ;; A plain press remains in this vector while its CSI-u release is
         ;; decoded.  That must not suppress the accepted layer's tap action.
         (cl-letf (((symbol-function 'this-command-keys-vector)
@@ -269,6 +271,53 @@
                 (call-interactively command)))
             (send "122;:3u")
             (should (equal (buffer-string) "base"))))))))
+
+(ert-deftest ri-chord-test-z-tap-undoes-buffer-without-consuming-extend ()
+  (ri-chord-test--with-fresh-chords
+    (with-temp-buffer
+      (buffer-enable-undo)
+      (insert "ab")
+      (setq buffer-undo-list nil)
+      (insert " change")
+      (undo-boundary)
+      (goto-char (point-min))
+      (setq sr-submode 'char)
+      (should (ri--enter-extend))
+      (ri-extend-nav-right)
+      (unwind-protect
+          (let ((bounds (ri--selection-bounds))
+                (edge (ri--selection-state-active-edge ri--selection))
+                (selected-point (point))
+                (history (ri--selection-state-undo-stack ri--selection))
+                (mini-modal-mode t)
+                (ri--menu-state nil)
+                (ri--help-prefix-active nil)
+                (last-command nil))
+            (ri-chord-setup)
+            (cl-letf (((symbol-function 'this-command-keys-vector)
+                       (lambda () [?z]))
+                      ((symbol-function 'ri--hide-frame) #'ignore)
+                      ((symbol-function 'keymap-legend-show) #'ignore)
+                      ((symbol-function 'keymap-legend-hide) #'ignore)
+                      ((symbol-function 'modal-cursor-refresh) #'ignore))
+              (let ((last-command-event ?z))
+                (call-interactively #'ri--press-layer))
+              (should (equal kkp-chord--held '((122))))
+              (should
+               (equal
+                (kkp-chord--translate-advice
+                 #'ignore (string-to-list "122;:3u"))
+                [])))
+            (should (equal (buffer-string) "ab"))
+            (should (ri--selection-active-p))
+            (should (equal (ri--selection-bounds) bounds))
+            (should (eq (ri--selection-state-active-edge ri--selection)
+                        edge))
+            (should (= (point) selected-point))
+            (should
+             (eq (ri--selection-state-undo-stack ri--selection)
+                 history)))
+        (ri--exit-extend)))))
 
 (ert-deftest ri-chord-test-buffer-layer-registers-ki-bindings ()
   (ri-chord-test--with-fresh-chords
