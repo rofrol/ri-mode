@@ -407,14 +407,15 @@
                   ((`(,key ,right ,layer-submode ,expected-point ,tap-start)
                     case))
                 (let ((release (format "%d;:3u" key)))
-                  ;; Tap: press and release without a sub-key commits the tap
-                  ;; target; the press itself must not switch the submode.
+                  ;; Press enters the temporary submode; release restores it
+                  ;; before a pure tap commits the persistent target.
                   (setq current-key key
                         sr-submode tap-start)
                   (goto-char (point-min))
                   (let ((last-command-event key))
                     (call-interactively #'ri--press-layer))
-                  (should (eq sr-submode tap-start))
+                  (should (eq sr-submode layer-submode))
+                  (should (eq ri--momentary-origin-submode tap-start))
                   (should (eq ri--momentary-layer-submode layer-submode))
                   (should
                    (equal (ri--mode-line-text)
@@ -433,13 +434,14 @@
                           (format " NORM[%s] [Press ? for help]"
                                   (ri--submode-name layer-submode))))
 
-                  ;; Hold: a sub-key navigates in the layer unit, and the
-                  ;; release restores the tap-start submode without moving
-                  ;; point.
+                  ;; Hold: the layer is already active before its sub-key,
+                  ;; and release restores the tap-start submode.
                   (setq sr-submode tap-start)
                   (goto-char (point-min))
                   (let ((last-command-event key))
                     (call-interactively #'ri--press-layer))
+                  (should (eq sr-submode layer-submode))
+                  (should (eq ri--momentary-origin-submode tap-start))
                   (should
                    (equal (ri--mode-line-text)
                           (format " NORM[%s(%s)] [Press ? for help]"
@@ -504,8 +506,8 @@
                   ((symbol-function 'modal-cursor-refresh) #'ignore))
           (let ((last-command-event ?w))
             (call-interactively #'ri--press-layer))
-          (should (eq sr-submode 'line))
-          (should (equal (sr--get-current-unit-bounds) (cons 4 6)))
+          (should (eq sr-submode 'char))
+          (should (equal (sr--get-current-unit-bounds) (cons 4 5)))
           (let ((command (key-binding "i")))
             (should (eq command #'ri-momentary-char-up))
             (kkp-chord--mark-plain-command)
@@ -550,7 +552,7 @@
                   ((symbol-function 'modal-cursor-refresh) #'ignore))
           (let ((last-command-event ?a))
             (call-interactively #'ri--press-layer))
-          (should (eq sr-submode 'char))
+          (should (eq sr-submode 'line))
           (let ((command (key-binding "k")))
             (should (eq command #'ri-momentary-line-down))
             (kkp-chord--mark-plain-command)
@@ -570,6 +572,38 @@
           (should (eq sr-submode 'char))
           (should (= (point) 4))
           (should (equal (sr--get-current-unit-bounds) (cons 4 5))))))))
+
+(ert-deftest ri-chord-test-hold-a-uses-line-submode-for-fallback ()
+  (ri-chord-test--with-fresh-chords
+    (with-temp-buffer
+      (insert "alpha\nbeta\n")
+      (goto-char 1)
+      (let ((mini-modal-mode t)
+            (ri--menu-state nil)
+            (ri--help-prefix-active nil)
+            (sr-submode 'node))
+        (ri-chord-setup)
+        (cl-letf (((symbol-function 'this-command-keys-vector)
+                   (lambda () [?a]))
+                  ((symbol-function 'ri--hide-frame) #'ignore)
+                  ((symbol-function 'modal-cursor-refresh) #'ignore)
+                  ((symbol-function 'sr-set-node-mode)
+                   (lambda () (setq sr-submode 'node)))
+                  ((symbol-function 'sr-retarget-at-position) #'ignore))
+          (let ((last-command-event ?a))
+            (call-interactively #'ri--press-layer))
+          (should (eq sr-submode 'line))
+          (should (eq (lookup-key ri--normal-help-map "j") #'ri-extend-nav-left))
+          (should (eq (lookup-key ri--normal-help-map "l") #'ri-extend-nav-right))
+          (let ((point-before (point))
+                (left (lookup-key ri--normal-help-map "j"))
+                (right (lookup-key ri--normal-help-map "l")))
+            (kkp-chord--mark-plain-command)
+            (call-interactively left)
+            (call-interactively right)
+            (should (= (point) point-before)))
+          (kkp-chord--on-release ?a)
+          (should (eq sr-submode 'node)))))))
 
 (ert-deftest ri-chord-test-mark-user-error-is-preserved-for-key-release ()
   (let ((ri--restore-message-after-release nil)
