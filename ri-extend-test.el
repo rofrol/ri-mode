@@ -80,11 +80,12 @@
     (ri-extend-nav-down)
     (ri-extend-nav-down)
     (let ((extended-bounds (ri--selection-bounds)))
-      (should (equal extended-bounds (cons 8 24)))
+      ;; Two vertical downs from column 7 restore column 7 on line 3.
+      (should (equal extended-bounds (cons 8 31)))
       (should
        (equal (buffer-substring-no-properties
                (car extended-bounds) (cdr extended-bounds))
-              "pha\nbeta gamma\nd"))
+              "pha\nbeta gamma\ndelta ep"))
       (ri-extend-set-line-mode)
       (should (equal (ri--selection-bounds) extended-bounds))
       (ri-swap-cursor)
@@ -93,7 +94,7 @@
       (should (eq sr-submode 'word))
       (should (equal (ri--selection-bounds) extended-bounds))
       (ri-extend-nav-right)
-      (should (equal (ri--selection-bounds) (cons 12 24)))
+      (should (equal (ri--selection-bounds) (cons 12 31)))
       (ri-smart-undo)
       (should (equal (ri--selection-bounds) extended-bounds)))
     (ri--exit-extend)))
@@ -218,6 +219,37 @@
     (should (= (point) 3))
     (should (eq (ri--selection-state-active-edge ri--selection) 'start))
     (should (eq sr-submode 'line))
+    (ri--exit-extend)))
+
+(ert-deftest ri-extend-test-momentary-char-vertical-remembers-goal-column ()
+  (ri-extend-test--with-buffer "abcd\nef\nghij"
+    ;; "abcd\nef\nghij": line 1 = 1-4, line 2 = 6-7, line 3 = 9-12.
+    (goto-char 3)
+    (ri-momentary-char-down)
+    (should (= (point) 7))             ; goal 2 clamps to line 2's last char
+    (ri-momentary-char-down)
+    (should (= (point) 11))            ; goal 2 restored on line 3
+    (ri-momentary-char-up)
+    (should (= (point) 7))             ; goal 2 clamps again
+    (ri-momentary-char-up)
+    (should (= (point) 3))             ; goal 2 restored on line 1
+    ;; Horizontal movement resets the goal column.
+    (ri-momentary-char-right)
+    (should (= (point) 4))
+    (ri-momentary-char-down)
+    (should (= (point) 7))             ; new goal 3 clamps on line 2
+    ;; Extend mode keeps point on the active end edge at the goal column.
+    (goto-char 2)
+    (setq sr--goal-column nil)
+    (should (ri--enter-extend))
+    (ri-momentary-char-down)
+    (should (= (point) 7))             ; goal 1 clamps to line 2's last char
+    (should (equal (ri--selection-bounds) (cons 2 8)))
+    (should (eq (ri--selection-state-active-edge ri--selection) 'end))
+    (ri-momentary-char-down)
+    (should (= (point) 10))            ; goal 1 restored on line 3
+    (should (equal (ri--selection-bounds) (cons 2 11)))
+    (should (eq (ri--selection-state-active-edge ri--selection) 'end))
     (ri--exit-extend)))
 
 (ert-deftest ri-extend-test-momentary-line-navigation-records-origin-and-restores ()
