@@ -1,10 +1,10 @@
 ---
 name: ri-startup-performance
 description: >
-  Measure or protect Emacs + Ri startup performance. Use when the user asks
-  for startup timing, startup profiling, startup regression checks, or when a
-  change touches ri.el top-level dependencies, lazy-loading boundaries, or
-  ri-enable.
+  Measure or protect Emacs + Ri startup performance and inspect its local
+  history. Use when the user asks for startup timing, startup trends, startup
+  profiling, startup regression checks, or when a change touches ri.el
+  top-level dependencies, lazy-loading boundaries, or ri-enable.
 argument-hint: "[measure|before|after]"
 ---
 
@@ -37,9 +37,28 @@ Report these emitted values without rounding them again:
 - `load_over_control_pct`;
 - `enable_over_load_pct`;
 - Emacs version, system configuration, and repetition count.
+- `history_file`.
 
 A single measurement describes the current checkout. Do not call it a
 regression or improvement without a comparable baseline.
+
+## Repository history
+
+Every successful benchmark automatically appends one row to
+`startup-history-<machine>.tsv` in the repository root. `<machine>` is the
+sanitized hostname returned by Emacs, so the filename states which computer
+produced the measurements.
+
+The TSV contains timestamp, repository revision, hostname, Emacs version,
+system configuration, repetition count, and every emitted timing metric.
+Commit these machine-specific history files so the repository retains the
+trend. Separate filenames prevent measurements from different computers from
+being appended to the same series.
+
+Use only rows from the same machine file with the same Emacs version and
+system configuration when describing a trend. Report the path emitted as
+`history_file`; do not combine different machines into one aggregate trend or
+copy historical metrics into another tracking file.
 
 ## Startup-sensitive code changes
 

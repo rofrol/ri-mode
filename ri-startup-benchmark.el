@@ -89,6 +89,53 @@
   "Print millisecond metric NAME with numeric VALUE."
   (princ (format "%s=%.3f\n" name value)))
 
+(defun ri-startup-benchmark--tsv-field (value)
+  "Return VALUE as one TSV field."
+  (replace-regexp-in-string "[\t\r\n]+" " " (format "%s" value)))
+
+(defun ri-startup-benchmark--history-file (root)
+  "Return this computer's startup history file below ROOT."
+  (let ((machine
+         (downcase
+          (replace-regexp-in-string
+           "[^[:alnum:]._-]+" "-" (system-name)))))
+    (expand-file-name
+     (format "startup-history-%s.tsv"
+             (if (string-empty-p machine) "unknown-machine" machine))
+     root)))
+
+(defun ri-startup-benchmark--append-history (root revision runs metrics)
+  "Append METRICS for REVISION and RUNS to this computer's history in ROOT."
+  (let* ((file (ri-startup-benchmark--history-file root))
+         (write-header
+          (or (not (file-exists-p file))
+              (zerop (file-attribute-size (file-attributes file))))))
+    (with-temp-buffer
+      (when write-header
+        (insert
+         (mapconcat
+          #'identity
+          (append '("timestamp" "repository_revision" "machine"
+                    "emacs_version" "system_configuration" "repetitions")
+                  (mapcar #'car metrics))
+          "\t")
+         "\n"))
+      (insert
+       (mapconcat
+        #'ri-startup-benchmark--tsv-field
+        (list (format-time-string "%Y-%m-%dT%H:%M:%S%z")
+              revision
+              (system-name)
+              emacs-version
+              system-configuration
+              runs)
+        "\t"))
+      (dolist (metric metrics)
+        (insert (format "\t%.3f" (cdr metric))))
+      (insert "\n")
+      (write-region (point-min) (point-max) file 'append 'silent))
+    file))
+
 ;;;###autoload
 (defun ri-startup-benchmark-run ()
   "Benchmark fresh control, Ri load, and Ri enable child processes."
@@ -122,26 +169,32 @@
                  (enable (ri-startup-benchmark--median
                           (alist-get 'enable results)))
                  (load-increment (- load control))
-                 (enable-increment (- enable load)))
+                 (enable-increment (- enable load))
+                 (revision (ri-startup-benchmark--revision root))
+                 (metrics
+                  `(("control_median_ms" . ,control)
+                    ("control_mad_ms"
+                     . ,(ri-startup-benchmark--mad
+                         (alist-get 'control results)))
+                    ("load_median_ms" . ,load)
+                    ("enable_median_ms" . ,enable)
+                    ("load_increment_ms" . ,load-increment)
+                    ("enable_increment_ms" . ,enable-increment)
+                    ("load_over_control_pct"
+                     . ,(* 100.0 (/ load-increment control)))
+                    ("enable_over_load_pct"
+                     . ,(* 100.0 (/ enable-increment load)))))
+                 (history-file
+                  (ri-startup-benchmark--append-history
+                   root revision runs metrics)))
             (princ (format "emacs_version=%s\n" emacs-version))
             (princ (format "system_configuration=%s\n" system-configuration))
-            (princ (format "repository_revision=%s\n"
-                           (ri-startup-benchmark--revision root)))
+            (princ (format "repository_revision=%s\n" revision))
             (princ (format "repetitions=%d\n" runs))
-            (ri-startup-benchmark--print-metric "control_median_ms" control)
-            (ri-startup-benchmark--print-metric
-             "control_mad_ms"
-             (ri-startup-benchmark--mad (alist-get 'control results)))
-            (ri-startup-benchmark--print-metric "load_median_ms" load)
-            (ri-startup-benchmark--print-metric "enable_median_ms" enable)
-            (ri-startup-benchmark--print-metric
-             "load_increment_ms" load-increment)
-            (ri-startup-benchmark--print-metric
-             "enable_increment_ms" enable-increment)
-            (ri-startup-benchmark--print-metric
-             "load_over_control_pct" (* 100.0 (/ load-increment control)))
-            (ri-startup-benchmark--print-metric
-             "enable_over_load_pct" (* 100.0 (/ enable-increment load)))))
+            (dolist (metric metrics)
+              (ri-startup-benchmark--print-metric
+               (car metric) (cdr metric)))
+            (princ (format "history_file=%s\n" history-file))))
       (delete-directory state-dir t))))
 
 (provide 'ri-startup-benchmark)
