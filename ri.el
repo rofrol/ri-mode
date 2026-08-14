@@ -217,7 +217,7 @@ including Eglot's project label."
   (setq ri--menu-state 'space)
   (keymap-legend-show "Space" ri--space-layer-map '(:title "Space"))
   (set-transient-map
-   ri--space-layer-map t
+   ri--space-layer-map nil
    (lambda ()
      ;; Do not close a submenu that replaced this menu.
      (when (eq ri--menu-state 'space)
@@ -296,8 +296,7 @@ including Eglot's project label."
 
 
 (defun ri--run-space-lsp-command (function)
-  "Close the Space layer and call Eglot-backed FUNCTION."
-  (set-transient-map nil)
+  "Close the Space menu UI and call Eglot-backed FUNCTION."
   (ri--close-menu)
   (ri--call-preserving-user-error function))
 

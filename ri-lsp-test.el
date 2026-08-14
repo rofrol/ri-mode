@@ -175,7 +175,7 @@
                    '("Space" (:title "Space"))))
     (should (eq (nth 1 shown) ri--space-layer-map))
     (should (eq (nth 0 transient) ri--space-layer-map))
-    (should (eq (nth 1 transient) t))
+    (should-not (nth 1 transient))
     (should (functionp (nth 2 transient))))
   (should-not (lookup-key ri--normal-help-map "n"))
   (should (eq (lookup-key ri--space-layer-map "x")
@@ -184,6 +184,45 @@
               #'ri-find-references-without-declaration))
   (should (eq (plist-get (ri--layer-spec ?v) :tap)
               #'ri-paste-selection)))
+
+(ert-deftest ri-lsp-test-definition-jump-releases-space-map-before-next-key ()
+  (let ((source (generate-new-buffer " *ri-space-source*"))
+        (destination (generate-new-buffer " *ri-space-destination*"))
+        (ri--menu-state nil)
+        transient-exit
+        moved
+        pick-opened)
+    (unwind-protect
+        (save-window-excursion
+          (with-current-buffer destination
+            (use-local-map
+             (let ((map (make-sparse-keymap)))
+               (define-key map "k"
+                           (lambda ()
+                             (interactive)
+                             (setq moved t)))
+               map)))
+          (switch-to-buffer source)
+          (cl-letf (((symbol-function 'keymap-legend-show) #'ignore)
+                    ((symbol-function 'keymap-legend-hide) #'ignore)
+                    ((symbol-function 'ri--hide-frame) #'ignore)
+                    ((symbol-function 'ri-lsp--find-definition)
+                     (lambda () (switch-to-buffer destination)))
+                    ((symbol-function 'ri-pick-menu)
+                     (lambda () (interactive) (setq pick-opened t))))
+            (setq transient-exit (ri-space-menu))
+            (execute-kbd-macro (kbd "x k"))
+            (should (eq (current-buffer) destination))
+            (should moved)
+            (should-not pick-opened)
+            (should-not ri--menu-state)))
+      (setq ri--menu-state nil)
+      (when (functionp transient-exit)
+        (funcall transient-exit))
+      (when (buffer-live-p source)
+        (kill-buffer source))
+      (when (buffer-live-p destination)
+        (kill-buffer destination)))))
 
 (ert-deftest ri-lsp-test-dispatches-to-eglot-and-xref-entry-points ()
   (let (capabilities calls)
