@@ -132,6 +132,7 @@ This variable is dynamically bound to the validated activation snapshot.")
 (defvar-local ri-tabs--owner-context-cache nil
   "Cached canonical owner context for the current visited file buffer.")
 
+
 (defun ri-tabs--canonical-directory (directory)
   "Return DIRECTORY as a canonical absolute directory name."
   (when directory
@@ -177,6 +178,11 @@ GIT_DIR and GIT_WORK_TREE are honored."
           (let ((root (string-trim (buffer-string))))
             (unless (string-empty-p root)
               (ri-tabs--canonical-directory root))))))))
+(defun ri-tabs--directory-owner-context (directory)
+  "Return the canonical marked-set owner for DIRECTORY, or nil."
+  (when (and (stringp directory) (file-directory-p directory))
+    (setq directory (ri-tabs--canonical-directory directory))
+    (or (ri-tabs-git-work-tree-root directory) directory)))
 
 (defun ri-tabs--buffer-git-root (buffer)
   "Return BUFFER's effective canonical Git work-tree root, or nil."
@@ -188,8 +194,8 @@ GIT_DIR and GIT_WORK_TREE are honored."
 Prefer the effective Git work-tree root; outside Git use BUFFER's effective
 current directory.  This function may invoke Git and therefore belongs only on
 model-synchronization paths, never presentation repaint paths."
-  (let ((directory (ri-tabs--buffer-directory buffer)))
-    (or (ri-tabs-git-work-tree-root directory) directory)))
+  (ri-tabs--directory-owner-context (ri-tabs--buffer-directory buffer)))
+
 
 (defun ri-tabs--buffer-owner-context (buffer)
   "Return BUFFER's cached canonical marked-set owner context.
@@ -1477,12 +1483,21 @@ file buffer."
 (defun ri-tabs--activate-existing-owner-for-frame (frame state)
   "Activate FRAME's current owner context only if STATE already owns a set there."
   (when-let* ((window (ri-tabs--frame-selected-window frame))
-              (buffer (window-buffer window))
-              ((ri-tabs--file-buffer-p buffer))
-              (owner (ri-tabs--buffer-owner-context buffer)))
-    (when (ri-tabs--state-has-owner-p state owner)
-      (ri-tabs--set-frame-owner frame owner)
-      (ri-tabs--activate-owner owner state))))
+              (buffer (window-buffer window)))
+    (let* ((file-buffer-p (ri-tabs--file-buffer-p buffer))
+           (owner
+            (if file-buffer-p
+                (ri-tabs--buffer-owner-context buffer)
+              (with-current-buffer buffer
+                (ri-tabs--directory-owner-context default-directory)))))
+      (when (and owner (ri-tabs--state-has-owner-p state owner))
+        (ri-tabs--set-frame-owner frame owner)
+        (ri-tabs--activate-owner owner state)
+        (when (not file-buffer-p)
+          (when-let* ((target
+                      (car (last
+                            (ri-tabs--marked-buffer-list owner state)))))
+            (set-window-buffer window target)))))))
 
 (defun ri-tabs--activate ()
   "Activate owner-context persistent marks without inventing a new owner."
