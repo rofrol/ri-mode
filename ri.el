@@ -781,7 +781,7 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
          :release "Cut")
    (list :key ?z
          :label "≡ Undo/Redo"
-         :tap #'ri-smart-undo
+         :tap #'ri-undo-only
          :map ri--undo-redo-layer-map
          :release "Undo"))
   "Momentary layer specifications.
@@ -926,7 +926,7 @@ and its release as a KKP CSI-u event."
     (define-key map "v" '(menu-item "≡ Paste" ri-paste-selection))
     (define-key map "x" '(menu-item "≡ Cut" ri-cut-selection))
     (define-key map "f" '(menu-item "Extend" ri-toggle-extend))
-    (define-key map "z" '(menu-item "≡ Undo/Redo" ri-smart-undo))
+    (define-key map "z" '(menu-item "≡ Undo/Redo" ri-undo-only))
     (define-key map "Z" '(menu-item "Coarse Redo" ri-smart-redo))
     (define-key map (kbd "SPC") '(menu-item "Space" ri-space-menu))
     (define-key map (kbd "<return>") '(menu-item "Save" save-buffer))

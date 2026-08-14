@@ -116,6 +116,31 @@
           (dispatch #'ri-fine-redo)
           (should (equal (buffer-string) expected)))))))
 
+(ert-deftest ri-extend-test-z-undo-only-history-exhaustion ()
+  (with-temp-buffer
+    (buffer-enable-undo)
+    (insert "base")
+    (setq buffer-undo-list nil)
+    (insert " change")
+    (undo-boundary)
+    (let ((last-command nil))
+      (cl-labels
+          ((dispatch ()
+             (let ((this-command #'ri-undo-only))
+               (call-interactively #'ri-undo-only)
+               (setq last-command this-command))))
+        (dispatch)
+        (should (equal (buffer-string) "base"))
+        (dotimes (_ 2)
+          (setq last-command #'ri--press-layer)
+          (should-error (dispatch) :type 'user-error)
+          (should (equal (buffer-string) "base")))
+        (insert " fresh")
+        (undo-boundary)
+        (setq last-command #'self-insert-command)
+        (dispatch)
+        (should (equal (buffer-string) "base"))))))
+
 
 (ert-deftest ri-extend-test-node-extends-across-named-siblings ()
   (ri-extend-test--with-json-buffer
