@@ -98,14 +98,6 @@ including Eglot's project label."
 
 ;;;; Status frame
 
-(defun ri--show-frame (text)
-  "Show the status frame with TEXT."
-  (status-frame-show text))
-
-(defun ri--update-frame (text)
-  "Update the status frame text to TEXT."
-  (status-frame-set-text text))
-
 (defun ri--hide-frame ()
   "Hide the status frame."
   (status-frame-hide))
