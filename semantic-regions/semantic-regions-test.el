@@ -365,6 +365,28 @@
                       (semantic-region-parse-at submode (point)))
                      "beta")))))
 
+(ert-deftest semantic-region-test-wordish-vertical-preserves-text-column ()
+  (semantic-region-test--with-buffer
+      "    player_vel: rl.Vector2 = {0, 0}\n    player_run_frame_length: f32 = 0.1\n"
+    (dolist (case '((word "0")
+                    (word-plus "0")
+                    (word-star "{0,")
+                    (subword "0")))
+      (pcase-let ((`(,submode ,origin-text) case))
+        (goto-char (point-min))
+        (search-forward "{0")
+        (backward-char 1)
+        (setq sr-submode submode
+              sr--goal-column nil)
+        (sr-nav-down)
+        (should (equal (semantic-region-string
+                        (semantic-region-parse-at submode (point)))
+                       "f32"))
+        (sr-nav-up)
+        (should (equal (semantic-region-string
+                        (semantic-region-parse-at submode (point)))
+                       origin-text))))))
+
 (ert-deftest semantic-region-test-paragraph-navigation-matches-ki ()
   (semantic-region-test--with-buffer "foo\n\n\nbar\n\nbaz"
     (setq sr-submode 'paragraph)

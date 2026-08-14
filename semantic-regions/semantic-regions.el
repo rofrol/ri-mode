@@ -1189,29 +1189,50 @@ configured bounds source returns nil."
         (backward-char 1)))))
 
 
-(defun sr--first-wordish-position-on-line ()
-  "Return the first traversable word-based unit on the current line."
+(defun sr--last-wordish-position-on-line ()
+  "Return the start of the last traversable word-based unit on this line."
+  (save-excursion
+    (let* ((line-end (line-end-position))
+           (first (sr--meaningful-unit-bounds-at
+                   (line-beginning-position) sr-submode))
+           (region (when first
+                     (semantic-region-parse-at sr-submode (car first))))
+           last)
+      (while (and region
+                  (< (semantic-region-beg region) line-end))
+        (setq last region
+              region (semantic-region-next region)))
+      (when last
+        (semantic-region-beg last)))))
+
+(defun sr--wordish-position-at-column (column)
+  "Return the word-based unit at COLUMN, or the last unit on this line."
   (save-excursion
     (let ((line-end (line-end-position)))
-      (when-let* ((bounds
-                   (sr--meaningful-unit-bounds-at
-                    (line-beginning-position) sr-submode)))
-        (when (< (car bounds) line-end)
-          (car bounds))))))
+      (goto-char (line-beginning-position))
+      (move-to-column column)
+      (or (when (< (point) line-end)
+            (when-let* ((bounds
+                         (sr--meaningful-unit-bounds-at
+                          (point) sr-submode)))
+              (when (< (car bounds) line-end)
+                (car bounds))))
+          (sr--last-wordish-position-on-line)))))
 
 (defvar-local sr--goal-column nil
-  "Goal column for vertical CHAR navigation, or nil to capture the
+  "Goal column for vertical navigation, or nil to capture the
 current column on the next move.")
 
 (defun sr--nav-wordish-line (direction)
   "Move in DIRECTION to a line containing a traversable word-based unit.
-Restore point when no such line exists."
-  (setq sr--goal-column nil)
+Preserve the current column and restore point when no such line exists."
   (let ((origin (point))
+        (goal (or sr--goal-column (current-column)))
         target)
+    (setq sr--goal-column goal)
     (while (and (zerop (forward-line direction))
                 (not (setq target
-                           (sr--first-wordish-position-on-line)))))
+                           (sr--wordish-position-at-column goal)))))
     (goto-char (or target origin))))
 
 ;; ── Navigation commands ──────────────────────────────────────────────────
