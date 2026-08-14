@@ -362,7 +362,7 @@
              `((?a "≡ LINE" ,#'ri-extend-set-line-mode
                    ,ri--line-layer-map "k" ,#'ri-momentary-line-down
                    ("i" "k") line 12 char)
-               (?s "WORD+" ,#'ri-extend-set-word-plus-mode
+               (?s "≡ WORD+" ,#'ri-extend-set-word-plus-mode
                    ,ri--word-plus-layer-map "l"
                    ,#'ri-momentary-word-plus-right
                    ("i" "j" "k" "l") word-plus 6 char)
@@ -387,6 +387,8 @@
                       #'ri-extend-set-line-mode))
           (should (eq (lookup-key ri--normal-help-map "s")
                       #'ri-extend-set-word-plus-mode))
+          (should (eq (lookup-key ri--normal-help-map (kbd "M-s"))
+                      #'ri-extend-set-word-mode))
           (should (eq (lookup-key ri--normal-help-map "w")
                       #'ri-extend-set-subword-mode))
           (cl-letf (((symbol-function 'this-command-keys-vector)
