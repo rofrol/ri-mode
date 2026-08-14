@@ -804,8 +804,8 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
          :map ri--word-plus-layer-map
          :release nil)
    (list :key ?w
-         :label "CHAR"
-         :tap #'ri-extend-set-subword-mode
+         :label "≡ CHAR"
+         :tap #'ri-extend-set-character-mode
          :activate-on-press nil
          :restore-on-release t
          :map ri--char-layer-map
@@ -977,12 +977,12 @@ and its release as a KKP CSI-u event."
     (define-key map "." '(menu-item "Parent Line" ri-parent-line))
     (define-key map "a" '(menu-item "≡ LINE" ri-extend-set-line-mode))
     (define-key map "A" '(menu-item "LINE*" ri-extend-set-line-star-mode))
-    (define-key map "W" '(menu-item "CHAR" ri-extend-set-character-mode))
+    (define-key map "W" '(menu-item "SUBWORD" ri-extend-set-subword-mode))
     (define-key map "E" '(menu-item "PARAGRAPH" ri-extend-set-paragraph-mode))
     (define-key map "s" '(menu-item "≡ WORD+" ri-extend-set-word-plus-mode))
     (define-key map "S" '(menu-item "WORD*" ri-extend-set-word-star-mode))
     (define-key map (kbd "M-s") '(menu-item "WORD" ri-extend-set-word-mode))
-    (define-key map "w" '(menu-item "SUBWORD / hold: CHAR" ri-extend-set-subword-mode))
+    (define-key map "w" '(menu-item "≡ CHAR" ri-extend-set-character-mode))
     (define-key map "d" '(menu-item "NODE" ri-set-node-mode))
     (define-key map "c" '(menu-item "Copy/≡ Dup" ri-copy-unit))
     (define-key map "r" '(menu-item "≡ Delete" ri-delete-selection))
@@ -1217,7 +1217,7 @@ keymap lookups during that command must keep their resolved binding."
   (define-key mini-modal-map "." #'ri-parent-line)
   (define-key mini-modal-map "a" #'ri--press-layer)
   (define-key mini-modal-map "A" #'ri-extend-set-line-star-mode)
-  (define-key mini-modal-map "W" #'ri-extend-set-character-mode)
+  (define-key mini-modal-map "W" #'ri-extend-set-subword-mode)
   (define-key mini-modal-map "E" #'ri-extend-set-paragraph-mode)
   (define-key mini-modal-map "s" #'ri--press-layer)
   (define-key mini-modal-map "S" #'ri-extend-set-word-star-mode)
