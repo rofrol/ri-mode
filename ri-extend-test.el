@@ -163,6 +163,34 @@
       (should (= (point) (1- (cdr bounds)))))
     (ri--exit-extend)))
 
+
+(ert-deftest ri-extend-test-momentary-submode-entry-restores-origin ()
+  (ri-extend-test--with-buffer "ab\ncd"
+    (setq sr-submode 'char)
+    (goto-char 2)
+    (ri--enter-momentary-submode 'line)
+    (should (eq sr-submode 'line))
+    (should (eq ri--momentary-origin-submode 'char))
+    (should (= (point) 2))
+    (ri--restore-momentary-submode)
+    (should (eq sr-submode 'char))
+    (should (= (point) 2))
+
+    (goto-char 1)
+    (ri-extend-set-line-mode)
+    (should (ri--enter-extend))
+    (let ((bounds (ri--selection-bounds))
+          (position (point)))
+      (ri--enter-momentary-submode 'char)
+      (should (eq sr-submode 'char))
+      (should (equal (ri--selection-bounds) bounds))
+      (should (= (point) position))
+      (ri--restore-momentary-submode)
+      (should (eq sr-submode 'line))
+      (should (equal (ri--selection-bounds) bounds))
+      (should (= (point) position)))
+    (ri--exit-extend)))
+
 (ert-deftest ri-extend-test-momentary-char-navigation-records-origin-and-restores ()
   (ri-extend-test--with-buffer "ab\ncd"
     (setq sr-submode 'line)

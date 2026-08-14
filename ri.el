@@ -914,7 +914,8 @@ and its release as a KKP CSI-u event."
                     (setq ri--momentary-origin-submode nil
                           ri--momentary-layer-submode submode)
                     (when restore-on-release
-                      (setq release (ri--submode-name)))
+                      (setq release (ri--submode-name))
+                      (ri--enter-momentary-submode submode))
                     (force-mode-line-update)
                     (when activate-on-press
                       (funcall tap))
