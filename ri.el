@@ -56,7 +56,6 @@
 (require 'ri-tabs)
 (require 'ri-extend)
 (require 'ri-pick)
-(require 'ri-lsp)
 (require 'ri-duplicate)
 (require 'ri-edit)
 (require 'ri-transform)
@@ -65,6 +64,17 @@
 (require 'ri-mouse)
 (require 'cl-lib)
 (require 'face-remap)
+
+(declare-function ri-lsp-pick-document-symbols "ri-lsp")
+(declare-function ri-lsp-pick-workspace-symbols "ri-lsp")
+(declare-function ri-lsp--find-outgoing-calls "ri-lsp")
+(declare-function ri-lsp--find-incoming-calls "ri-lsp")
+(declare-function ri-lsp--find-definition "ri-lsp")
+(declare-function ri-lsp--find-declaration "ri-lsp")
+(declare-function ri-lsp--find-type-definition "ri-lsp")
+(declare-function ri-lsp--find-references-with-declaration "ri-lsp")
+(declare-function ri-lsp--find-references-without-declaration "ri-lsp")
+(declare-function ri-lsp--find-implementations "ri-lsp")
 
 ;;;; Mode-line styling
 
@@ -262,6 +272,11 @@ including Eglot's project label."
      (setq ri--menu-state nil)
      (signal (car error) (cdr error)))))
 
+(defun ri--open-lsp-picker (function)
+  "Load Ri's LSP support and open the picker provided by FUNCTION."
+  (require 'ri-lsp)
+  (ri--open-picker function))
+
 (defun ri-pick-buffer ()
   "Pick one of the open file buffers."
   (interactive)
@@ -275,12 +290,12 @@ including Eglot's project label."
 (defun ri-pick-document-symbol ()
   "Pick an Eglot symbol from the current document."
   (interactive)
-  (ri--open-picker #'ri-lsp-pick-document-symbols))
+  (ri--open-lsp-picker #'ri-lsp-pick-document-symbols))
 
 (defun ri-pick-workspace-symbol ()
   "Pick an Eglot symbol from the current workspace."
   (interactive)
-  (ri--open-picker #'ri-lsp-pick-workspace-symbols))
+  (ri--open-lsp-picker #'ri-lsp-pick-workspace-symbols))
 
 (defun ri-transform-menu ()
   "Show the Transform menu until a transformation is chosen."
@@ -297,6 +312,7 @@ including Eglot's project label."
 
 (defun ri--run-space-lsp-command (function)
   "Close the Space menu UI and call Eglot-backed FUNCTION."
+  (require 'ri-lsp)
   (ri--close-menu)
   (ri--call-preserving-user-error function))
 

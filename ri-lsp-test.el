@@ -3,6 +3,7 @@
 (require 'cl-lib)
 (require 'ert)
 (require 'ri)
+(require 'ri-lsp)
 
 (defun ri-lsp-test--raw-binding (map event)
   "Return MAP's raw binding for EVENT, including its menu label."
