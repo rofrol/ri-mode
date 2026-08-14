@@ -15,6 +15,10 @@
 (require 'semantic-regions)
 
 (declare-function mini-modal-normal "mini-modal")
+(declare-function desktop-auto-save "desktop" ())
+
+(defvar ri--desktop-autosave-timer nil
+  "Deferred Ri-triggered Desktop autosave timer.")
 
 (define-multisession-variable ri--last-selection-submode
   'line
@@ -400,6 +404,21 @@
             ri--history-replaying nil)
       (ri--history-fine-ensure-current)
       (ri--history-window-ensure-current window))))
+(defun ri--run-desktop-autosave ()
+  "Run Ri's deferred Desktop autosave."
+  (setq ri--desktop-autosave-timer nil)
+  (when (and (bound-and-true-p desktop-save-mode)
+             (fboundp #'desktop-auto-save))
+    (desktop-auto-save)))
+
+(defun ri--request-desktop-autosave ()
+  "Defer Desktop's native save after a stable Ri location change."
+  (when (and (bound-and-true-p desktop-save-mode)
+             (fboundp #'desktop-auto-save))
+    (when (timerp ri--desktop-autosave-timer)
+      (cancel-timer ri--desktop-autosave-timer))
+    (setq ri--desktop-autosave-timer
+          (run-at-time 0 nil #'ri--run-desktop-autosave))))
 
 (defun ri--history-post-command ()
   "Record the selected Ri location after a command."
@@ -410,8 +429,10 @@
         (when (and before
                    (window-live-p before-window))
           (if (eq before-window after-window)
-              (let ((after (ri--history-capture-snapshot))
-                    (coarse-after (ri--history-capture-snapshot)))
+              (let* ((after (ri--history-capture-snapshot))
+                     (coarse-after (ri--history-capture-snapshot))
+                     (location-changed-p
+                      (not (ri--history-snapshot-equal-p before after))))
                 (if (eq (ri--history-snapshot-buffer before)
                         (window-buffer after-window))
                     (ri--history-fine-commit before after)
@@ -433,7 +454,10 @@
                     (push current (ri--history-window-state-back state))
                     (ri--history-window-clear-forward state)
                     (setf (ri--history-window-state-current state)
-                          coarse-after))))
+                          coarse-after)))
+                (when (and location-changed-p
+                           (not ri--momentary-origin-submode))
+                  (ri--request-desktop-autosave)))
             (when (ri--history-eligible-window-p after-window)
               (ri--history-fine-ensure-current)
               (ri--history-window-ensure-current after-window))))
@@ -1027,6 +1051,7 @@ selection keeps its exact preserved bounds."
     (let ((origin ri--momentary-origin-submode))
       (setq ri--momentary-origin-submode nil)
       (ri--restore-submode origin)
+      (ri--request-desktop-autosave)
       (force-mode-line-update))))
 
 (defun ri-momentary-char-left ()

@@ -970,6 +970,86 @@
                     'word)))
       (ri--exit-extend))))
 
+(ert-deftest ri-extend-test-location-change-requests-desktop-autosave ()
+  (let ((desktop-save-mode t)
+        (calls 0)
+        (buffer (generate-new-buffer "ri-location-autosave")))
+    (unwind-protect
+        (save-window-excursion
+          (switch-to-buffer buffer)
+          (insert "alpha beta\n")
+          (setq buffer-file-name "/tmp/ri-location-autosave.el"
+                sr-mode t
+                mini-modal-mode t
+                sr-submode 'word)
+          (goto-char 2)
+          (cl-letf (((symbol-function 'desktop-auto-save)
+                     (lambda () nil))
+                    ((symbol-function 'run-at-time)
+                     (lambda (&rest _args) (setq calls (1+ calls)))))
+            (ri--history-pre-command)
+            (goto-char 8)
+            (ri--history-post-command)
+            (should (= calls 1))))
+      (kill-buffer buffer))))
+
+(ert-deftest ri-extend-test-unchanged-location-skips-desktop-autosave ()
+  (let ((desktop-save-mode t)
+        (calls 0)
+        (buffer (generate-new-buffer "ri-location-unchanged")))
+    (unwind-protect
+        (save-window-excursion
+          (switch-to-buffer buffer)
+          (insert "alpha beta\n")
+          (setq buffer-file-name "/tmp/ri-location-unchanged.el"
+                sr-mode t
+                mini-modal-mode t
+                sr-submode 'word)
+          (goto-char 2)
+          (cl-letf (((symbol-function 'desktop-auto-save)
+                     (lambda () nil))
+                    ((symbol-function 'run-at-time)
+                     (lambda (&rest _args) (setq calls (1+ calls)))))
+            (ri--history-pre-command)
+            (ri--history-post-command)
+            (should (= calls 0))))
+      (kill-buffer buffer))))
+
+(ert-deftest ri-extend-test-momentary-location-autosaves-on-release ()
+  (let ((desktop-save-mode t)
+        (calls 0)
+        (buffer (generate-new-buffer "ri-location-momentary")))
+    (unwind-protect
+        (save-window-excursion
+          (switch-to-buffer buffer)
+          (insert "alpha beta\n")
+          (setq buffer-file-name "/tmp/ri-location-momentary.el"
+                sr-mode t
+                mini-modal-mode t
+                sr-submode 'char
+                ri--momentary-origin-submode 'word)
+          (goto-char 2)
+          (cl-letf (((symbol-function 'desktop-auto-save)
+                     (lambda () nil))
+                    ((symbol-function 'run-at-time)
+                     (lambda (&rest _args) (setq calls (1+ calls)))))
+            (ri--history-pre-command)
+            (goto-char 8)
+            (ri--history-post-command)
+            (should (= calls 0))
+            (ri--restore-momentary-submode)
+            (should (= calls 1))))
+      (kill-buffer buffer))))
+
+(ert-deftest ri-extend-test-deferred-desktop-autosave-runs-native-save ()
+  (let ((desktop-save-mode t)
+        (calls 0))
+    (cl-letf (((symbol-function 'desktop-auto-save)
+               (lambda () (setq calls (1+ calls)))))
+      (ri--run-desktop-autosave)
+      (should (= calls 1))
+      (should-not ri--desktop-autosave-timer))))
+
 (ert-deftest ri-extend-test-invalid-persistent-submode-falls-back ()
   (ri-extend-test--with-persistence
     (setf (multisession-value ri--last-selection-submode) 'invalid)

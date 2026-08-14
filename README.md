@@ -59,19 +59,25 @@ does not change the persisted mode.
 Enable point restoration for ordinary file visits:
 
 ```elisp
+(setq save-place-autosave-interval 30)
 (save-place-mode 1)
 ```
+
+`save-place-autosave-interval` is optional. It periodically writes current
+file positions instead of waiting for a buffer kill or normal Emacs exit.
 
 Enable whole-session restoration for buffers, window layout, positions, and
 each buffer's saved semantic selection submode:
 
 ```elisp
-(setq desktop-save t)
+(setq desktop-save t
+      desktop-auto-save-timeout 30)
 (desktop-save-mode 1)
 ```
 
-`desktop-save` must be non-nil so the first desktop snapshot is written
-without waiting for an exit prompt.
+Ri defers a native Desktop save after a stable location change, including
+navigation to another NODE. `desktop-auto-save-timeout` must be positive for
+this automatic checkpoint; normal Emacs exit still writes the final desktop.
 
 When `desktop` is loaded, Ri registers its buffer-local `sr-submode` value
 with `desktop-locals-to-save`. That per-buffer value overrides Ri's global
