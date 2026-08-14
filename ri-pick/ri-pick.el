@@ -43,7 +43,7 @@
   :type 'number)
 
 (defface ri-pick-selected
-  '((t (:inherit highlight :extend t)))
+  '((t (:inherit highlight :background "#d0d0d0" :extend t)))
   "Face used for the selected picker result."
   :group 'ri-pick)
 
