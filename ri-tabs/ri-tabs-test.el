@@ -822,6 +822,37 @@
       (should (= (length (ri-tabs-test--buffers-for-id first-id)) 1))
       (should (= (length (ri-tabs-test--buffers-for-id second-id)) 1)))))
 
+(ert-deftest ri-tabs-test-empty-startup-buffer-restores-directory-owner ()
+  (ri-tabs-test-with-persistence
+    (ri-tabs-test-with-owner-frame
+      (let* ((repo (ri-tabs-test--make-git-repo ri-tabs-test-root "empty-startup"))
+             (first (ri-tabs-test--make-file repo "empty-a.el"))
+             (second (ri-tabs-test--make-file repo "empty-b.el"))
+             (owner (ri-tabs--canonical-directory repo))
+             (ids (sort (mapcar #'ri-tabs-test--file-id (list first second))
+                        #'string-lessp))
+             (empty (generate-new-buffer "ri-tabs-empty-startup")))
+        (push empty ri-tabs-test--buffers)
+        (with-current-buffer empty
+          (setq default-directory (file-name-as-directory repo)))
+        (ri-tabs--write-state
+         (ri-tabs--make-state (list (cons owner ids))))
+        (save-window-excursion
+          (delete-other-windows)
+          (switch-to-buffer empty)
+          (let ((after-init-time nil))
+            (ri-tabs-mode 1)
+            (should-not (ri-tabs-test--buffers-for-id (car ids)))
+            (ri-tabs--startup-activate))
+          (should
+           (eq (window-buffer (selected-window))
+               (car (ri-tabs-test--buffers-for-id (car (last ids))))))
+          (should (equal (ri-tabs--frame-owner) owner))
+          (dolist (file-id ids)
+            (let ((buffers (ri-tabs-test--buffers-for-id file-id)))
+              (should (= (length buffers) 1))
+              (should (ri-tabs-buffer-marked-p (car buffers))))))))))
+
 (ert-deftest ri-tabs-test-post-startup-restore-is-immediate ()
   (ri-tabs-test-with-persistence
     (let* ((file
