@@ -570,41 +570,44 @@ repeated `f` is a no-op; in NODE mode, it leaves Extend."
 (defun ri-extend-nav-up () (interactive) (ri--run-extend-navigation #'sr-nav-up))
 (defun ri-extend-nav-down () (interactive) (ri--run-extend-navigation #'sr-nav-down))
 
-(defun ri--run-momentary-navigation (submode movement)
-  "Run MOVEMENT as SUBMODE without changing the persistent submode."
-  (when (ri--selection-active-p)
-    (ri--preserve-selection-for-submode-switch))
-  (let ((sr-submode submode))
-    (funcall movement)
-    (when (ri--selection-active-p)
-      (ri--preserve-selection-for-submode-switch)))
-  (ri--update-highlight))
+(defun ri--run-momentary-navigation (setter movement)
+  "Switch submodes with SETTER, then run MOVEMENT."
+  (funcall setter)
+  (funcall movement))
 
 (defun ri-momentary-char-left ()
   (interactive)
-  (ri--run-momentary-navigation 'char #'ri-extend-nav-left))
+  (ri--run-momentary-navigation #'ri-extend-set-character-mode
+                                 #'ri-extend-nav-left))
 (defun ri-momentary-char-right ()
   (interactive)
-  (ri--run-momentary-navigation 'char #'ri-extend-nav-right))
+  (ri--run-momentary-navigation #'ri-extend-set-character-mode
+                                 #'ri-extend-nav-right))
 (defun ri-momentary-char-up ()
   (interactive)
-  (ri--run-momentary-navigation 'char #'ri-extend-nav-up))
+  (ri--run-momentary-navigation #'ri-extend-set-character-mode
+                                 #'ri-extend-nav-up))
 (defun ri-momentary-char-down ()
   (interactive)
-  (ri--run-momentary-navigation 'char #'ri-extend-nav-down))
+  (ri--run-momentary-navigation #'ri-extend-set-character-mode
+                                 #'ri-extend-nav-down))
 
 (defun ri-momentary-word-plus-left ()
   (interactive)
-  (ri--run-momentary-navigation 'word-plus #'ri-extend-nav-left))
+  (ri--run-momentary-navigation #'ri-extend-set-word-plus-mode
+                                 #'ri-extend-nav-left))
 (defun ri-momentary-word-plus-right ()
   (interactive)
-  (ri--run-momentary-navigation 'word-plus #'ri-extend-nav-right))
+  (ri--run-momentary-navigation #'ri-extend-set-word-plus-mode
+                                 #'ri-extend-nav-right))
 (defun ri-momentary-word-plus-up ()
   (interactive)
-  (ri--run-momentary-navigation 'word-plus #'ri-extend-nav-up))
+  (ri--run-momentary-navigation #'ri-extend-set-word-plus-mode
+                                 #'ri-extend-nav-up))
 (defun ri-momentary-word-plus-down ()
   (interactive)
-  (ri--run-momentary-navigation 'word-plus #'ri-extend-nav-down))
+  (ri--run-momentary-navigation #'ri-extend-set-word-plus-mode
+                                 #'ri-extend-nav-down))
 (defun ri-extend-nav-prev ()
   (interactive)
   (if (and (ri--selection-active-p) (eq sr-submode 'paragraph))

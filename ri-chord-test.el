@@ -348,77 +348,116 @@
                       (cdr binding))))
         (should (eq (lookup-key ri--normal-help-map "e") #'ignore))))))
 
-(ert-deftest ri-chord-test-navigation-layers-tap-or-borrow-units ()
+(ert-deftest ri-chord-test-navigation-layers-select-their-units ()
   (ri-chord-test--with-fresh-chords
     (with-temp-buffer
+      (insert "alpha,beta\n")
       (let ((mini-modal-mode t)
             (ri--menu-state nil)
             (ri--help-prefix-active nil)
-            current-key
-            (char-count 0)
-            (word-plus-count 0))
+            current-key)
         (ri-chord-setup)
         (dolist
             (case
-             `((?a "CHAR" ,#'ri-extend-set-line-mode
-                   ,ri--char-layer-map ,#'ri-momentary-char-right)
-               (?s "WORD+" ,#'ri-extend-set-word-mode
-                   ,ri--word-plus-layer-map ,#'ri-momentary-word-plus-right)))
-          (pcase-let ((`(,key ,label ,tap ,map ,right) case))
+             `((?a "CHAR" ,#'ri-extend-set-character-mode
+                   ,ri--char-layer-map ,#'ri-momentary-char-right "CHAR")
+               (?s "WORD+" ,#'ri-extend-set-word-plus-mode
+                   ,ri--word-plus-layer-map
+                   ,#'ri-momentary-word-plus-right "WORD+")))
+          (pcase-let ((`(,key ,label ,tap ,map ,right ,release) case))
             (let ((spec (ri--layer-spec key)))
               (should (equal (plist-get spec :label) label))
               (should (eq (plist-get spec :tap) tap))
-              (should (eq (plist-get spec :map) map)))
+              (should (plist-get spec :activate-on-press))
+              (should (eq (plist-get spec :map) map))
+              (should (equal (plist-get spec :release) release)))
             (should (eq (lookup-key map "l") right))
             (dolist (motion '("i" "j" "k" "l"))
               (should (commandp (lookup-key map motion))))))
         (should (eq (lookup-key ri--normal-help-map "a")
-                    #'ri-extend-set-line-mode))
+                    #'ri-extend-set-character-mode))
         (should (eq (lookup-key ri--normal-help-map "s")
-                    #'ri-extend-set-word-mode))
+                    #'ri-extend-set-word-plus-mode))
         (cl-letf (((symbol-function 'this-command-keys-vector)
                    (lambda () (vector current-key)))
                   ((symbol-function 'ri--hide-frame) #'ignore)
-                  ((symbol-function 'modal-cursor-refresh) #'ignore)
-                  ((symbol-function 'ri-momentary-char-right)
-                   (lambda ()
-                     (interactive)
-                     (cl-incf char-count)))
-                  ((symbol-function 'ri-momentary-word-plus-right)
-                   (lambda ()
-                     (interactive)
-                     (cl-incf word-plus-count))))
+                  ((symbol-function 'modal-cursor-refresh) #'ignore))
           (dolist
               (case
-               '((?a "97;:3u" line ri-momentary-char-right)
-                 (?s "115;:3u" word ri-momentary-word-plus-right)))
-            (pcase-let ((`(,key ,release ,tap-submode ,right) case))
+               '((?a "97;:3u" line char ri-momentary-char-right 2
+                     (1 . 2))
+                 (?s "115;:3u" char word-plus
+                     ri-momentary-word-plus-right 6 (1 . 6))))
+            (pcase-let
+                ((`(,key ,release ,tap-start ,expected-submode ,right
+                        ,expected-point ,expected-press-bounds)
+                  case))
               (setq current-key key
-                    sr-submode 'char)
+                    sr-submode tap-start)
+              (goto-char (point-min))
               (let ((last-command-event key))
                 (call-interactively #'ri--press-layer))
+              (should (eq sr-submode expected-submode))
+              (should (equal (sr--get-current-unit-bounds)
+                             expected-press-bounds))
               (should
                (equal
                 (kkp-chord--translate-advice
                  #'ignore (string-to-list release))
                 []))
-              (should (eq sr-submode tap-submode))
+              (should (eq sr-submode expected-submode))
 
               (setq sr-submode 'line)
+              (goto-char (point-min))
               (let ((last-command-event key))
                 (call-interactively #'ri--press-layer))
               (let ((command (key-binding "l")))
                 (should (eq command right))
                 (kkp-chord--mark-plain-command)
                 (call-interactively command))
+              (should (= (point) expected-point))
+              (should (eq sr-submode expected-submode))
               (should
                (equal
                 (kkp-chord--translate-advice
                  #'ignore (string-to-list release))
                 []))
-              (should (eq sr-submode 'line))))
-          (should (= char-count 1))
-          (should (= word-plus-count 1)))))))
+              (should (eq sr-submode expected-submode)))))))))
+
+(ert-deftest ri-chord-test-hold-a-i-uses-char-highlight ()
+  (ri-chord-test--with-fresh-chords
+    (with-temp-buffer
+      (insert "ab\ncd")
+      (goto-char 4)
+      (let ((mini-modal-mode t)
+            (ri--menu-state nil)
+            (ri--help-prefix-active nil)
+            (sr-submode 'line))
+        (ri-chord-setup)
+        (cl-letf (((symbol-function 'this-command-keys-vector)
+                   (lambda () [?a]))
+                  ((symbol-function 'ri--hide-frame) #'ignore)
+                  ((symbol-function 'modal-cursor-refresh) #'ignore))
+          (let ((last-command-event ?a))
+            (call-interactively #'ri--press-layer))
+          (should (eq sr-submode 'char))
+          (should (equal (sr--get-current-unit-bounds) (cons 4 5)))
+          (let ((command (key-binding "i")))
+            (should (eq command #'ri-momentary-char-up))
+            (kkp-chord--mark-plain-command)
+            (call-interactively command))
+          (should (eq sr-submode 'char))
+          (should (= (point) 1))
+          (should (equal (sr--get-current-unit-bounds) (cons 1 2)))
+          (should
+           (cl-some (lambda (overlay)
+                      (eq (overlay-get overlay 'face) 'sr-highlight-face))
+                    (overlays-at 1)))
+          (should-not
+           (cl-some (lambda (overlay)
+                      (eq (overlay-get overlay 'face) 'sr-highlight-face))
+                    (overlays-at 2)))
+          (kkp-chord--on-release ?a))))))
 
 (ert-deftest ri-chord-test-mark-user-error-is-preserved-for-key-release ()
   (let ((ri--restore-message-after-release nil)

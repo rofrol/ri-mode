@@ -784,14 +784,16 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
   (list
    (list :key ?a
          :label "CHAR"
-         :tap #'ri-extend-set-line-mode
+         :tap #'ri-extend-set-character-mode
+         :activate-on-press t
          :map ri--char-layer-map
-         :release "LINE")
+         :release "CHAR")
    (list :key ?s
          :label "WORD+"
-         :tap #'ri-extend-set-word-mode
+         :tap #'ri-extend-set-word-plus-mode
+         :activate-on-press t
          :map ri--word-plus-layer-map
-         :release "WORD")
+         :release "WORD+")
    (list :key ?c
          :label "Copy/≡ Dup"
          :tap #'ri-copy-unit
@@ -823,9 +825,10 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
   "Momentary layer specifications.
 :key     -- KKP keycode for the chord modifier.
 :label   -- Display label with icon (used in menus and legend titles).
-:tap     -- Command called on tap (no sub-key pressed).
-:map     -- Keymap for the momentary layer.
-:release -- Label shown on release, or nil.")
+:tap               -- Primary command called when the layer is tapped.
+:activate-on-press -- Non-nil also runs :tap when the layer opens.
+:map               -- Keymap for the momentary layer.
+:release           -- Label shown on release, or nil.")
 
 (defun ri--layer-spec (keycode)
   "Return the layer spec for KEYCODE, or nil."
@@ -874,6 +877,7 @@ and its release as a KKP CSI-u event."
   (dolist (spec ri--layer-specs)
     (let ((key (plist-get spec :key))
           (tap (plist-get spec :tap))
+          (activate-on-press (plist-get spec :activate-on-press))
           (map (plist-get spec :map))
           (label (plist-get spec :label))
           (release (plist-get spec :release)))
@@ -881,6 +885,8 @@ and its release as a KKP CSI-u event."
         :tap tap
         :when #'ri--chord-when-p
         :on-press (lambda ()
+                    (when activate-on-press
+                      (funcall tap))
                     (ri--hide-frame)
                     (keymap-legend-show label map
                       (list :title label :release release))
@@ -943,11 +949,11 @@ and its release as a KKP CSI-u event."
     (define-key map "y" '(menu-item "|<" ri-extend-nav-first))
     (define-key map "p" '(menu-item ">|" ri-extend-nav-last))
     (define-key map "." '(menu-item "Parent Line" ri-parent-line))
-    (define-key map "a" '(menu-item "≡ LINE" ri-extend-set-line-mode))
+    (define-key map "a" '(menu-item "≡ CHAR" ri-extend-set-character-mode))
     (define-key map "A" '(menu-item "LINE*" ri-extend-set-line-star-mode))
     (define-key map "W" '(menu-item "CHAR" ri-extend-set-character-mode))
     (define-key map "E" '(menu-item "PARAGRAPH" ri-extend-set-paragraph-mode))
-    (define-key map "s" '(menu-item "≡ WORD" ri-extend-set-word-mode))
+    (define-key map "s" '(menu-item "≡ WORD+" ri-extend-set-word-plus-mode))
     (define-key map "S" '(menu-item "WORD*" ri-extend-set-word-star-mode))
     (define-key map (kbd "M-s") '(menu-item "WORD+" ri-extend-set-word-plus-mode))
     (define-key map "w" '(menu-item "SUBWORD" ri-extend-set-subword-mode))
