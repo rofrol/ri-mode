@@ -348,57 +348,77 @@
                       (cdr binding))))
         (should (eq (lookup-key ri--normal-help-map "e") #'ignore))))))
 
-(ert-deftest ri-chord-test-line-layer-taps-or-borrows-line-navigation ()
+(ert-deftest ri-chord-test-navigation-layers-tap-or-borrow-units ()
   (ri-chord-test--with-fresh-chords
     (with-temp-buffer
       (let ((mini-modal-mode t)
             (ri--menu-state nil)
             (ri--help-prefix-active nil)
-            (line-up-count 0))
+            current-key
+            (char-count 0)
+            (word-plus-count 0))
         (ri-chord-setup)
-        (let ((spec (ri--layer-spec ?a)))
-          (should (equal (plist-get spec :label) "LINE"))
-          (should (eq (plist-get spec :tap) #'ri-extend-set-line-mode))
-          (should (eq (plist-get spec :map) ri--line-layer-map)))
-        (should (eq (lookup-key ri--line-layer-map "i")
-                    #'ri-extend-nav-line-up))
-        (should (eq (lookup-key ri--line-layer-map "k")
-                    #'ri-extend-nav-line-down))
+        (dolist
+            (case
+             `((?a "CHAR" ,#'ri-extend-set-line-mode
+                   ,ri--char-layer-map ,#'ri-momentary-char-right)
+               (?s "WORD+" ,#'ri-extend-set-word-mode
+                   ,ri--word-plus-layer-map ,#'ri-momentary-word-plus-right)))
+          (pcase-let ((`(,key ,label ,tap ,map ,right) case))
+            (let ((spec (ri--layer-spec key)))
+              (should (equal (plist-get spec :label) label))
+              (should (eq (plist-get spec :tap) tap))
+              (should (eq (plist-get spec :map) map)))
+            (should (eq (lookup-key map "l") right))
+            (dolist (motion '("i" "j" "k" "l"))
+              (should (commandp (lookup-key map motion))))))
         (should (eq (lookup-key ri--normal-help-map "a")
                     #'ri-extend-set-line-mode))
+        (should (eq (lookup-key ri--normal-help-map "s")
+                    #'ri-extend-set-word-mode))
         (cl-letf (((symbol-function 'this-command-keys-vector)
-                   (lambda () [?a]))
+                   (lambda () (vector current-key)))
                   ((symbol-function 'ri--hide-frame) #'ignore)
                   ((symbol-function 'modal-cursor-refresh) #'ignore)
-                  ((symbol-function 'ri-extend-nav-line-up)
+                  ((symbol-function 'ri-momentary-char-right)
                    (lambda ()
                      (interactive)
-                     (cl-incf line-up-count))))
-          (setq sr-submode 'node)
-          (let ((last-command-event ?a))
-            (call-interactively #'ri--press-layer))
-          (should
-           (equal
-            (kkp-chord--translate-advice
-             #'ignore (string-to-list "97;:3u"))
-            []))
-          (should (eq sr-submode 'line))
+                     (cl-incf char-count)))
+                  ((symbol-function 'ri-momentary-word-plus-right)
+                   (lambda ()
+                     (interactive)
+                     (cl-incf word-plus-count))))
+          (dolist
+              (case
+               '((?a "97;:3u" line ri-momentary-char-right)
+                 (?s "115;:3u" word ri-momentary-word-plus-right)))
+            (pcase-let ((`(,key ,release ,tap-submode ,right) case))
+              (setq current-key key
+                    sr-submode 'char)
+              (let ((last-command-event key))
+                (call-interactively #'ri--press-layer))
+              (should
+               (equal
+                (kkp-chord--translate-advice
+                 #'ignore (string-to-list release))
+                []))
+              (should (eq sr-submode tap-submode))
 
-          (setq sr-submode 'node)
-          (let ((last-command-event ?a))
-            (call-interactively #'ri--press-layer))
-          (dotimes (_ 2)
-            (let ((command (key-binding "i")))
-              (should (eq command #'ri-extend-nav-line-up))
-              (kkp-chord--mark-plain-command)
-              (call-interactively command)))
-          (should
-           (equal
-            (kkp-chord--translate-advice
-             #'ignore (string-to-list "97;:3u"))
-            []))
-          (should (= line-up-count 2))
-          (should (eq sr-submode 'node)))))))
+              (setq sr-submode 'line)
+              (let ((last-command-event key))
+                (call-interactively #'ri--press-layer))
+              (let ((command (key-binding "l")))
+                (should (eq command right))
+                (kkp-chord--mark-plain-command)
+                (call-interactively command))
+              (should
+               (equal
+                (kkp-chord--translate-advice
+                 #'ignore (string-to-list release))
+                []))
+              (should (eq sr-submode 'line))))
+          (should (= char-count 1))
+          (should (= word-plus-count 1)))))))
 
 (ert-deftest ri-chord-test-mark-user-error-is-preserved-for-key-release ()
   (let ((ri--restore-message-after-release nil)

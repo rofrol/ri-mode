@@ -67,9 +67,10 @@ main bindings are:
 | `u` / `o`            | Move to the previous / next unit                             |
 | `y` / `p`            | Move to the first / last unit                                |
 | `.`                  | Move to the parent line                                      |
-| `a`                  | Tap for `LINE`; hold with `i` / `k` for line movement without changing units |
+| `a`                  | Tap for `LINE`; hold with `i` / `j` / `k` / `l` for `CHAR` movement |
+| `s`                  | Tap for `WORD`; hold with `i` / `j` / `k` / `l` for `WORD+` movement |
 | `A`, `E`, `W`        | Use `LINE*`, `PARAGRAPH`, or `CHAR` units                   |
-| `s`, `S`, `M-s`, `w` | Use `WORD`, `WORD*`, `WORD+`, or `SUBWORD` units             |
+| `S`, `M-s`, `w`      | Use `WORD*`, `WORD+`, or `SUBWORD` units                    |
 | `d`                  | Use a tree-sitter `NODE` unit                                |
 | `f`                  | Start Extend; navigation then grows or shrinks the selection |
 | `/`                  | Move the cursor to the other edge of the unit or selection   |
@@ -118,12 +119,13 @@ Buffer includes live file-visiting buffers. Document and Workspace symbol
 pickers require the corresponding Eglot capability.
 Cancelling preserves the exact source point and any active Extend selection.
 
-The `a`, `c`, `r`, `e`, `g`, `t`, `v`, `x`, and `z` keys also act as
+The `a`, `s`, `c`, `r`, `e`, `g`, `t`, `v`, `x`, and `z` keys also act as
 momentary layers. Hold one of them to display its available actions,
 press the shown key while still holding it, then release. Hold `a` with
-`i` / `k` to move by source line without leaving the current semantic
-submode. The other layers provide duplicate, eat, buffer, open, swap,
-paste, cut, and undo/redo operations.
+`i` / `j` / `k` / `l` for temporary `CHAR` movement, or hold `s` with
+the same keys for temporary `WORD+` movement. The persistent semantic
+submode does not change. The other layers provide duplicate, eat, buffer,
+open, swap, paste, cut, and undo/redo operations.
 
 The Buffer layer matches Ki: `j`/`l` cycle marked buffers with wrapping,
 `y`/`p` select the first/last marked buffer, `u`/`o` move through all
@@ -132,8 +134,8 @@ current buffer mark, `n` closes the current buffer, `i` unmarks the
 others, and `m` switches to the alternate file. In the `z` layer,
 `j`/`l` perform coarse undo/redo
 and `u`/`o` perform character-granular undo/redo. A quick tap of `a`
-enters `LINE`; a quick tap of `c`, `r`, `g`, `v`, `x`, or `z` performs
-its primary action.
+enters `LINE`, and a quick tap of `s` enters `WORD`; a quick tap of `c`,
+`r`, `g`, `v`, `x`, or `z` performs its primary action.
 
 File tabs use one Ri-owned top side-window surface spanning each ordinary
 frame. Splitting a frame does not duplicate the bar. The active tab follows
