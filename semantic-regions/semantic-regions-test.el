@@ -578,6 +578,58 @@
                     (semantic-region-parse-at 'node (point)))
                    "setq"))))
 
+(ert-deftest semantic-region-test-node-source-line-navigation ()
+  (semantic-region-test--with-buffer "(alpha one)\n\n(beta two)\n"
+    (unless (and (treesit-available-p)
+                 (treesit-language-available-p 'elisp))
+      (ert-skip "Elisp tree-sitter grammar unavailable"))
+    (emacs-lisp-mode)
+    (treesit-parser-create 'elisp)
+    (search-forward "beta")
+    (setq sr-submode 'line)
+    (sr-set-node-mode)
+    (should (equal (semantic-region-string
+                    (semantic-region-parse-at 'node (point)))
+                   "beta"))
+    (sr-nav-node-line-up)
+    (should (eq sr-submode 'node))
+    (should (equal (semantic-region-string
+                    (semantic-region-parse-at 'node (point)))
+                   "alpha"))
+    (sr-nav-right)
+    (should (equal (semantic-region-string
+                    (semantic-region-parse-at 'node (point)))
+                   "one"))
+    (sr-nav-node-line-down)
+    (should (equal (semantic-region-string
+                    (semantic-region-parse-at 'node (point)))
+                   "beta"))
+    (let ((node sr--node-current)
+          (pos (point)))
+      (sr-nav-node-line-down)
+      (should (eq sr--node-current node))
+      (should (= (point) pos)))))
+
+(ert-deftest semantic-region-test-node-source-line-navigation-virtual-state ()
+  (semantic-region-test--with-buffer "\"top\"\n\"bottom\""
+    (unless (and (treesit-available-p)
+                 (treesit-language-available-p 'elisp))
+      (ert-skip "Elisp tree-sitter grammar unavailable"))
+    (emacs-lisp-mode)
+    (treesit-parser-create 'elisp)
+    (goto-char (point-max))
+    (setq sr-submode 'line)
+    (sr-set-node-mode)
+    (sr-nav-down)
+    (should sr--node-virtual-bounds)
+    (sr-nav-node-line-down)
+    (should sr--node-virtual-bounds)
+    (sr-nav-node-line-up)
+    (should-not sr--node-virtual-bounds)
+    (should (equal (semantic-region-string
+                    (semantic-region-parse-at 'node (point)))
+                   "\"top\""))))
+
 
 (ert-deftest semantic-region-test-node-down-enters-atomic-elisp-string ()
   (semantic-region-test--with-buffer "\"melpa\""

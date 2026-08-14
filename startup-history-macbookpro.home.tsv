@@ -1,3 +1,5 @@
 timestamp	repository_revision	machine	emacs_version	system_configuration	repetitions	control_median_ms	control_mad_ms	load_median_ms	enable_median_ms	load_increment_ms	enable_increment_ms	load_over_control_pct	enable_over_load_pct
 2026-08-14T11:51:01+0200	612ae2b	macbookpro.home	32.0.50	aarch64-apple-darwin25.5.0	9	223.613	4.260	345.146	393.546	121.533	48.400	54.350	14.023
 2026-08-14T11:51:27+0200	612ae2b	macbookpro.home	32.0.50	aarch64-apple-darwin25.5.0	9	217.382	1.450	332.629	379.016	115.247	46.387	53.016	13.946
+2026-08-14T12:22:58+0200	e016198	macbookpro.home	32.0.50	aarch64-apple-darwin25.5.0	9	215.861	1.944	333.505	378.057	117.644	44.552	54.500	13.359
+2026-08-14T12:32:09+0200	e016198	macbookpro.home	32.0.50	aarch64-apple-darwin25.5.0	9	216.368	1.226	330.364	378.465	113.996	48.101	52.686	14.560

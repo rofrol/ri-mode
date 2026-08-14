@@ -348,6 +348,58 @@
                       (cdr binding))))
         (should (eq (lookup-key ri--normal-help-map "e") #'ignore))))))
 
+(ert-deftest ri-chord-test-line-layer-taps-or-borrows-line-navigation ()
+  (ri-chord-test--with-fresh-chords
+    (with-temp-buffer
+      (let ((mini-modal-mode t)
+            (ri--menu-state nil)
+            (ri--help-prefix-active nil)
+            (line-up-count 0))
+        (ri-chord-setup)
+        (let ((spec (ri--layer-spec ?a)))
+          (should (equal (plist-get spec :label) "LINE"))
+          (should (eq (plist-get spec :tap) #'ri-extend-set-line-mode))
+          (should (eq (plist-get spec :map) ri--line-layer-map)))
+        (should (eq (lookup-key ri--line-layer-map "i")
+                    #'ri-extend-nav-line-up))
+        (should (eq (lookup-key ri--line-layer-map "k")
+                    #'ri-extend-nav-line-down))
+        (should (eq (lookup-key ri--normal-help-map "a")
+                    #'ri-extend-set-line-mode))
+        (cl-letf (((symbol-function 'this-command-keys-vector)
+                   (lambda () [?a]))
+                  ((symbol-function 'ri--hide-frame) #'ignore)
+                  ((symbol-function 'modal-cursor-refresh) #'ignore)
+                  ((symbol-function 'ri-extend-nav-line-up)
+                   (lambda ()
+                     (interactive)
+                     (cl-incf line-up-count))))
+          (setq sr-submode 'node)
+          (let ((last-command-event ?a))
+            (call-interactively #'ri--press-layer))
+          (should
+           (equal
+            (kkp-chord--translate-advice
+             #'ignore (string-to-list "97;:3u"))
+            []))
+          (should (eq sr-submode 'line))
+
+          (setq sr-submode 'node)
+          (let ((last-command-event ?a))
+            (call-interactively #'ri--press-layer))
+          (dotimes (_ 2)
+            (let ((command (key-binding "i")))
+              (should (eq command #'ri-extend-nav-line-up))
+              (kkp-chord--mark-plain-command)
+              (call-interactively command)))
+          (should
+           (equal
+            (kkp-chord--translate-advice
+             #'ignore (string-to-list "97;:3u"))
+            []))
+          (should (= line-up-count 2))
+          (should (eq sr-submode 'node)))))))
+
 (ert-deftest ri-chord-test-mark-user-error-is-preserved-for-key-release ()
   (let ((ri--restore-message-after-release nil)
         (ri--restore-message-until-command-end nil))

@@ -759,11 +759,23 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
     map)
   "Keymap for the Undo/Redo momentary layer (z held).")
 
+(defvar ri--line-layer-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "i" '(menu-item "LINE ^" ri-extend-nav-line-up))
+    (define-key map "k" '(menu-item "LINE v" ri-extend-nav-line-down))
+    map)
+  "Keymap for momentary LINE navigation (a held).")
+
 
 ;;;; Layer specs (single source of truth for labels and icons)
 
 (defconst ri--layer-specs
   (list
+   (list :key ?a
+         :label "LINE"
+         :tap #'ri-extend-set-line-mode
+         :map ri--line-layer-map
+         :release "LINE")
    (list :key ?c
          :label "Copy/≡ Dup"
          :tap #'ri-copy-unit
@@ -915,7 +927,7 @@ and its release as a KKP CSI-u event."
     (define-key map "y" '(menu-item "|<" ri-extend-nav-first))
     (define-key map "p" '(menu-item ">|" ri-extend-nav-last))
     (define-key map "." '(menu-item "Parent Line" ri-parent-line))
-    (define-key map "a" '(menu-item "LINE" ri-extend-set-line-mode))
+    (define-key map "a" '(menu-item "LINE / hold: ^ v" ri-extend-set-line-mode))
     (define-key map "A" '(menu-item "LINE*" ri-extend-set-line-star-mode))
     (define-key map "W" '(menu-item "CHAR" ri-extend-set-character-mode))
     (define-key map "E" '(menu-item "PARAGRAPH" ri-extend-set-paragraph-mode))
@@ -1155,7 +1167,7 @@ keymap lookups during that command must keep their resolved binding."
   (define-key mini-modal-map "y" #'ri-extend-nav-first)
   (define-key mini-modal-map "p" #'ri-extend-nav-last)
   (define-key mini-modal-map "." #'ri-parent-line)
-  (define-key mini-modal-map "a" #'ri-extend-set-line-mode)
+  (define-key mini-modal-map "a" #'ri--press-layer)
   (define-key mini-modal-map "A" #'ri-extend-set-line-star-mode)
   (define-key mini-modal-map "W" #'ri-extend-set-character-mode)
   (define-key mini-modal-map "E" #'ri-extend-set-paragraph-mode)
