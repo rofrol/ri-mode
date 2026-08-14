@@ -69,8 +69,8 @@ main bindings are:
 | `.`                  | Move to the parent line                                      |
 | `a`                  | Select `LINE`; hold with `i` / `k` for `LINE` movement     |
 | `s`                  | Select `WORD+`; hold with `i` / `j` / `k` / `l` for `WORD+` movement |
-| `w`                  | Select `SUBWORD`; hold with `i` / `j` / `k` / `l` for `CHAR` movement |
-| `A`, `E`, `W`        | Use `LINE*`, `PARAGRAPH`, or `CHAR` units                   |
+| `w`                  | Select `CHAR`; hold with `i` / `j` / `k` / `l` for `CHAR` movement |
+| `A`, `E`, `W`        | Use `LINE*`, `PARAGRAPH`, or `SUBWORD` units                |
 | `S`, `M-s`           | Use `WORD*` or `WORD` units                                 |
 | `d`                  | Use a tree-sitter `NODE` unit                                |
 | `f`                  | Start Extend; navigation then grows or shrinks the selection |
@@ -137,7 +137,7 @@ current buffer mark, `n` closes the current buffer, `i` unmarks the
 others, and `m` switches to the alternate file. In the `z` layer,
 `j`/`l` perform coarse undo/redo
 and `u`/`o` perform character-granular undo/redo. A quick tap of `a`
-enters `LINE`, a quick tap of `w` enters `SUBWORD`, and a quick tap of `s`
+enters `LINE`, a quick tap of `w` enters `CHAR`, and a quick tap of `s`
 enters `WORD+`; a quick tap of `c`,
 `r`, `g`, `v`, `x`, or `z` performs its primary action.
 

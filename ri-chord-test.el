@@ -366,7 +366,7 @@
                    ,ri--word-plus-layer-map "l"
                    ,#'ri-momentary-word-plus-right
                    ("i" "j" "k" "l") word-plus 6 char)
-               (?w "CHAR" ,#'ri-extend-set-subword-mode
+               (?w "≡ CHAR" ,#'ri-extend-set-character-mode
                    ,ri--char-layer-map "l" ,#'ri-momentary-char-right
                    ("i" "j" "k" "l") char 2 line)))
           (pcase-let ((`(,key ,label ,tap ,map ,right-key ,right
@@ -390,6 +390,8 @@
           (should (eq (lookup-key ri--normal-help-map (kbd "M-s"))
                       #'ri-extend-set-word-mode))
           (should (eq (lookup-key ri--normal-help-map "w")
+                      #'ri-extend-set-character-mode))
+          (should (eq (lookup-key ri--normal-help-map "W")
                       #'ri-extend-set-subword-mode))
           (cl-letf (((symbol-function 'this-command-keys-vector)
                      (lambda () (vector current-key)))
@@ -425,7 +427,7 @@
                   (should (eq sr-submode (pcase key
                                            (?a 'line)
                                            (?s 'word-plus)
-                                           (?w 'subword))))
+                                           (?w 'char))))
 
                   ;; Hold: a sub-key navigates in the layer unit, and the
                   ;; release restores the tap-start submode without moving
