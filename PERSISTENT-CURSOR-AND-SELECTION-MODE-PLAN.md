@@ -56,11 +56,14 @@ Use `desktop-save-mode` when the desired behavior is to restore the previous
 set of buffers, their positions, and the window/frame session:
 
 ```elisp
+(setq desktop-save t)
 (desktop-save-mode 1)
 ```
 
-`desktop.el` already saves buffer positions and restores conventional minor
-modes. No Ri-owned replacement is justified.
+`desktop-save` defaults to `ask-if-new`; setting it to `t` avoids the first
+desktop-save prompt and ensures a new desktop snapshot is written on normal
+Emacs exit. `desktop.el` already saves buffer positions and restores
+conventional minor modes. No Ri-owned replacement is justified.
 
 ### Selection submode: `desktop-locals-to-save`
 
