@@ -790,7 +790,7 @@ Insert PREFIX before and SUFFIX after the pasted text when supplied."
 (defconst ri--layer-specs
   (list
    (list :key ?a
-         :label "LINE"
+         :label "≡ LINE"
          :tap #'ri-extend-set-line-mode
          :activate-on-press nil
          :restore-on-release t
@@ -975,7 +975,7 @@ and its release as a KKP CSI-u event."
     (define-key map "y" '(menu-item "|<" ri-extend-nav-first))
     (define-key map "p" '(menu-item ">|" ri-extend-nav-last))
     (define-key map "." '(menu-item "Parent Line" ri-parent-line))
-    (define-key map "a" '(menu-item "LINE / hold: ^ v" ri-extend-set-line-mode))
+    (define-key map "a" '(menu-item "≡ LINE" ri-extend-set-line-mode))
     (define-key map "A" '(menu-item "LINE*" ri-extend-set-line-star-mode))
     (define-key map "W" '(menu-item "CHAR" ri-extend-set-character-mode))
     (define-key map "E" '(menu-item "PARAGRAPH" ri-extend-set-paragraph-mode))

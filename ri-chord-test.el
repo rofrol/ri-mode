@@ -359,7 +359,7 @@
         (ri-chord-setup)
         (dolist
             (case
-             `((?a "LINE" ,#'ri-extend-set-line-mode
+             `((?a "≡ LINE" ,#'ri-extend-set-line-mode
                    ,ri--line-layer-map "k" ,#'ri-momentary-line-down
                    ("i" "k") line 12 char)
                (?s "WORD+" ,#'ri-extend-set-word-plus-mode
