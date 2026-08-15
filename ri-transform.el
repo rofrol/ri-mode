@@ -62,15 +62,17 @@ and PascalCase boundaries, and uppercase-run transitions (XMLParser)."
   "Replace the current selection text with the result of TRANSFORM-FN.
 TRANSFORM-FN receives a list of word strings and returns the
 transformed string.  Point is left at the start of the replaced text."
-  (when-let* ((bounds (ri--selection-bounds))
-              (text (ri--bounds-text bounds)))
-    (let ((words (ri--split-into-words text)))
-      (when words
-        (ri--with-buffer-edit
-          (ri--replace-text (car bounds) (cdr bounds)
-                            (funcall transform-fn words)))
-        (goto-char (car bounds))
-        (ri--update-highlight)))))
+  (unwind-protect
+      (when-let* ((bounds (ri--selection-bounds))
+                  (text (ri--bounds-text bounds)))
+        (let ((words (ri--split-into-words text)))
+          (when words
+            (ri--with-buffer-edit
+              (ri--replace-text (car bounds) (cdr bounds)
+                                (funcall transform-fn words)))
+            (goto-char (car bounds))
+            (ri--update-highlight))))
+    (ri--finish-transform-menu)))
 
 ;; ── Case conversions ─────────────────────────────────────────────
 
@@ -138,40 +140,48 @@ transformed string.  Point is left at the start of the replaced text."
 (defun ri-transform-wrap ()
   "Hard-wrap the current selection at `fill-column'."
   (interactive)
-  (when-let* ((bounds (ri--selection-bounds)))
-    (ri--with-buffer-edit
-      (fill-region (car bounds) (cdr bounds)))
-    (ri--update-highlight)))
+  (unwind-protect
+      (when-let* ((bounds (ri--selection-bounds)))
+        (ri--with-buffer-edit
+          (fill-region (car bounds) (cdr bounds)))
+        (ri--update-highlight))
+    (ri--finish-transform-menu)))
 
 (defun ri-transform-unwrap ()
   "Unwrap the current selection by joining lines with a single space."
   (interactive)
-  (when-let* ((bounds (ri--selection-bounds)))
-    (ri--with-buffer-edit
-      (let ((text (ri--bounds-text bounds)))
-        (setq text (replace-regexp-in-string "\\`\n+\\|\n+\\'" "" text))
-        (setq text (replace-regexp-in-string "[ \t]*\n[ \t]*" " " text))
-        (ri--replace-text (car bounds) (cdr bounds) text)))
-    (ri--update-highlight)))
+  (unwind-protect
+      (when-let* ((bounds (ri--selection-bounds)))
+        (ri--with-buffer-edit
+          (let ((text (ri--bounds-text bounds)))
+            (setq text (replace-regexp-in-string "\\`\n+\\|\n+\\'" "" text))
+            (setq text (replace-regexp-in-string "[ \t]*\n[ \t]*" " " text))
+            (ri--replace-text (car bounds) (cdr bounds) text)))
+        (ri--update-highlight))
+    (ri--finish-transform-menu)))
 
 ;; ── Comments ─────────────────────────────────────────────────────
 
 (defun ri-transform-line-comment ()
   "Toggle line comments on the current selection."
   (interactive)
-  (when-let* ((bounds (ri--selection-bounds)))
-    (ri--with-buffer-edit
-      (comment-or-uncomment-region (car bounds) (cdr bounds)))
-    (ri--update-highlight)))
+  (unwind-protect
+      (when-let* ((bounds (ri--selection-bounds)))
+        (ri--with-buffer-edit
+          (comment-or-uncomment-region (car bounds) (cdr bounds)))
+        (ri--update-highlight))
+    (ri--finish-transform-menu)))
 
 (defun ri-transform-block-comment ()
   "Toggle block comments on the current selection."
   (interactive)
-  (when-let* ((bounds (ri--selection-bounds)))
-    (let ((comment-style 'multi-line))
-      (ri--with-buffer-edit
-        (comment-or-uncomment-region (car bounds) (cdr bounds))))
-    (ri--update-highlight)))
+  (unwind-protect
+      (when-let* ((bounds (ri--selection-bounds)))
+        (let ((comment-style 'multi-line))
+          (ri--with-buffer-edit
+            (comment-or-uncomment-region (car bounds) (cdr bounds))))
+        (ri--update-highlight))
+    (ri--finish-transform-menu)))
 
 ;; ── Menu keymap ──────────────────────────────────────────────────
 

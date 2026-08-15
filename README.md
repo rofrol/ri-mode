@@ -100,31 +100,31 @@ The mode line shows the current state:
 Press `?` in `NORM` at any time for the complete, current keymap. The
 main bindings are:
 
-| Key                  | Action                                                       |
-| -------------------- | ------------------------------------------------------------ |
-| `j` / `l`            | Move left / right                                            |
-| `i` / `k`            | Move up / down                                               |
-| `u` / `o`            | Move to the previous / next unit                             |
-| `y` / `p`            | Move to the first / last unit                                |
-| `.`                  | Move to the parent line                                      |
-| `a`                  | Select `LINE`; hold with `i` / `k` for `LINE` movement     |
-| `s`                  | Select `WORD+`; hold with `i` / `j` / `k` / `l` for `WORD+` movement |
-| `w`                  | Select `CHAR`; hold with `i` / `j` / `k` / `l` for `CHAR` movement |
-| `A`, `E`, `W`        | Use `LINE*`, `PARAGRAPH`, or `SUBWORD` units                |
-| `S`, `M-s`           | Use `WORD*` or `WORD` units                                 |
-| `d`                  | Use a tree-sitter `NODE` unit                                |
-| `f`                  | Start Extend; navigation then grows or shrinks the selection |
-| `/`                  | Move the cursor to the other edge of the unit or selection   |
-| `c`, `r`, `g`, `v`, `x` | Copy, delete, change, paste, or cut the unit/selection |
-| `q` (hold)           | Open the Ki-style Move History momentary layer             |
-| `e` (hold)           | Open the Ki-style Buffer momentary layer                     |
-| `J` / `L`            | Dedent / indent nonblank selected lines by four columns      |
-| `F`                  | Open the Transform menu                                      |
-| `,`                  | Open the Ki-style Surround menu                              |
-| `z` / `Z`            | Undo / redo; hold `z` for the Undo/Redo layer                |
-| `RET`                | Save the buffer                                              |
-| `SPC`                | Open the command menu                                        |
-| `C-h`                | Show the default Emacs help keymap and read one help key |
+| Key                     | Action                                                               |
+| ----------------------- | -------------------------------------------------------------------- |
+| `j` / `l`               | Move left / right                                                    |
+| `i` / `k`               | Move up / down                                                       |
+| `u` / `o`               | Move to the previous / next unit                                     |
+| `y` / `p`               | Move to the first / last unit                                        |
+| `.`                     | Move to the parent line                                              |
+| `a`                     | Select `LINE`; hold with `i` / `k` for `LINE` movement               |
+| `s`                     | Select `WORD+`; hold with `i` / `j` / `k` / `l` for `WORD+` movement |
+| `w`                     | Select `CHAR`; hold with `i` / `j` / `k` / `l` for `CHAR` movement   |
+| `A`, `E`, `W`           | Use `LINE*`, `PARAGRAPH`, or `SUBWORD` units                         |
+| `S`, `M-s`              | Use `WORD*` or `WORD` units                                          |
+| `d`                     | Use a tree-sitter `NODE` unit                                        |
+| `f`                     | Start Extend; navigation then grows or shrinks the selection         |
+| `/`                     | Move the cursor to the other edge of the unit or selection           |
+| `c`, `r`, `g`, `v`, `x` | Copy, delete, change, paste, or cut the unit/selection               |
+| `q` (hold)              | Open the Ki-style Move History momentary layer                       |
+| `e` (hold)              | Open the Ki-style Buffer momentary layer                             |
+| `J` / `L`               | Dedent / indent nonblank selected lines by four columns              |
+| `F`                     | Open the Transform menu                                              |
+| `,`                     | Open the Ki-style Surround menu                                      |
+| `z` / `Z`               | Undo / redo; hold `z` for the Undo/Redo layer                        |
+| `RET`                   | Save the buffer                                                      |
+| `SPC`                   | Open the command menu                                                |
+| `C-h`                   | Show the default Emacs help keymap and read one help key             |
 
 The Surround menu is a prefix menu rather than a hold layer, matching Ki's
 spatial enclosure layout. Press `,` and then `s` to surround, `r` to delete a
