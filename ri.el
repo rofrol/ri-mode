@@ -155,9 +155,12 @@ including Eglot's project label."
   (ri--call-preserving-user-error #'ri-tabs-toggle-buffer-mark))
 
 
-(defun ri--close-menu ()
-  "Hide any active menu and restore the status frame."
+(defun ri--close-menu (&optional deactivate)
+  "Hide any active menu and restore the status frame.
+When DEACTIVATE is non-nil, also deactivate its transient map."
   (setq ri--menu-state nil)
+  (when deactivate
+    (set-transient-map nil))
   (keymap-legend-hide)
   (ri--hide-frame))
 
@@ -296,10 +299,16 @@ including Eglot's project label."
   (keymap-legend-show
    "Transform" ri--transform-menu-map '(:title "Transform"))
   (set-transient-map
-   ri--transform-menu-map nil
+   ri--transform-menu-map
+   (lambda () (eq ri--menu-state 'transform))
    (lambda ()
      (when (eq ri--menu-state 'transform)
        (ri--close-menu)))))
+
+(defun ri--finish-transform-menu ()
+  "Close the Transform menu after a transform command."
+  (when (eq ri--menu-state 'transform)
+    (ri--close-menu t)))
 
 
 (defun ri--run-space-lsp-command (function)
@@ -912,6 +921,9 @@ and its release as a KKP CSI-u event."
 
 (defun ri-chord-setup ()
   "Register KKP chords and plain-press fallbacks from `ri--layer-specs'."
+  ;; Remove the obsolete Transform chord from sessions that loaded the
+  ;; former momentary implementation before this file was re-evaluated.
+  (kkp-chord-undefine ?F)
   (dolist (spec ri--layer-specs)
     (let ((key (plist-get spec :key))
           (tap (plist-get spec :tap))
