@@ -1155,6 +1155,7 @@ Target identity comes directly from text properties rendered by Ri."
     (if (ri-tabs--frame-eligible-p frame)
         (let ((state (ri-tabs--state-for-hook)))
           (unless (eq state ri-tabs--read-error)
+            (ri-tabs--activate-existing-owner-for-frame frame state)
             (ri-tabs--sync-live-buffers state))
           (ri-tabs--surface-update frame))
       (ri-tabs--remove-surface frame))))

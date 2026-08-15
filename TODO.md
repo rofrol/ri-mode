@@ -1,0 +1,5 @@
+- [x] tabs are displayed two times when started as emacsclient
+- [x] marked tabs are not restored when started as emacsclient
+- [ ] Ctrl+s: prompt disappears after short time
+- [ ] Pick > File stopped working
+- [ ] CHAR and Extend and left - cannot go left
