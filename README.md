@@ -216,6 +216,18 @@ Marked-file navigation continues to consider live buffers only.
 `NODE` mode requires a tree-sitter grammar for the current major mode;
 see the Tree-sitter setup below.
 
+## emacsclient
+
+for terminal:
+
+`emacsclient -t -a ""`
+
+for gui:
+
+`emacsclient -c -a ""`
+
+`-a ""` means run daemon if it is not run yet.
+
 ## System clipboard on macOS in terminal
 
 Add to init.el:
