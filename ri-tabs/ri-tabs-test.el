@@ -853,6 +853,49 @@
               (should (= (length buffers) 1))
               (should (ri-tabs-buffer-marked-p (car buffers))))))))))
 
+(ert-deftest ri-tabs-test-new-frame-restores-directory-owner ()
+  (ri-tabs-test-with-persistence
+    (ri-tabs-test-with-owner-frame
+      (let* ((repo (ri-tabs-test--make-git-repo ri-tabs-test-root
+                                                 "client-startup"))
+             (first (ri-tabs-test--make-file repo "client-a.el"))
+             (second (ri-tabs-test--make-file repo "client-b.el"))
+             (owner (ri-tabs--canonical-directory repo))
+             (ids (sort (mapcar #'ri-tabs-test--file-id (list first second))
+                        #'string-lessp))
+             (empty (generate-new-buffer "ri-tabs-client-startup"))
+             (opens 0)
+             (find-file-noselect-function
+              (symbol-function 'find-file-noselect)))
+        (push empty ri-tabs-test--buffers)
+        (with-current-buffer empty
+          (setq default-directory (file-name-as-directory ri-tabs-test-root)))
+        (ri-tabs--write-state
+         (ri-tabs--make-state (list (cons owner ids))))
+        (save-window-excursion
+          (delete-other-windows)
+          (switch-to-buffer empty)
+          (let ((after-init-time '(1)))
+            (ri-tabs-mode 1)
+            (should-not (ri-tabs--frame-owner)))
+          (with-current-buffer empty
+            (setq default-directory (file-name-as-directory repo)))
+          (cl-letf (((symbol-function 'find-file-noselect)
+                     (lambda (&rest args)
+                       (setq opens (1+ opens))
+                       (apply find-file-noselect-function args))))
+            (ri-tabs--configure-new-frame (selected-frame))
+            (should (equal (ri-tabs--frame-owner) owner))
+            (dolist (file-id ids)
+              (let ((buffers (ri-tabs-test--buffers-for-id file-id)))
+                (should (= (length buffers) 1))
+                (should (ri-tabs-buffer-marked-p (car buffers)))))
+            (should
+             (eq (window-buffer (selected-window))
+                 (car (ri-tabs-test--buffers-for-id (car (last ids))))))
+            (ri-tabs--configure-new-frame (selected-frame))
+            (should (= opens 2))))))))
+
 (ert-deftest ri-tabs-test-post-startup-restore-is-immediate ()
   (ri-tabs-test-with-persistence
     (let* ((file
