@@ -3,3 +3,6 @@
 - [ ] Ctrl+s: prompt disappears after short time
 - [ ] Pick > File stopped working
 - [ ] CHAR and Extend and left - cannot go left
+- [ ] when emacs started with `emacsclient -t -a ""` and close with `C-x c` and emacsclient started again, it using ok. But when closed with `Space j q` and emacsclient started again, it looks like emacs daemon is starting again like it was killed by `Space j k`.
+- [ ] go up with WORD, SUBWORD, CHAR etc. should take into account wrapped lines, so go to up line visually. Same with down.
+- [ ] change how navigation with NODE works. Right now up goes parent node, down goes child node. It should be like that: up goes to deepest node that is visually above current node, so take into account wrapped lines. To go parent down, there should be NODE momentary layer: `d i` goes to parent node, `d k` goes to child node. There could be some interesting operations for `n j` and `n l` but it needs to be figured out.
