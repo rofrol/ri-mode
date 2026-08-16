@@ -165,6 +165,22 @@
         (should (equal (buffer-string) "base"))))))
 
 
+(ert-deftest ri-extend-test-char-left-from-initial-selection ()
+  (ri-extend-test--with-buffer "abc"
+    (setq sr-submode 'char)
+    (goto-char 2)
+    (should (ri--enter-extend))
+    (ri-extend-nav-left)
+    (should (equal (ri--selection-bounds) (cons 1 3)))
+    (should (= (point) 1))
+    (should (eq (ri--selection-state-active-edge ri--selection) 'start))
+    (ri-extend-nav-right)
+    (should (equal (ri--selection-bounds) (cons 2 3)))
+    (should (= (point) 2))
+    (should (eq (ri--selection-state-active-edge ri--selection) 'start))
+    (ri--exit-extend)))
+
+
 (ert-deftest ri-extend-test-node-extends-across-named-siblings ()
   (ri-extend-test--with-json-buffer
       "[{\"x\": 123}, true, {\"y\": {}}]"
