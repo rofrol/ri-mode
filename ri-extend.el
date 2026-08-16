@@ -648,10 +648,12 @@ current semantic unit."
         (set-marker marker nil))))
   (setq ri--selection nil))
 
-(defun ri--enter-extend ()
+ (defun ri--enter-extend ()
   "Enter selection-extend mode around the current unit.
 Return non-nil after establishing a complete selection state.  If the
-current submode has no unit at point, leave extension mode inactive."
+current submode has no unit at point, leave extension mode inactive.
+The initial CHAR selection remains end-active until its first horizontal
+move chooses a direction."
   (ri--exit-extend)
   (when-let* ((bounds (sr--get-current-unit-bounds)))
     (setq ri--selection
@@ -852,7 +854,7 @@ When Extend is active, preserve point on its active selection edge."
   (ri--split-next-insertion-redo)
   (ri-smart-redo))
 
-(defun ri--extend-horizontal-move (direction)
+ (defun ri--extend-horizontal-move (direction)
   "Move the active extend edge one content unit in DIRECTION.
 When the active edge is `end', point stays on the last character of
 the selected unit; moving back over prev expanded units shrinks
@@ -870,18 +872,32 @@ initial anchor keeps the cursor direction instead of swapping it."
                                  (eq direction 'left))
                             (and (eq edge 'start)
                                  (eq direction 'right)))))
-      (when (and target
-                 (or (not shrinking-p)
-                     (not anchor-pos)
-                     (if (eq edge 'end)
-                         (> (cdr target) anchor-pos)
-                       (< (car target) anchor-pos))
-                     (and (eq edge 'end)
-                          (eq direction 'left)
-                          (ri--selection-state-initial-end state)
-                          (sr--wordish-submode-p))))
-        (setf (ri--selection-state-active-edge state) edge)
-        (goto-char (ri--point-at-unit-edge target edge))))))
+      (if (and (eq sr-submode 'char)
+               (ri--selection-state-initial-end state)
+               (= base-pos anchor-pos)
+               (= (marker-position (ri--selection-state-initial-end state))
+                  (1+ anchor-pos)))
+          (when target
+            (if (eq direction 'left)
+                (progn
+                  (set-marker anchor
+                              (marker-position
+                               (ri--selection-state-initial-end state)))
+                  (setf (ri--selection-state-active-edge state) 'start)
+                  (goto-char (ri--point-at-unit-edge target 'start)))
+              (goto-char (ri--point-at-unit-edge target 'end))))
+        (when (and target
+                   (or (not shrinking-p)
+                       (not anchor-pos)
+                       (if (eq edge 'end)
+                           (> (cdr target) anchor-pos)
+                         (< (car target) anchor-pos))
+                       (and (eq edge 'end)
+                            (eq direction 'left)
+                            (ri--selection-state-initial-end state)
+                            (sr--wordish-submode-p))))
+          (setf (ri--selection-state-active-edge state) edge)
+          (goto-char (ri--point-at-unit-edge target edge)))))))
 
 (defun ri-swap-cursor ()
   "Move point to the opposite end of the current selection or unit.
