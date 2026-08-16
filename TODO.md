@@ -1,6 +1,7 @@
 - [x] tabs are displayed two times when started as emacsclient
 - [x] marked tabs are not restored when started as emacsclient
-- [ ] Ctrl+s: prompt disappears after short time - [ ] Pick > File stopped working when run as `emacs -nw`: Invalid `parent-frame` frame parameter. Works when run with `emacsclient -t -a ""`
+- [ ] Ctrl+s: prompt disappears after short time
+- [ ] Pick > File stopped working when run as `emacs -nw`: Invalid `parent-frame` frame parameter. Works when run with `emacsclient -t -a ""`
 - [x] CHAR and Extend and left - cannot go left
 - [x] CHAR and Extend and left - cannot go right
 - [ ] when emacs started with `emacsclient -t -a ""` and close with `C-x c` and emacsclient started again, it using ok. But when closed with `Space j q` and emacsclient started again, it looks like emacs daemon is starting again like it was killed by `Space j k`.
