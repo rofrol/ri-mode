@@ -872,20 +872,26 @@ initial anchor keeps the cursor direction instead of swapping it."
                                  (eq direction 'left))
                             (and (eq edge 'start)
                                  (eq direction 'right)))))
-      (if (and (eq sr-submode 'char)
-               (ri--selection-state-initial-end state)
-               (= base-pos anchor-pos)
-               (= (marker-position (ri--selection-state-initial-end state))
-                  (1+ anchor-pos)))
-          (when target
-            (if (eq direction 'left)
-                (progn
-                  (set-marker anchor
-                              (marker-position
-                               (ri--selection-state-initial-end state)))
-                  (setf (ri--selection-state-active-edge state) 'start)
-                  (goto-char (ri--point-at-unit-edge target 'start)))
-              (goto-char (ri--point-at-unit-edge target 'end))))
+      (cond
+       ((and (eq sr-submode 'char)
+             anchor-pos
+             (eq edge 'end)
+             (= base-pos anchor-pos)
+             (eq direction 'left))
+        (when target
+          (set-marker anchor (1+ anchor-pos))
+          (setf (ri--selection-state-active-edge state) 'start)
+          (goto-char (ri--point-at-unit-edge target 'start))))
+       ((and (eq sr-submode 'char)
+             anchor-pos
+             (eq edge 'start)
+             (= (1+ base-pos) anchor-pos)
+             (eq direction 'right))
+        (when target
+          (set-marker anchor base-pos)
+          (setf (ri--selection-state-active-edge state) 'end)
+          (goto-char (ri--point-at-unit-edge target 'end))))
+       (t
         (when (and target
                    (or (not shrinking-p)
                        (not anchor-pos)
@@ -897,7 +903,7 @@ initial anchor keeps the cursor direction instead of swapping it."
                             (ri--selection-state-initial-end state)
                             (sr--wordish-submode-p))))
           (setf (ri--selection-state-active-edge state) edge)
-          (goto-char (ri--point-at-unit-edge target edge)))))))
+          (goto-char (ri--point-at-unit-edge target edge))))))))
 
 (defun ri-swap-cursor ()
   "Move point to the opposite end of the current selection or unit.
