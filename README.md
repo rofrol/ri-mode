@@ -71,13 +71,19 @@ each buffer's saved semantic selection submode:
 
 ```elisp
 (setq desktop-save t
-      desktop-auto-save-timeout 30)
+      desktop-auto-save-timeout 30
+      desktop-load-locked-desktop 'check-pid)
 (desktop-save-mode 1)
 ```
 
 Ri defers a native Desktop save after a stable location change, including
 navigation to another NODE. `desktop-auto-save-timeout` must be positive for
 this automatic checkpoint; normal Emacs exit still writes the final desktop.
+
+`desktop-load-locked-desktop` set to `check-pid` loads a desktop automatically
+when its lock names a PID that is no longer running locally, avoiding prompts
+for stale locks. Keep the default `ask` behavior when `desktop-dirname` is on a
+shared or NFS filesystem, where the owning PID may run on another machine.
 
 When `desktop` is loaded, Ri registers its buffer-local `sr-submode` value
 with `desktop-locals-to-save`. That per-buffer value overrides Ri's global
