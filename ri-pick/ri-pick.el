@@ -568,6 +568,7 @@
     `((name . "ri-pick")
       (title . "ri-pick")
       (parent-frame . ,parent)
+      (terminal . ,(frame-terminal parent))
       (minibuffer . ,(minibuffer-window parent))
       (share-child-frame . ri-pick)
       (no-other-frame . t)
